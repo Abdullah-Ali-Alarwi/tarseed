@@ -1,0 +1,554 @@
+@import "tailwindcss";
+
+
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #fcfcfc;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+
+/* =========================================================
+   OFFICIAL SALES INVOICE
+   ========================================================= */
+
+@media print {
+
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  html,
+  body {
+   
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* إخفاء صفحة الويب بالكامل */
+
+  body > * {
+    visibility: hidden;
+  }
+
+  /* إظهار الفاتورة */
+
+  .official-invoice,
+  .official-invoice * {
+    visibility: visible;
+  }
+
+  .official-invoice {
+    position: absolute;
+
+    top: 0;
+    right: 0;
+
+    width: 100%;
+
+    background: white;
+
+    color: #111;
+
+    direction: rtl;
+
+    font-family:
+      Arial,
+      Tahoma,
+      sans-serif;
+
+    font-size: 10px;
+
+    line-height: 1.4;
+  }
+
+
+  /* =====================================================
+     LETTERHEAD
+     ===================================================== */
+
+  .official-letterhead {
+    display: grid;
+
+    grid-template-columns: 70px 1fr 145px;
+
+    align-items: center;
+
+    gap: 14px;
+
+    padding-bottom: 12px;
+
+    border-bottom: 3px double #222;
+  }
+
+  .company-logo {
+    width: 60px;
+    height: 60px;
+
+    border: 2px solid #222;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 19px;
+
+    font-weight: 900;
+  }
+
+  .company-details h1 {
+    margin: 0 0 3px;
+
+    font-size: 20px;
+
+    font-weight: 900;
+  }
+
+  .company-details p {
+    margin: 0 0 6px;
+
+    font-size: 10px;
+  }
+
+  .company-contact {
+    display: flex;
+
+    flex-wrap: wrap;
+
+    gap: 12px;
+
+    font-size: 8px;
+
+    color: #444;
+  }
+
+  .company-meta {
+    text-align: center;
+
+    border-right: 1px solid #aaa;
+
+    padding-right: 10px;
+  }
+
+  .company-meta p {
+    margin: 2px 0;
+
+    font-size: 8px;
+
+    color: #555;
+  }
+
+  .company-meta strong {
+    display: block;
+
+    font-size: 9px;
+
+    margin-bottom: 4px;
+  }
+
+
+  /* =====================================================
+     TITLE
+     ===================================================== */
+
+  .official-invoice-title {
+    display: flex;
+
+    align-items: center;
+
+    gap: 12px;
+
+    margin: 12px 0;
+  }
+
+  .title-line {
+    flex: 1;
+
+    height: 1px;
+
+    background: #444;
+  }
+
+  .title-box {
+    min-width: 190px;
+
+    text-align: center;
+
+    border: 2px solid #222;
+
+    padding: 6px 18px;
+  }
+
+  .title-box h2 {
+    margin: 0;
+
+    font-size: 18px;
+
+    font-weight: 900;
+  }
+
+  .title-box span {
+    display: block;
+
+    margin-top: 1px;
+
+    font-size: 7px;
+
+    letter-spacing: 2px;
+  }
+
+
+  /* =====================================================
+     INVOICE INFORMATION
+     ===================================================== */
+
+  .invoice-info-table {
+    width: 100%;
+
+    border-collapse: collapse;
+
+    table-layout: fixed;
+
+    margin-bottom: 10px;
+  }
+
+  .invoice-info-table td {
+    border: 1px solid #777;
+
+    padding: 6px 8px;
+
+    height: 25px;
+  }
+
+  .invoice-info-table .label {
+    width: 14%;
+
+    background: #eeeeee;
+
+    text-align: center;
+
+    font-weight: 900;
+
+    font-size: 9px;
+  }
+
+  .invoice-info-table .value {
+    width: 36%;
+
+    font-size: 9px;
+
+    font-weight: 700;
+  }
+
+
+  /* =====================================================
+     ITEMS TABLE
+     ===================================================== */
+
+  .official-items-table {
+    width: 100%;
+
+    border-collapse: collapse;
+
+    table-layout: fixed;
+
+    page-break-inside: auto;
+  }
+
+  .official-items-table thead {
+    display: table-header-group;
+  }
+
+  .official-items-table th {
+    background: #e8e8e8;
+
+    border: 1px solid #555;
+
+    padding: 7px 4px;
+
+    text-align: center;
+
+    font-size: 8px;
+
+    font-weight: 900;
+  }
+
+  .official-items-table td {
+    border: 1px solid #777;
+
+    padding: 6px 4px;
+
+    height: 25px;
+
+    text-align: center;
+
+    font-size: 8px;
+  }
+
+  .official-items-table tr {
+    page-break-inside: avoid;
+  }
+
+  .official-items-table .number {
+    width: 28px;
+  }
+
+  .official-items-table .item-name {
+    width: 25%;
+
+    text-align: right;
+
+    font-weight: 700;
+  }
+
+  .official-items-table .item-total {
+    font-weight: 900;
+  }
+
+  .official-items-table .empty-row td {
+    height: 25px;
+  }
+
+
+  /* =====================================================
+     BOTTOM
+     ===================================================== */
+
+  .official-bottom {
+    display: grid;
+
+    grid-template-columns: 1fr 275px;
+
+    gap: 12px;
+
+    margin-top: 12px;
+  }
+
+
+  /* =====================================================
+     NOTES
+     ===================================================== */
+
+  .official-notes {
+    border: 1px solid #777;
+
+    min-height: 125px;
+  }
+
+  .section-heading {
+    background: #e8e8e8;
+
+    border-bottom: 1px solid #777;
+
+    padding: 6px 8px;
+
+    font-weight: 900;
+
+    font-size: 9px;
+  }
+
+  .notes-content {
+    padding: 9px;
+
+    min-height: 45px;
+
+    font-size: 9px;
+  }
+
+  .amount-words {
+    display: flex;
+
+    gap: 8px;
+
+    padding: 8px;
+
+    border-top: 1px solid #aaa;
+
+    font-size: 8px;
+  }
+
+  .amount-words strong {
+    white-space: nowrap;
+  }
+
+
+  /* =====================================================
+     TOTALS
+     ===================================================== */
+
+  .official-totals {
+    border: 1px solid #777;
+  }
+
+  .official-totals > div {
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    padding: 6px 8px;
+
+    min-height: 24px;
+
+    border-bottom: 1px solid #bbb;
+
+    font-size: 8px;
+  }
+
+  .official-totals strong {
+    font-weight: 900;
+  }
+
+  .official-totals .final-total {
+    background: #222 !important;
+
+    color: white !important;
+
+    font-size: 11px;
+
+    font-weight: 900;
+
+    padding: 9px 8px;
+  }
+
+
+  /* =====================================================
+     SIGNATURES
+     ===================================================== */
+
+  .official-signatures {
+    display: grid;
+
+    grid-template-columns: 1fr 120px 1fr;
+
+    align-items: end;
+
+    gap: 25px;
+
+    margin-top: 30px;
+
+    min-height: 90px;
+  }
+
+  .signature {
+    text-align: center;
+
+    font-size: 8px;
+  }
+
+  .signature strong {
+    display: block;
+
+    margin-bottom: 28px;
+
+    font-size: 9px;
+  }
+
+  .signature-space {
+    width: 75%;
+
+    margin: auto;
+
+    border-bottom: 1px solid #444;
+
+    margin-bottom: 5px;
+  }
+
+  .signature span {
+    color: #555;
+  }
+
+
+  /* =====================================================
+     STAMP
+     ===================================================== */
+
+  .stamp {
+    width: 90px;
+    height: 62px;
+
+    margin: auto;
+
+    border: 2px dashed #777;
+
+    border-radius: 50%;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    text-align: center;
+
+    color: #777;
+
+    font-size: 8px;
+
+    font-weight: 700;
+  }
+
+
+  /* =====================================================
+     FOOTER
+     ===================================================== */
+
+  .official-footer {
+    display: flex;
+
+    justify-content: space-between;
+
+    margin-top: 20px;
+
+    padding-top: 7px;
+
+    border-top: 1px solid #777;
+
+    font-size: 7px;
+
+    color: #555;
+  }
+}
+
+/* Scrollbar الخاص بالـ Sidebar */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+/* خلفية مسار الـ Scroll */
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: #0E1F33;
+}
+
+/* لون المقبض */
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 10px;
+}
+
+/* عند تمرير الماوس */
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748B;
+}
