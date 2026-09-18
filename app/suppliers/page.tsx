@@ -11,6 +11,9 @@ import {
   FiAlertCircle,
   FiMoreVertical,
   FiMapPin,
+  FiBookOpen,
+  FiCheckCircle,
+  FiXCircle,
 } from "react-icons/fi";
 
 import { useERPStore } from "@/Store/erpStore";
@@ -21,6 +24,8 @@ export default function SuppliersPage() {
 
   const suppliers = useERPStore((state) => state.suppliers);
   const purchases = useERPStore((state) => state.purchases);
+  const accounts = useERPStore((state) => state.accounts);
+  const journalEntries = useERPStore((state) => state.journalEntries);
 
   // ======================================================
   // تحويل أي قيمة إلى رقم
@@ -50,6 +55,65 @@ export default function SuppliersPage() {
   };
 
   // ======================================================
+  // حساب رصيد الحساب من القيود اليومية
+  //
+  // الموردون ضمن الالتزامات:
+  // الرصيد = الدائن - المدين
+  // ======================================================
+
+  const getAccountBalance = (accountCode?: string) => {
+    if (!accountCode) {
+      return 0;
+    }
+
+    return journalEntries
+      .filter((entry) => entry.status === "posted")
+      .reduce((balance, entry) => {
+        const accountLines = entry.lines.filter(
+          (line) => line.accountCode === accountCode,
+        );
+
+        const debit = accountLines.reduce(
+          (total, line) => total + getAmount(line.debit),
+          0,
+        );
+
+        const credit = accountLines.reduce(
+          (total, line) => total + getAmount(line.credit),
+          0,
+        );
+
+        return balance + credit - debit;
+      }, 0);
+  };
+
+  // ======================================================
+  // البحث عن حساب المورد
+  //
+  // الأولوية:
+  // 1. accountCode الموجود داخل المورد
+  // 2. حساب تابع للحساب 2001
+  // ======================================================
+
+  const getSupplierAccount = (supplier: (typeof suppliers)[number]) => {
+    if (supplier.accountCode) {
+      const account = accounts.find(
+        (item) => item.code === supplier.accountCode,
+      );
+
+      if (account) {
+        return account;
+      }
+    }
+
+    return accounts.find(
+      (account) =>
+        account.parent === "2001" &&
+        account.name.trim() === supplier.name.trim(),
+    );
+  };
+
+  // ======================================================
   // إجمالي مشتريات المورد
   // ======================================================
 
@@ -74,25 +138,38 @@ export default function SuppliersPage() {
   };
 
   // ======================================================
-  // إجمالي المبلغ المستحق
+  // المبلغ المستحق من الحساب المحاسبي
+  //
+  // إذا لم يكن المورد مرتبطًا بحساب:
+  // نرجع للحساب التشغيلي القديم مؤقتًا.
   // ======================================================
 
-  const getSupplierDue = (supplierId: string) => {
-    return purchases
-      .filter(
-        (purchase) =>
-          purchase.supplierId === supplierId &&
-          purchase.paymentMethod === "credit",
-      )
-      .reduce((total, purchase) => total + getAmount(purchase.total), 0);
+  const getSupplierDue = (supplier: (typeof suppliers)[number]) => {
+    const account = getSupplierAccount(supplier);
+
+    if (account) {
+      return Math.max(0, getAccountBalance(account.code));
+    }
+
+    return Math.max(
+      0,
+      getAmount(supplier.balance) +
+        purchases
+          .filter(
+            (purchase) =>
+              purchase.supplierId === supplier.id &&
+              purchase.paymentMethod === "credit",
+          )
+          .reduce((total, purchase) => total + getAmount(purchase.total), 0),
+    );
   };
 
   // ======================================================
   // حالة المورد
   // ======================================================
 
-  const getSupplierStatus = (supplierId: string) => {
-    const due = getSupplierDue(supplierId);
+  const getSupplierStatus = (supplier: (typeof suppliers)[number]) => {
+    const due = getSupplierDue(supplier);
 
     return due > 0 ? "متأخر" : "نشط";
   };
@@ -114,16 +191,19 @@ export default function SuppliersPage() {
           .includes(searchValue) ||
         String(supplier.address || "")
           .toLowerCase()
+          .includes(searchValue) ||
+        String(supplier.accountCode || "")
+          .toLowerCase()
           .includes(searchValue);
 
-      const status = getSupplierStatus(supplier.id);
+      const status = getSupplierStatus(supplier);
 
       const matchesStatus =
         statusFilter === "جميع الموردين" || status === statusFilter;
 
       return matchesSearch && matchesStatus;
     });
-  }, [suppliers, purchases, search, statusFilter]);
+  }, [suppliers, purchases, accounts, journalEntries, search, statusFilter]);
 
   // ======================================================
   // الإحصائيات
@@ -141,17 +221,26 @@ export default function SuppliersPage() {
       .filter((purchase) => purchase.paymentMethod !== "credit")
       .reduce((total, purchase) => total + getAmount(purchase.total), 0);
 
-    const totalDue = purchases
-      .filter((purchase) => purchase.paymentMethod === "credit")
-      .reduce((total, purchase) => total + getAmount(purchase.total), 0);
+    const totalDue = suppliers.reduce(
+      (total, supplier) => total + getSupplierDue(supplier),
+      0,
+    );
+
+    const linkedSuppliers = suppliers.filter((supplier) => {
+      return Boolean(getSupplierAccount(supplier));
+    }).length;
+
+    const unlinkedSuppliers = totalSuppliers - linkedSuppliers;
 
     return {
       totalSuppliers,
       totalPurchases,
       totalPaid,
       totalDue,
+      linkedSuppliers,
+      unlinkedSuppliers,
     };
-  }, [suppliers, purchases]);
+  }, [suppliers, purchases, accounts, journalEntries]);
 
   return (
     <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
@@ -164,7 +253,7 @@ export default function SuppliersPage() {
           <h1 className="text-2xl font-bold text-gray-800">الموردين</h1>
 
           <p className="text-sm text-gray-500 mt-1">
-            إدارة بيانات الموردين وحساباتهم والمبالغ المستحقة
+            إدارة الموردين وحساباتهم وأرصدتهم المحاسبية
           </p>
         </div>
 
@@ -204,12 +293,64 @@ export default function SuppliersPage() {
         />
 
         <StatCard
-          title="المبالغ المستحقة"
+          title="أرصدة الموردين"
           value={formatMoney(statistics.totalDue)}
           subtitle="ريال"
           icon={FiAlertCircle}
           warning
         />
+      </div>
+
+      {/* ==================================================
+          Accounting Status
+      ================================================== */}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+              <FiBookOpen size={20} />
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500">حساب الموردين الرئيسي</p>
+
+              <p className="font-bold text-gray-800 mt-1">2001 - الموردين</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
+              <FiCheckCircle size={20} />
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500">حسابات مرتبطة</p>
+
+              <p className="font-bold text-green-600 mt-1">
+                {statistics.linkedSuppliers} مورد
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-red-50 text-red-500 flex items-center justify-center">
+              <FiXCircle size={20} />
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500">حسابات غير مرتبطة</p>
+
+              <p className="font-bold text-red-500 mt-1">
+                {statistics.unlinkedSuppliers} مورد
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ==================================================
@@ -242,7 +383,7 @@ export default function SuppliersPage() {
                   type="text"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="البحث عن مورد أو هاتف أو عنوان..."
+                  placeholder="البحث عن مورد أو حساب أو هاتف..."
                   className="w-full pr-10 pl-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-100 placeholder:text-gray-400"
                 />
               </div>
@@ -267,7 +408,7 @@ export default function SuppliersPage() {
         {/* Table */}
 
         <div className="overflow-x-auto">
-          <table className="w-full text-right min-w-[1050px]">
+          <table className="w-full text-right min-w-[1250px]">
             <thead className="bg-gray-50">
               <tr className="text-sm text-gray-500">
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
@@ -276,6 +417,10 @@ export default function SuppliersPage() {
 
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
                   اسم المورد
+                </th>
+
+                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  الحساب المحاسبي
                 </th>
 
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
@@ -315,9 +460,11 @@ export default function SuppliersPage() {
 
                   const supplierPaid = getSupplierPaid(supplier.id);
 
-                  const supplierDue = getSupplierDue(supplier.id);
+                  const supplierDue = getSupplierDue(supplier);
 
-                  const status = getSupplierStatus(supplier.id);
+                  const status = getSupplierStatus(supplier);
+
+                  const supplierAccount = getSupplierAccount(supplier);
 
                   return (
                     <tr
@@ -344,6 +491,30 @@ export default function SuppliersPage() {
                         >
                           {supplier.name}
                         </Link>
+                      </td>
+
+                      {/* Account */}
+
+                      <td className="px-6 py-4">
+                        {supplierAccount ? (
+                          <Link
+                            href={`/accounting/ledger?account=${supplierAccount.code}`}
+                            className="inline-flex flex-col hover:text-amber-600 transition"
+                          >
+                            <span className="font-semibold text-blue-600">
+                              {supplierAccount.code}
+                            </span>
+
+                            <span className="text-xs text-gray-500 mt-1">
+                              {supplierAccount.name}
+                            </span>
+                          </Link>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-600 px-2.5 py-1.5 rounded-lg">
+                            <FiXCircle size={14} />
+                            غير مرتبط
+                          </span>
+                        )}
                       </td>
 
                       {/* Phone */}
@@ -423,7 +594,7 @@ export default function SuppliersPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center">
+                  <td colSpan={10} className="px-6 py-12 text-center">
                     <div className="flex flex-col items-center justify-center">
                       <FiTruck size={40} className="text-gray-300 mb-3" />
 

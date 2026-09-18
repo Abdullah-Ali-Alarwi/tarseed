@@ -21,7 +21,6 @@ export default function SalesReportPage() {
   const [paymentMethod, setPaymentMethod] = useState("");
 
   const sales = useERPStore((state) => state.sales);
-
   const customers = useERPStore((state) => state.customers);
 
   const formatMoney = (value: number) => {
@@ -47,7 +46,27 @@ export default function SalesReportPage() {
     }
   };
 
+  const paymentMethodClass = (method: string) => {
+    switch (method) {
+      case "cash":
+        return "bg-green-100 text-green-700";
+
+      case "bank":
+        return "bg-blue-100 text-blue-700";
+
+      case "credit":
+        return "bg-amber-100 text-amber-700";
+
+      default:
+        return "bg-gray-100 text-gray-700";
+    }
+  };
+
   const filteredSales = useMemo(() => {
+    if (fromDate > toDate) {
+      return [];
+    }
+
     return sales
       .filter((sale) => {
         const dateMatch = sale.date >= fromDate && sale.date <= toDate;
@@ -59,7 +78,15 @@ export default function SalesReportPage() {
 
         return dateMatch && customerMatch && paymentMatch;
       })
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => {
+        const dateCompare = b.date.localeCompare(a.date);
+
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
+
+        return b.invoiceNumber.localeCompare(a.invoiceNumber);
+      });
   }, [sales, fromDate, toDate, customer, paymentMethod]);
 
   const totalInvoices = filteredSales.length;
@@ -103,22 +130,72 @@ export default function SalesReportPage() {
     setPaymentMethod("");
   };
 
-  const handleRefresh = () => {
-    setFromDate((value) => value);
-    setToDate((value) => value);
-    setCustomer((value) => value);
-    setPaymentMethod((value) => value);
-  };
-
   const handlePrint = () => {
     window.print();
   };
 
+  const handleExport = () => {
+    if (filteredSales.length === 0) {
+      return;
+    }
+
+    const headers = [
+      "رقم الفاتورة",
+      "التاريخ",
+      "العميل",
+      "الحساب",
+      "طريقة الدفع",
+      "قبل الخصم",
+      "الخصم",
+      "الضريبة",
+      "الإجمالي",
+    ];
+
+    const rows = filteredSales.map((sale) => [
+      sale.invoiceNumber,
+      sale.date,
+      sale.customerName,
+      sale.accountCode ? `${sale.accountCode} - ${sale.accountName}` : "",
+      paymentMethodName(sale.paymentMethod),
+      Number(sale.subtotal || 0).toFixed(2),
+      Number(sale.discount || 0).toFixed(2),
+      Number(sale.tax || 0).toFixed(2),
+      Number(sale.total || 0).toFixed(2),
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((row) =>
+        row
+          .map((value) => {
+            const text = String(value ?? "");
+            return `"${text.replace(/"/g, '""')}"`;
+          })
+          .join(","),
+      )
+      .join("\n");
+
+    const blob = new Blob(["\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `تقرير-المبيعات-${fromDate}-${toDate}.csv`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+  };
+
+  const invalidDateRange = fromDate > toDate;
+
   return (
     <main dir="rtl" className="min-h-screen bg-gray-100 p-4 md:p-6">
-      {/* =====================================================
-          HEADER
-      ====================================================== */}
+      {/* HEADER */}
 
       <div className="print:hidden flex flex-col lg:flex-row lg:items-center justify-between gap-5 mb-6">
         <div>
@@ -149,7 +226,7 @@ export default function SalesReportPage() {
           </div>
 
           <p className="text-sm text-gray-500 mt-2">
-            عرض وتحليل جميع فواتير المبيعات خلال الفترة المحددة
+            عرض وتحليل فواتير المبيعات خلال الفترة المحددة
           </p>
         </div>
 
@@ -170,12 +247,20 @@ export default function SalesReportPage() {
             <FiPrinter size={18} />
             طباعة التقرير
           </button>
+
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={filteredSales.length === 0}
+            className="inline-flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-5 py-3 rounded-lg text-sm font-semibold transition"
+          >
+            <FiDownload size={18} />
+            تصدير CSV
+          </button>
         </div>
       </div>
 
-      {/* =====================================================
-          FILTERS
-      ====================================================== */}
+      {/* FILTERS */}
 
       <section className="print:hidden bg-white border border-gray-200 rounded-xl shadow-sm mb-6">
         <div className="p-5 md:p-6 border-b-2 border-gray-200">
@@ -194,7 +279,7 @@ export default function SalesReportPage() {
 
         <div className="p-5 md:p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-            {/* من تاريخ */}
+            {/* FROM */}
 
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-2">
@@ -216,7 +301,7 @@ export default function SalesReportPage() {
               </div>
             </div>
 
-            {/* إلى تاريخ */}
+            {/* TO */}
 
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-2">
@@ -238,7 +323,7 @@ export default function SalesReportPage() {
               </div>
             </div>
 
-            {/* العميل */}
+            {/* CUSTOMER */}
 
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-2">
@@ -252,15 +337,18 @@ export default function SalesReportPage() {
               >
                 <option value="">جميع العملاء</option>
 
-                {customers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
+                {customers
+                  .slice()
+                  .sort((a, b) => a.name.localeCompare(b.name, "ar"))
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
               </select>
             </div>
 
-            {/* طريقة الدفع */}
+            {/* PAYMENT */}
 
             <div>
               <label className="block text-sm font-semibold text-gray-800 mb-2">
@@ -283,6 +371,12 @@ export default function SalesReportPage() {
             </div>
           </div>
 
+          {invalidDateRange && (
+            <div className="mt-5 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              تاريخ البداية يجب أن يكون أقل من أو يساوي تاريخ النهاية.
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-3 mt-5">
             <button
               type="button"
@@ -292,27 +386,14 @@ export default function SalesReportPage() {
               <FiRefreshCw size={18} />
               إعادة ضبط
             </button>
-
-            <button
-              type="button"
-              onClick={handleRefresh}
-              className="inline-flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-6 py-3 rounded-lg text-sm font-semibold transition"
-            >
-              <FiRefreshCw size={18} />
-              تحديث التقرير
-            </button>
           </div>
         </div>
       </section>
 
-      {/* =====================================================
-          REPORT
-      ====================================================== */}
+      {/* REPORT */}
 
       <section className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden print:border-0 print:shadow-none">
-        {/* ===================================================
-            COMPANY HEADER
-        ==================================================== */}
+        {/* COMPANY HEADER */}
 
         <div className="p-6 md:p-8 border-b-2 border-gray-300">
           <div className="flex flex-col md:flex-row justify-between gap-6">
@@ -353,9 +434,7 @@ export default function SalesReportPage() {
           </div>
         </div>
 
-        {/* ===================================================
-            REPORT BODY
-        ==================================================== */}
+        {/* BODY */}
 
         <div className="p-5 md:p-8">
           {/* SUMMARY */}
@@ -406,11 +485,33 @@ export default function SalesReportPage() {
             </div>
           </div>
 
-          {/* SALES TABLE */}
+          {/* ACCOUNTING INFO */}
+
+          <div className="mb-6 border-2 border-gray-200 rounded-xl bg-gray-50 p-4">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+              <div>
+                <p className="font-bold text-gray-900">الربط المحاسبي</p>
+
+                <p className="text-sm text-gray-500 mt-1">
+                  فواتير المبيعات مرتبطة بحساب العميل المسجل في Zustand.
+                </p>
+              </div>
+
+              <div className="text-sm font-semibold text-gray-700">
+                عدد الفواتير المرتبطة بالحساب:{" "}
+                {
+                  filteredSales.filter((sale) => Boolean(sale.accountCode))
+                    .length
+                }
+              </div>
+            </div>
+          </div>
+
+          {/* TABLE */}
 
           <div className="border-2 border-gray-300 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1100px] border-collapse">
+              <table className="w-full min-w-[1250px] border-collapse">
                 <thead>
                   <tr className="bg-gray-900 text-white">
                     <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
@@ -427,6 +528,10 @@ export default function SalesReportPage() {
 
                     <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
                       العميل
+                    </th>
+
+                    <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
+                      الحساب
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
@@ -476,14 +581,28 @@ export default function SalesReportPage() {
                         </td>
 
                         <td className="border border-gray-300 px-4 py-3 text-sm">
+                          {sale.accountCode ? (
+                            <div>
+                              <p className="font-bold text-gray-900">
+                                {sale.accountCode}
+                              </p>
+
+                              <p className="text-xs text-gray-500 mt-1">
+                                {sale.accountName}
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-red-600 font-semibold">
+                              غير مرتبط
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="border border-gray-300 px-4 py-3 text-sm">
                           <span
-                            className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold ${
-                              sale.paymentMethod === "cash"
-                                ? "bg-green-100 text-green-700"
-                                : sale.paymentMethod === "bank"
-                                  ? "bg-blue-100 text-blue-700"
-                                  : "bg-amber-100 text-amber-700"
-                            }`}
+                            className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold ${paymentMethodClass(
+                              sale.paymentMethod,
+                            )}`}
                           >
                             {paymentMethodName(sale.paymentMethod)}
                           </span>
@@ -515,10 +634,12 @@ export default function SalesReportPage() {
                   ) : (
                     <tr>
                       <td
-                        colSpan={10}
+                        colSpan={11}
                         className="border border-gray-300 px-4 py-12 text-center text-gray-500"
                       >
-                        لا توجد مبيعات مطابقة للمعايير المحددة
+                        {invalidDateRange
+                          ? "الفترة الزمنية غير صحيحة"
+                          : "لا توجد مبيعات مطابقة للمعايير المحددة"}
                       </td>
                     </tr>
                   )}
@@ -527,7 +648,7 @@ export default function SalesReportPage() {
                 <tfoot>
                   <tr className="bg-gray-100">
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="border-2 border-gray-400 px-4 py-4 text-right font-bold text-gray-900"
                     >
                       إجمالي التقرير
@@ -613,20 +734,6 @@ export default function SalesReportPage() {
           </div>
         </div>
       </section>
-
-      {/* FOOTER */}
-
-      <div className="print:hidden mt-5 flex flex-col md:flex-row items-center justify-between gap-3 text-sm text-gray-500">
-        <p>تم إنشاء التقرير بواسطة نظام المحاسبة ERP</p>
-
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 hover:text-amber-600 transition"
-        >
-          <FiDownload size={16} />
-          تصدير التقرير
-        </button>
-      </div>
 
       {/* PRINT CSS */}
 

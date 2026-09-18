@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ElementType } from "react";
 import { useERPStore } from "@/Store/erpStore";
 import {
   FiPlus,
@@ -12,17 +12,22 @@ import {
   FiCheckCircle,
   FiMoreVertical,
   FiBookOpen,
+  FiAlertCircle,
 } from "react-icons/fi";
 
 export default function PurchasesPage() {
   const [search, setSearch] = useState("");
 
-  const purchases = useERPStore((state) => state.purchases);
+  // ======================================================
+  // Zustand
+  // ======================================================
 
+  const purchases = useERPStore((state) => state.purchases);
   const accounts = useERPStore((state) => state.accounts);
+  const journalEntries = useERPStore((state) => state.journalEntries);
 
   // ======================================================
-  // الحسابات الفرعية فقط
+  // الحسابات الفرعية
   // ======================================================
 
   const subAccounts = useMemo(() => {
@@ -34,6 +39,18 @@ export default function PurchasesPage() {
         }),
       );
   }, [accounts]);
+
+  // ======================================================
+  // الحسابات المرتبطة فعليًا بالمشتريات
+  // ======================================================
+
+  const linkedPurchaseAccounts = useMemo(() => {
+    const codes = new Set(
+      purchases.map((purchase) => purchase.accountCode).filter(Boolean),
+    );
+
+    return subAccounts.filter((account) => codes.has(account.code));
+  }, [purchases, subAccounts]);
 
   // ======================================================
   // تحويل القيمة إلى رقم
@@ -56,7 +73,7 @@ export default function PurchasesPage() {
   // ======================================================
 
   const formatMoney = (amount: number) => {
-    return amount.toLocaleString("ar-SA", {
+    return Number(amount || 0).toLocaleString("ar-SA", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
@@ -64,7 +81,6 @@ export default function PurchasesPage() {
 
   // ======================================================
   // البحث عن الحساب
-  // الحسابات الفرعية فقط
   // ======================================================
 
   const getAccount = (accountCode?: string) => {
@@ -72,7 +88,7 @@ export default function PurchasesPage() {
       return null;
     }
 
-    return subAccounts.find((account) => account.code === accountCode);
+    return accounts.find((account) => account.code === accountCode) || null;
   };
 
   // ======================================================
@@ -94,6 +110,102 @@ export default function PurchasesPage() {
   };
 
   // ======================================================
+  // القيد المحاسبي الخاص بالفاتورة
+  // ======================================================
+
+  const getPurchaseJournalEntry = (invoice: (typeof purchases)[number]) => {
+    return journalEntries.find(
+      (entry) =>
+        entry.reference === `PURCHASE:${invoice.id}` ||
+        entry.reference === invoice.invoiceNumber,
+    );
+  };
+
+  // ======================================================
+  // حساب أرصدة الأستاذ العام
+  //
+  // الأصول والمصروفات:
+  // مدين - دائن
+  //
+  // الالتزامات وحقوق الملكية والإيرادات:
+  // دائن - مدين
+  // ======================================================
+
+  const ledgerBalances = useMemo(() => {
+    const balances: Record<
+      string,
+      {
+        debit: number;
+        credit: number;
+        balance: number;
+      }
+    > = {};
+
+    for (const entry of journalEntries) {
+      if (entry.status !== "posted") {
+        continue;
+      }
+
+      for (const line of entry.lines) {
+        if (!balances[line.accountCode]) {
+          balances[line.accountCode] = {
+            debit: 0,
+            credit: 0,
+            balance: 0,
+          };
+        }
+
+        balances[line.accountCode].debit += getAmount(line.debit);
+        balances[line.accountCode].credit += getAmount(line.credit);
+      }
+    }
+
+    for (const account of accounts) {
+      const current = balances[account.code];
+
+      if (!current) {
+        balances[account.code] = {
+          debit: 0,
+          credit: 0,
+          balance: 0,
+        };
+
+        continue;
+      }
+
+      if (account.type === "asset" || account.type === "expense") {
+        current.balance = current.debit - current.credit;
+      } else {
+        current.balance = current.credit - current.debit;
+      }
+    }
+
+    return balances;
+  }, [accounts, journalEntries]);
+
+  // ======================================================
+  // معلومات رصيد الحساب
+  // ======================================================
+
+  const getLedgerBalance = (accountCode?: string) => {
+    if (!accountCode) {
+      return {
+        debit: 0,
+        credit: 0,
+        balance: 0,
+      };
+    }
+
+    return (
+      ledgerBalances[accountCode] || {
+        debit: 0,
+        credit: 0,
+        balance: 0,
+      }
+    );
+  };
+
+  // ======================================================
   // طريقة الدفع
   // ======================================================
 
@@ -108,7 +220,7 @@ export default function PurchasesPage() {
   };
 
   // ======================================================
-  // الحالة
+  // حالة الدفع
   // ======================================================
 
   const getStatus = (paymentMethod: "cash" | "bank" | "credit") => {
@@ -133,6 +245,14 @@ export default function PurchasesPage() {
     return purchases.filter((invoice) => {
       const accountName = getAccountName(invoice);
 
+      const journalEntry = getPurchaseJournalEntry(invoice);
+
+      const journalStatus = journalEntry
+        ? journalEntry.status === "posted"
+          ? "مرحل"
+          : "مسودة"
+        : "غير مرحل";
+
       return (
         String(invoice.invoiceNumber).toLowerCase().includes(value) ||
         String(invoice.supplierName).toLowerCase().includes(value) ||
@@ -144,10 +264,11 @@ export default function PurchasesPage() {
         String(invoice.accountCode || "")
           .toLowerCase()
           .includes(value) ||
-        accountName.toLowerCase().includes(value)
+        accountName.toLowerCase().includes(value) ||
+        journalStatus.toLowerCase().includes(value)
       );
     });
-  }, [purchases, search, subAccounts]);
+  }, [purchases, search, journalEntries, accounts]);
 
   // ======================================================
   // إجمالي المشتريات
@@ -187,6 +308,30 @@ export default function PurchasesPage() {
       .reduce((total, invoice) => total + getAmount(invoice.total), 0);
   }, [purchases]);
 
+  // ======================================================
+  // القيود المرحلة
+  // ======================================================
+
+  const postedJournalCount = useMemo(() => {
+    return purchases.filter((invoice) => {
+      const entry = getPurchaseJournalEntry(invoice);
+
+      return entry?.status === "posted";
+    }).length;
+  }, [purchases, journalEntries]);
+
+  // ======================================================
+  // القيود غير المرحلة
+  // ======================================================
+
+  const unpostedJournalCount = totalInvoices - postedJournalCount;
+
+  // ======================================================
+  // الحسابات المرتبطة بالمشتريات
+  // ======================================================
+
+  const purchaseAccountCount = linkedPurchaseAccounts.length;
+
   return (
     <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
       {/* ==================================================
@@ -198,7 +343,7 @@ export default function PurchasesPage() {
           <h1 className="text-2xl font-bold text-gray-800">المشتريات</h1>
 
           <p className="text-sm text-gray-500 mt-1">
-            إدارة فواتير المشتريات والموردين والمدفوعات
+            إدارة فواتير المشتريات والموردين والمدفوعات وربطها بالأستاذ العام
           </p>
         </div>
 
@@ -229,8 +374,8 @@ export default function PurchasesPage() {
         />
 
         <StatCard
-          title="الفواتير المدفوعة"
-          value={paidInvoices.toLocaleString("ar-SA")}
+          title="القيود المرحلة"
+          value={postedJournalCount.toLocaleString("ar-SA")}
           icon={FiCheckCircle}
         />
 
@@ -242,7 +387,65 @@ export default function PurchasesPage() {
       </div>
 
       {/* ==================================================
-          الحسابات الفرعية
+          حالة الربط المحاسبي
+      ================================================== */}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <FiBookOpen size={21} />
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500">
+                الحسابات المرتبطة بالمشتريات
+              </p>
+
+              <p className="text-xl font-bold text-gray-800 mt-1">
+                {purchaseAccountCount.toLocaleString("ar-SA")}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-green-50 text-green-600 flex items-center justify-center">
+              <FiCheckCircle size={21} />
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500">
+                القيود المرحلة إلى الأستاذ
+              </p>
+
+              <p className="text-xl font-bold text-green-700 mt-1">
+                {postedJournalCount.toLocaleString("ar-SA")}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-yellow-50 text-yellow-600 flex items-center justify-center">
+              <FiAlertCircle size={21} />
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-500">فواتير بدون قيد مرحل</p>
+
+              <p className="text-xl font-bold text-yellow-700 mt-1">
+                {unpostedJournalCount.toLocaleString("ar-SA")}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ==================================================
+          الحسابات المرتبطة فعليًا
       ================================================== */}
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-6">
@@ -253,36 +456,52 @@ export default function PurchasesPage() {
 
           <div>
             <h2 className="font-bold text-gray-800 text-sm">
-              الحسابات المحاسبية للمشتريات
+              الحسابات المرتبطة بالمشتريات
             </h2>
 
             <p className="text-xs text-gray-400 mt-1">
-              يتم جلب الحسابات من دليل الحسابات وتظهر الحسابات الفرعية فقط
+              تظهر هنا الحسابات المستخدمة فعليًا في فواتير المشتريات
             </p>
           </div>
         </div>
 
-        {subAccounts.length === 0 ? (
+        {linkedPurchaseAccounts.length === 0 ? (
           <div className="mt-4 rounded-lg bg-yellow-50 border border-yellow-100 p-3">
             <p className="text-xs text-yellow-700 leading-6">
-              لا توجد حسابات فرعية حاليًا. أضف حسابًا رئيسيًا ثم أضف حسابًا
-              فرعيًا من دليل الحسابات.
+              لا توجد حسابات مرتبطة بفواتير المشتريات حاليًا. عند حفظ فاتورة
+              جديدة سيتم ربطها بالحساب المحاسبي المحدد.
             </p>
           </div>
         ) : (
           <div className="flex flex-wrap gap-2 mt-4">
-            {subAccounts.map((account) => (
-              <span
-                key={account.id}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs"
-              >
-                <span className="font-mono font-semibold">{account.code}</span>
+            {linkedPurchaseAccounts.map((account) => {
+              const ledger = getLedgerBalance(account.code);
 
-                <span>-</span>
+              return (
+                <div
+                  key={account.id}
+                  className="inline-flex flex-col px-4 py-2.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-100"
+                >
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-mono font-bold">{account.code}</span>
 
-                <span>{account.name}</span>
-              </span>
-            ))}
+                    <span>-</span>
+
+                    <span>{account.name}</span>
+                  </div>
+
+                  <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-500">
+                    <span>مدين: {formatMoney(ledger.debit)}</span>
+
+                    <span>دائن: {formatMoney(ledger.credit)}</span>
+
+                    <span className="font-bold text-blue-700">
+                      الرصيد: {formatMoney(ledger.balance)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -320,38 +539,46 @@ export default function PurchasesPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] text-right">
+          <table className="w-full min-w-[1350px] text-right">
             <thead className="bg-gray-50">
               <tr className="text-sm text-gray-500">
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
                   رقم الفاتورة
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
                   المورد
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
                   الحساب
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
                   التاريخ
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
                   المبلغ
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
                   طريقة الدفع
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  الحالة
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
+                  حالة الدفع
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
+                  الأستاذ العام
+                </th>
+
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
+                  رصيد الحساب
+                </th>
+
+                <th className="px-5 py-4 font-medium whitespace-nowrap">
                   الإجراءات
                 </th>
               </tr>
@@ -364,6 +591,12 @@ export default function PurchasesPage() {
 
                   const account = getAccount(invoice.accountCode);
 
+                  const ledger = getLedgerBalance(invoice.accountCode);
+
+                  const journalEntry = getPurchaseJournalEntry(invoice);
+
+                  const isPosted = journalEntry?.status === "posted";
+
                   return (
                     <tr
                       key={invoice.id}
@@ -371,7 +604,7 @@ export default function PurchasesPage() {
                     >
                       {/* رقم الفاتورة */}
 
-                      <td className="px-6 py-4">
+                      <td className="px-5 py-4">
                         <Link
                           href={`/purchases/${invoice.id}`}
                           className="font-semibold text-blue-600 hover:text-blue-700"
@@ -382,13 +615,13 @@ export default function PurchasesPage() {
 
                       {/* المورد */}
 
-                      <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
+                      <td className="px-5 py-4 text-gray-700 whitespace-nowrap">
                         {invoice.supplierName}
                       </td>
 
                       {/* الحساب */}
 
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-5 py-4 whitespace-nowrap">
                         {account ? (
                           <div className="flex flex-col">
                             <span className="font-mono text-xs font-semibold text-blue-700">
@@ -418,31 +651,80 @@ export default function PurchasesPage() {
 
                       {/* التاريخ */}
 
-                      <td className="px-6 py-4 text-gray-500 whitespace-nowrap">
+                      <td className="px-5 py-4 text-gray-500 whitespace-nowrap">
                         {invoice.date}
                       </td>
 
                       {/* المبلغ */}
 
-                      <td className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">
+                      <td className="px-5 py-4 font-semibold text-gray-700 whitespace-nowrap">
                         {formatMoney(getAmount(invoice.total))} ريال
                       </td>
 
                       {/* طريقة الدفع */}
 
-                      <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+                      <td className="px-5 py-4 text-sm text-gray-600 whitespace-nowrap">
                         {getPaymentMethodName(invoice.paymentMethod)}
                       </td>
 
-                      {/* الحالة */}
+                      {/* حالة الدفع */}
 
-                      <td className="px-6 py-4">
+                      <td className="px-5 py-4">
                         <Status status={status} />
+                      </td>
+
+                      {/* حالة الأستاذ العام */}
+
+                      <td className="px-5 py-4">
+                        {isPosted ? (
+                          <div className="flex flex-col gap-1">
+                            <span className="inline-flex w-fit items-center gap-1.5 px-3 py-1 rounded-full bg-green-50 text-green-700 text-xs font-medium">
+                              <FiCheckCircle size={13} />
+                              مرحل
+                            </span>
+
+                            <span className="text-[10px] text-gray-400">
+                              القيد: {journalEntry?.number || "بدون رقم"}
+                            </span>
+                          </div>
+                        ) : journalEntry ? (
+                          <div className="flex flex-col gap-1">
+                            <span className="inline-flex w-fit items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-50 text-yellow-700 text-xs font-medium">
+                              <FiClock size={13} />
+                              مسودة
+                            </span>
+
+                            <span className="text-[10px] text-gray-400">
+                              القيد غير مرحل
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-50 text-red-600 text-xs font-medium">
+                            <FiAlertCircle size={13} />
+                            غير مرحل
+                          </span>
+                        )}
+                      </td>
+
+                      {/* رصيد الحساب */}
+
+                      <td className="px-5 py-4 whitespace-nowrap">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-gray-800">
+                            {formatMoney(ledger.balance)}
+                          </span>
+
+                          <span className="text-[10px] text-gray-400 mt-0.5">
+                            مدين: {formatMoney(ledger.debit)}
+                            {" | "}
+                            دائن: {formatMoney(ledger.credit)}
+                          </span>
+                        </div>
                       </td>
 
                       {/* الإجراءات */}
 
-                      <td className="px-6 py-4">
+                      <td className="px-5 py-4">
                         <button
                           type="button"
                           className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition"
@@ -457,7 +739,7 @@ export default function PurchasesPage() {
               ) : (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={10}
                     className="px-6 py-12 text-center text-gray-400"
                   >
                     {purchases.length === 0
@@ -525,7 +807,7 @@ function StatCard({
 }: {
   title: string;
   value: string;
-  icon: React.ElementType;
+  icon: ElementType;
 }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
@@ -551,11 +833,8 @@ function StatCard({
 function Status({ status }: { status: string }) {
   const styles: Record<string, string> = {
     مدفوعة: "bg-green-50 text-green-600",
-
     آجلة: "bg-yellow-50 text-yellow-600",
-
     معلقة: "bg-yellow-50 text-yellow-600",
-
     متأخرة: "bg-red-50 text-red-600",
   };
 

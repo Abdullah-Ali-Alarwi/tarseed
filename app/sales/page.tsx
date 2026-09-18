@@ -12,6 +12,7 @@ import {
   FiCheckCircle,
   FiMoreVertical,
   FiBookOpen,
+  FiActivity,
 } from "react-icons/fi";
 
 export default function SalesPage() {
@@ -19,6 +20,7 @@ export default function SalesPage() {
 
   const sales = useERPStore((state) => state.sales);
   const accounts = useERPStore((state) => state.accounts);
+  const journalEntries = useERPStore((state) => state.journalEntries);
 
   // ======================================================
   // الحسابات الفرعية فقط
@@ -40,7 +42,7 @@ export default function SalesPage() {
 
   const getAmount = (amount: unknown): number => {
     if (typeof amount === "number") {
-      return amount;
+      return Number.isFinite(amount) ? amount : 0;
     }
 
     if (typeof amount === "string") {
@@ -80,7 +82,10 @@ export default function SalesPage() {
 
         const discount = itemSubtotal * (getAmount(item.discount) / 100);
 
-        return total + Math.max(itemSubtotal - discount, 0);
+        const tax =
+          Math.max(itemSubtotal - discount, 0) * (getAmount(item.tax) / 100);
+
+        return total + Math.max(itemSubtotal - discount, 0) + tax;
       }, 0);
     }
 
@@ -108,7 +113,92 @@ export default function SalesPage() {
       return null;
     }
 
-    return subAccounts.find((account) => account.code === accountCode);
+    return accounts.find((account) => account.code === accountCode) ?? null;
+  };
+
+  // ======================================================
+  // الحصول على حركات الحساب من الأستاذ العام
+  // ======================================================
+
+  const getAccountJournalLines = (accountCode?: string) => {
+    if (!accountCode) {
+      return [];
+    }
+
+    return journalEntries.flatMap((entry) =>
+      entry.lines
+        .filter((line) => line.accountCode === accountCode)
+        .map((line) => ({
+          ...line,
+          entryId: entry.id,
+          entryNumber: entry.number,
+          entryDate: entry.date,
+          entryDescription: entry.description,
+          entryStatus: entry.status,
+        })),
+    );
+  };
+
+  // ======================================================
+  // رصيد الحساب في الأستاذ العام
+  //
+  // المدين - الدائن
+  // ======================================================
+
+  const getAccountBalance = (accountCode?: string) => {
+    if (!accountCode) {
+      return 0;
+    }
+
+    const lines = getAccountJournalLines(accountCode);
+
+    return lines.reduce(
+      (balance, line) =>
+        balance + getAmount(line.debit) - getAmount(line.credit),
+      0,
+    );
+  };
+
+  // ======================================================
+  // إجمالي المدين للحساب
+  // ======================================================
+
+  const getAccountDebit = (accountCode?: string) => {
+    if (!accountCode) {
+      return 0;
+    }
+
+    return getAccountJournalLines(accountCode).reduce(
+      (total, line) => total + getAmount(line.debit),
+      0,
+    );
+  };
+
+  // ======================================================
+  // إجمالي الدائن للحساب
+  // ======================================================
+
+  const getAccountCredit = (accountCode?: string) => {
+    if (!accountCode) {
+      return 0;
+    }
+
+    return getAccountJournalLines(accountCode).reduce(
+      (total, line) => total + getAmount(line.credit),
+      0,
+    );
+  };
+
+  // ======================================================
+  // عدد حركات الحساب
+  // ======================================================
+
+  const getAccountMovementCount = (accountCode?: string) => {
+    if (!accountCode) {
+      return 0;
+    }
+
+    return getAccountJournalLines(accountCode).length;
   };
 
   // ======================================================
@@ -143,6 +233,8 @@ export default function SalesPage() {
     return sales.filter((invoice) => {
       const accountName = getAccountName(invoice);
 
+      const accountBalance = getAccountBalance(invoice.accountCode);
+
       return (
         String(invoice.invoiceNumber).toLowerCase().includes(value) ||
         String(invoice.customerName).toLowerCase().includes(value) ||
@@ -151,10 +243,11 @@ export default function SalesPage() {
         String(accountName).toLowerCase().includes(value) ||
         String(invoice.accountCode || "")
           .toLowerCase()
-          .includes(value)
+          .includes(value) ||
+        String(accountBalance).includes(value)
       );
     });
-  }, [sales, search, subAccounts]);
+  }, [sales, search, accounts, journalEntries]);
 
   // ======================================================
   // إجمالي المبيعات
@@ -188,6 +281,27 @@ export default function SalesPage() {
       .reduce((total, invoice) => total + getSaleTotal(invoice), 0);
   }, [sales]);
 
+  // ======================================================
+  // عدد القيود المرتبطة بالمبيعات
+  // ======================================================
+
+  const salesJournalCount = useMemo(() => {
+    return journalEntries.filter((entry) =>
+      entry.reference?.toLowerCase().startsWith("sale"),
+    ).length;
+  }, [journalEntries]);
+
+  // ======================================================
+  // إجمالي حركات الأستاذ
+  // ======================================================
+
+  const totalJournalLines = useMemo(() => {
+    return journalEntries.reduce(
+      (total, entry) => total + entry.lines.length,
+      0,
+    );
+  }, [journalEntries]);
+
   return (
     <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
       {/* ==================================================
@@ -199,7 +313,7 @@ export default function SalesPage() {
           <h1 className="text-2xl font-bold text-gray-800">المبيعات</h1>
 
           <p className="text-sm text-gray-500 mt-1">
-            إدارة فواتير المبيعات والعملاء والتحصيلات
+            إدارة فواتير المبيعات والعملاء والتحصيلات والربط مع الأستاذ العام
           </p>
         </div>
 
@@ -243,6 +357,56 @@ export default function SalesPage() {
       </div>
 
       {/* ==================================================
+          حالة الربط المحاسبي
+      ================================================== */}
+
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
+              <FiBookOpen size={21} />
+            </div>
+
+            <div>
+              <h2 className="font-bold text-gray-800 text-sm">
+                الربط مع الأستاذ العام
+              </h2>
+
+              <p className="text-xs text-gray-400 mt-1">
+                حركات الحسابات المحاسبية المرتبطة بفواتير المبيعات
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg bg-gray-50 px-4 py-3 text-center">
+              <p className="text-xs text-gray-400">القيود</p>
+
+              <p className="font-bold text-gray-800 mt-1">
+                {salesJournalCount.toLocaleString("ar-SA")}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-gray-50 px-4 py-3 text-center">
+              <p className="text-xs text-gray-400">حركات الأستاذ</p>
+
+              <p className="font-bold text-gray-800 mt-1">
+                {totalJournalLines.toLocaleString("ar-SA")}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-green-50 px-4 py-3 text-center col-span-2 sm:col-span-1">
+              <p className="text-xs text-green-600">الحسابات</p>
+
+              <p className="font-bold text-green-700 mt-1">
+                {subAccounts.length.toLocaleString("ar-SA")}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ==================================================
           الحسابات المتاحة
       ================================================== */}
 
@@ -258,7 +422,8 @@ export default function SalesPage() {
             </h2>
 
             <p className="text-xs text-gray-400 mt-1">
-              يتم استخدام الحسابات الفرعية فقط
+              الحسابات الفرعية المستخدمة في المبيعات تظهر مع أرصدتها من الأستاذ
+              العام
             </p>
           </div>
         </div>
@@ -271,19 +436,89 @@ export default function SalesPage() {
             </p>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2 mt-4">
-            {subAccounts.map((account) => (
-              <span
-                key={account.id}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs"
-              >
-                <span className="font-mono font-semibold">{account.code}</span>
+          <div className="overflow-x-auto mt-4">
+            <table className="w-full min-w-[800px] text-right">
+              <thead className="bg-gray-50">
+                <tr className="text-xs text-gray-500">
+                  <th className="px-4 py-3 font-medium">الحساب</th>
 
-                <span>-</span>
+                  <th className="px-4 py-3 font-medium">النوع</th>
 
-                <span>{account.name}</span>
-              </span>
-            ))}
+                  <th className="px-4 py-3 font-medium">مدين</th>
+
+                  <th className="px-4 py-3 font-medium">دائن</th>
+
+                  <th className="px-4 py-3 font-medium">الرصيد</th>
+
+                  <th className="px-4 py-3 font-medium">الحركات</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-gray-100">
+                {subAccounts.map((account) => {
+                  const debit = getAccountDebit(account.code);
+
+                  const credit = getAccountCredit(account.code);
+
+                  const balance = getAccountBalance(account.code);
+
+                  const movementCount = getAccountMovementCount(account.code);
+
+                  return (
+                    <tr
+                      key={account.id}
+                      className="hover:bg-gray-50 transition"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col">
+                          <span className="font-mono text-xs font-semibold text-green-700">
+                            {account.code}
+                          </span>
+
+                          <span className="text-sm text-gray-700 mt-0.5">
+                            {account.name}
+                          </span>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <AccountTypeBadge type={account.type} />
+                      </td>
+
+                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                        {formatMoney(debit)}
+                      </td>
+
+                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                        {formatMoney(credit)}
+                      </td>
+
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span
+                          className={`font-semibold ${
+                            balance >= 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
+                          {formatMoney(Math.abs(balance))}
+                        </span>
+
+                        <span className="text-xs text-gray-400 mr-1">
+                          {balance >= 0 ? "مدين" : "دائن"}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                          <FiActivity size={14} />
+
+                          {movementCount.toLocaleString("ar-SA")}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -299,7 +534,7 @@ export default function SalesPage() {
               <h2 className="font-bold text-gray-800">فواتير المبيعات</h2>
 
               <p className="text-xs text-gray-400 mt-1">
-                إجمالي الفواتير: {totalInvoices}
+                إجمالي الفواتير: {totalInvoices.toLocaleString("ar-SA")}
               </p>
             </div>
 
@@ -321,7 +556,7 @@ export default function SalesPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] text-right">
+          <table className="w-full min-w-[1300px] text-right">
             <thead className="bg-gray-50">
               <tr className="text-sm text-gray-500">
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
@@ -334,6 +569,10 @@ export default function SalesPage() {
 
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
                   الحساب
+                </th>
+
+                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  رصيد الحساب
                 </th>
 
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
@@ -353,6 +592,10 @@ export default function SalesPage() {
                 </th>
 
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  الأستاذ
+                </th>
+
+                <th className="px-6 py-4 font-medium whitespace-nowrap">
                   الإجراءات
                 </th>
               </tr>
@@ -365,12 +608,19 @@ export default function SalesPage() {
 
                   const account = getAccount(invoice.accountCode);
 
+                  const accountBalance = getAccountBalance(invoice.accountCode);
+
+                  const movementCount = getAccountMovementCount(
+                    invoice.accountCode,
+                  );
+
                   return (
                     <tr
                       key={invoice.id}
                       className="hover:bg-gray-50 transition"
                     >
                       {/* رقم الفاتورة */}
+
                       <td className="px-6 py-4">
                         <Link
                           href={`/sales/${invoice.id}`}
@@ -381,11 +631,13 @@ export default function SalesPage() {
                       </td>
 
                       {/* العميل */}
+
                       <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
                         {invoice.customerName}
                       </td>
 
                       {/* الحساب */}
+
                       <td className="px-6 py-4 whitespace-nowrap">
                         {account ? (
                           <div className="flex flex-col">
@@ -404,27 +656,83 @@ export default function SalesPage() {
                         )}
                       </td>
 
+                      {/* رصيد الحساب */}
+
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {invoice.accountCode ? (
+                          <div className="flex flex-col">
+                            <span
+                              className={`font-semibold text-sm ${
+                                accountBalance >= 0
+                                  ? "text-green-600"
+                                  : "text-red-600"
+                              }`}
+                            >
+                              {formatMoney(Math.abs(accountBalance))}
+                            </span>
+
+                            <span className="text-[11px] text-gray-400">
+                              {accountBalance >= 0 ? "مدين" : "دائن"}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
+
                       {/* التاريخ */}
+
                       <td className="px-6 py-4 text-gray-500 whitespace-nowrap">
                         {invoice.date}
                       </td>
 
                       {/* المبلغ */}
+
                       <td className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">
                         {formatMoney(getSaleTotal(invoice))} ريال
                       </td>
 
                       {/* طريقة الدفع */}
+
                       <td className="px-6 py-4 whitespace-nowrap">
                         <PaymentMethod method={invoice.paymentMethod} />
                       </td>
 
                       {/* الحالة */}
+
                       <td className="px-6 py-4">
                         <Status status={status} />
                       </td>
 
+                      {/* الأستاذ العام */}
+
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {movementCount > 0 ? (
+                          <div className="flex flex-col">
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
+                              <FiCheckCircle size={14} />
+                              مرتبط
+                            </span>
+
+                            <span className="text-[11px] text-gray-400 mt-1">
+                              {movementCount} حركة
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium text-yellow-600">
+                              بدون حركة
+                            </span>
+
+                            <span className="text-[11px] text-gray-400 mt-1">
+                              بانتظار القيد
+                            </span>
+                          </div>
+                        )}
+                      </td>
+
                       {/* الإجراءات */}
+
                       <td className="px-6 py-4">
                         <button
                           type="button"
@@ -439,7 +747,7 @@ export default function SalesPage() {
               ) : (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={10}
                     className="px-6 py-12 text-center text-gray-400"
                   >
                     {sales.length === 0
@@ -458,7 +766,8 @@ export default function SalesPage() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-5 border-t border-gray-100">
           <p className="text-sm text-gray-400">
-            عرض {filteredInvoices.length} من {totalInvoices} فاتورة
+            عرض {filteredInvoices.length.toLocaleString("ar-SA")} من{" "}
+            {totalInvoices.toLocaleString("ar-SA")} فاتورة
           </p>
 
           <div className="flex gap-2">
@@ -523,6 +832,40 @@ function StatCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// ======================================================
+// نوع الحساب
+// ======================================================
+
+function AccountTypeBadge({
+  type,
+}: {
+  type: "asset" | "liability" | "equity" | "revenue" | "expense";
+}) {
+  const labels = {
+    asset: "أصول",
+    liability: "التزامات",
+    equity: "حقوق ملكية",
+    revenue: "إيرادات",
+    expense: "مصروفات",
+  };
+
+  const styles = {
+    asset: "bg-blue-50 text-blue-600",
+    liability: "bg-orange-50 text-orange-600",
+    equity: "bg-purple-50 text-purple-600",
+    revenue: "bg-green-50 text-green-600",
+    expense: "bg-red-50 text-red-600",
+  };
+
+  return (
+    <span
+      className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${styles[type]}`}
+    >
+      {labels[type]}
+    </span>
   );
 }
 

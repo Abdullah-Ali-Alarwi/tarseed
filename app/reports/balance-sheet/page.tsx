@@ -16,25 +16,23 @@ import {
 
 import { useERPStore } from "@/Store/erpStore";
 
-const OPENING_CAPITAL = 1800000;
-
 export default function BalanceSheetPage() {
   const [reportDate, setReportDate] = useState("2026-08-31");
   const [refreshKey, setRefreshKey] = useState(0);
 
+  const accounts = useERPStore((state) => state.accounts);
+  const journals = useERPStore((state) => state.journalEntries);
+
   const sales = useERPStore((state) => state.sales);
   const purchases = useERPStore((state) => state.purchases);
   const products = useERPStore((state) => state.products);
-  const customers = useERPStore((state) => state.customers);
-  const suppliers = useERPStore((state) => state.suppliers);
-  const journals = useERPStore((state) => state.journalEntries);
 
   // ======================================================
   // تنسيق المبالغ
   // ======================================================
 
   const formatMoney = (value: number) => {
-    return value.toLocaleString("ar-SA", {
+    return Number(value || 0).toLocaleString("ar-SA", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
@@ -45,27 +43,233 @@ export default function BalanceSheetPage() {
   // ======================================================
 
   const reportData = useMemo(() => {
-    const salesUpToDate = sales.filter((sale) => sale.date <= reportDate);
+    // ====================================================
+    // القيود المرحلة حتى تاريخ التقرير
+    // ====================================================
+
+    const postedJournals = journals.filter(
+      (journal) =>
+        journal.status === "posted" &&
+        String(journal.date).slice(0, 10) <= reportDate,
+    );
+
+    // ====================================================
+    // خريطة الحسابات
+    // ====================================================
+
+    const accountMap = new Map(
+      accounts.map((account) => [String(account.code), account]),
+    );
+
+    // ====================================================
+    // أرصدة الحسابات
+    // ====================================================
+
+    const accountBalances = new Map<
+      string,
+      {
+        debit: number;
+        credit: number;
+      }
+    >();
+
+    accounts.forEach((account) => {
+      accountBalances.set(String(account.code), {
+        debit: 0,
+        credit: 0,
+      });
+    });
+
+    postedJournals.forEach((journal) => {
+      journal.lines.forEach((line) => {
+        const code = String(line.accountCode);
+
+        const current = accountBalances.get(code) || {
+          debit: 0,
+          credit: 0,
+        };
+
+        current.debit += Number(line.debit) || 0;
+        current.credit += Number(line.credit) || 0;
+
+        accountBalances.set(code, current);
+      });
+    });
+
+    // ====================================================
+    // طبيعة رصيد الحساب
+    //
+    // أصل / مصروف:
+    // مدين - دائن
+    //
+    // التزام / حقوق ملكية / إيراد:
+    // دائن - مدين
+    // ====================================================
+
+    const getAccountBalance = (accountCode: string) => {
+      const account = accountMap.get(String(accountCode));
+      const data = accountBalances.get(String(accountCode));
+
+      if (!data) {
+        return 0;
+      }
+
+      if (!account) {
+        return data.debit - data.credit;
+      }
+
+      if (account.type === "asset" || account.type === "expense") {
+        return data.debit - data.credit;
+      }
+
+      return data.credit - data.debit;
+    };
+
+    // ====================================================
+    // الرصيد الخام للحساب
+    // ====================================================
+
+    const getRawBalance = (accountCode: string) => {
+      const data = accountBalances.get(String(accountCode));
+
+      if (!data) {
+        return 0;
+      }
+
+      return data.debit - data.credit;
+    };
+
+    // ====================================================
+    // إجمالي مجموعة حسب نوع الحساب
+    // ====================================================
+
+    const getTypeBalance = (
+      type: "asset" | "liability" | "equity" | "revenue" | "expense",
+    ) => {
+      return accounts
+        .filter((account) => account.type === type)
+        .filter((account) => account.level > 0)
+        .reduce((sum, account) => {
+          return sum + getAccountBalance(account.code);
+        }, 0);
+    };
+
+    // ====================================================
+    // الإيرادات
+    // ====================================================
+
+    const totalRevenue = getTypeBalance("revenue");
+
+    // ====================================================
+    // المصروفات
+    // ====================================================
+
+    const totalExpenses = getTypeBalance("expense");
+
+    // ====================================================
+    // صافي الربح
+    // ====================================================
+
+    const currentNetProfit = totalRevenue - totalExpenses;
+
+    // ====================================================
+    // جميع حسابات الأصول التفصيلية
+    // ====================================================
+
+    const assetAccounts = accounts
+      .filter((account) => account.type === "asset")
+      .filter((account) => account.level > 0)
+      .filter((account) => Math.abs(getAccountBalance(account.code)) > 0.009);
+
+    // ====================================================
+    // حسابات الصندوق
+    // ====================================================
+
+    const cashAccounts = assetAccounts.filter((account) => {
+      const name = account.name.toLowerCase();
+
+      return (
+        name.includes("صندوق") || name.includes("نقد") || name.includes("cash")
+      );
+    });
+
+    // ====================================================
+    // حسابات البنوك
+    // ====================================================
+
+    const bankAccounts = assetAccounts.filter((account) => {
+      const name = account.name.toLowerCase();
+
+      return (
+        name.includes("بنك") || name.includes("البنك") || name.includes("bank")
+      );
+    });
+
+    // ====================================================
+    // حسابات العملاء
+    //
+    // 1001 = العملاء
+    // الحسابات التابعة له = حسابات العملاء
+    // ====================================================
+
+    const customerDetailAccounts = assetAccounts.filter(
+      (account) => account.parent === "1001",
+    );
+
+    const customerReceivables = customerDetailAccounts.reduce(
+      (sum, account) => {
+        return sum + getAccountBalance(account.code);
+      },
+      0,
+    );
+
+    // ====================================================
+    // حسابات المخزون
+    // ====================================================
+
+    const inventoryAccounts = assetAccounts.filter((account) => {
+      const name = account.name;
+
+      return (
+        name.includes("المخزون") ||
+        name.includes("مخزون") ||
+        name.includes("بضاعة")
+      );
+    });
+
+    const inventoryFromAccounts = inventoryAccounts.reduce((sum, account) => {
+      return sum + getAccountBalance(account.code);
+    }, 0);
+
+    // ====================================================
+    // المشتريات حتى تاريخ التقرير
+    // ====================================================
 
     const purchasesUpToDate = purchases.filter(
-      (purchase) => purchase.date <= reportDate,
-    );
-
-    const journalsUpToDate = journals.filter(
-      (journal) => journal.date <= reportDate,
+      (purchase) => String(purchase.date).slice(0, 10) <= reportDate,
     );
 
     // ====================================================
-    // دالة حساب المخزون
+    // المبيعات حتى تاريخ التقرير
     // ====================================================
 
-    const calculateInventoryValue = () => {
+    const salesUpToDate = sales.filter(
+      (sale) => String(sale.date).slice(0, 10) <= reportDate,
+    );
+
+    // ====================================================
+    // حساب قيمة المخزون التشغيلي
+    //
+    // الكمية المشتراة - الكمية المباعة
+    // × متوسط سعر الشراء
+    // ====================================================
+
+    const calculateOperationalInventory = () => {
       return products.reduce((total, product) => {
         let purchasedQuantity = 0;
         let purchasedValue = 0;
         let soldQuantity = 0;
 
-        // المشتريات
         purchasesUpToDate.forEach((purchase) => {
           purchase.items.forEach((item) => {
             if (item.productId === product.id) {
@@ -78,7 +282,6 @@ export default function BalanceSheetPage() {
           });
         });
 
-        // المبيعات
         salesUpToDate.forEach((sale) => {
           sale.items.forEach((item) => {
             if (item.productId === product.id) {
@@ -96,316 +299,591 @@ export default function BalanceSheetPage() {
       }, 0);
     };
 
-    /* =====================================================
-       الأصول
-    ===================================================== */
+    const operationalInventory = calculateOperationalInventory();
 
-    const cashFromSales = salesUpToDate
-      .filter((sale) => sale.paymentMethod === "cash")
-      .reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
+    // ====================================================
+    // قيمة المخزون النهائية
+    //
+    // الأولوية للحساب المحاسبي.
+    // إذا لم يوجد رصيد محاسبي نستخدم المخزون التشغيلي.
+    // ====================================================
 
-    const cashFromJournals = journalsUpToDate
-      .filter((journal) => journal.status === "posted")
-      .flatMap((journal) => journal.lines)
-      .filter((line) => line.accountCode === "1101")
-      .reduce(
-        (sum, line) =>
-          sum + (Number(line.debit) || 0) - (Number(line.credit) || 0),
-        0,
-      );
+    const inventory =
+      Math.abs(inventoryFromAccounts) > 0.009
+        ? inventoryFromAccounts
+        : operationalInventory;
 
-    const bankFromSales = salesUpToDate
-      .filter((sale) => sale.paymentMethod === "bank")
-      .reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
+    // ====================================================
+    // النقدية
+    // ====================================================
 
-    const bankFromJournals = journalsUpToDate
-      .filter((journal) => journal.status === "posted")
-      .flatMap((journal) => journal.lines)
-      .filter((line) => line.accountCode === "1102")
-      .reduce(
-        (sum, line) =>
-          sum + (Number(line.debit) || 0) - (Number(line.credit) || 0),
-        0,
-      );
-
-    const customerReceivables = customers.reduce(
-      (sum, customer) => sum + (Number(customer.balance) || 0),
+    const cash = cashAccounts.reduce(
+      (sum, account) => sum + getAccountBalance(account.code),
       0,
     );
 
-    const customerReceivablesFromSales = salesUpToDate
-      .filter((sale) => sale.paymentMethod === "credit")
-      .reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
+    // ====================================================
+    // البنوك
+    // ====================================================
 
-    const customerReceivablesFromJournals = journalsUpToDate
-      .filter((journal) => journal.status === "posted")
-      .flatMap((journal) => journal.lines)
-      .filter((line) => line.accountCode === "1103")
+    const bank = bankAccounts.reduce(
+      (sum, account) => sum + getAccountBalance(account.code),
+      0,
+    );
+
+    // ====================================================
+    // المصروفات المدفوعة مقدمًا
+    // ====================================================
+
+    const prepaidExpenseAccounts = assetAccounts.filter((account) => {
+      const name = account.name;
+
+      return (
+        name.includes("مدفوع مقدم") ||
+        name.includes("مدفوعة مقدم") ||
+        name.includes("مقدم") ||
+        name.includes("دفعات مقدمة")
+      );
+    });
+
+    const prepaidExpenses = prepaidExpenseAccounts.reduce(
+      (sum, account) => sum + getAccountBalance(account.code),
+      0,
+    );
+
+    // ====================================================
+    // حسابات الأصول الأخرى
+    // ====================================================
+
+    const isCashAccount = (account: (typeof accounts)[number]) => {
+      const name = account.name.toLowerCase();
+
+      return (
+        name.includes("صندوق") || name.includes("نقد") || name.includes("cash")
+      );
+    };
+
+    const isBankAccount = (account: (typeof accounts)[number]) => {
+      const name = account.name.toLowerCase();
+
+      return (
+        name.includes("بنك") || name.includes("البنك") || name.includes("bank")
+      );
+    };
+
+    const isInventoryAccount = (account: (typeof accounts)[number]) => {
+      const name = account.name;
+
+      return (
+        name.includes("المخزون") ||
+        name.includes("مخزون") ||
+        name.includes("بضاعة")
+      );
+    };
+
+    const isPrepaidAccount = (account: (typeof accounts)[number]) => {
+      const name = account.name;
+
+      return (
+        name.includes("مدفوع مقدم") ||
+        name.includes("مدفوعة مقدم") ||
+        name.includes("مقدم") ||
+        name.includes("دفعات مقدمة")
+      );
+    };
+
+    const isCustomerAccount = (account: (typeof accounts)[number]) => {
+      return account.parent === "1001";
+    };
+
+    // ====================================================
+    // تحديد الأصول غير المتداولة
+    //
+    // الحسابات التي تحمل أسماء مثل:
+    // عقارات، مباني، سيارات، معدات، أثاث...
+    // ====================================================
+
+    const isNonCurrentAssetAccount = (account: (typeof accounts)[number]) => {
+      const name = account.name.toLowerCase();
+
+      return (
+        name.includes("أصل ثابت") ||
+        name.includes("اصول ثابت") ||
+        name.includes("أصول ثابتة") ||
+        name.includes("اصول ثابتة") ||
+        name.includes("أرض") ||
+        name.includes("ارض") ||
+        name.includes("مبنى") ||
+        name.includes("مباني") ||
+        name.includes("مبنى") ||
+        name.includes("عقار") ||
+        name.includes("عقارات") ||
+        name.includes("سيارة") ||
+        name.includes("سيارات") ||
+        name.includes("مركبة") ||
+        name.includes("معدات") ||
+        name.includes("آلات") ||
+        name.includes("الات") ||
+        name.includes("ماكينات") ||
+        name.includes("أثاث") ||
+        name.includes("اثاث") ||
+        name.includes("أجهزة") ||
+        name.includes("اجهزة") ||
+        name.includes("حاسب") ||
+        name.includes("كمبيوتر")
+      );
+    };
+
+    // ====================================================
+    // مجمع الإهلاك
+    // ====================================================
+
+    const isAccumulatedDepreciation = (account: (typeof accounts)[number]) => {
+      const name = account.name;
+
+      return (
+        name.includes("مجمع الإهلاك") ||
+        name.includes("مجمع الاستهلاك") ||
+        name.includes("إهلاك متراكم") ||
+        name.includes("استهلاك متراكم")
+      );
+    };
+
+    const accumulatedDepreciation = assetAccounts
+      .filter(isAccumulatedDepreciation)
       .reduce(
-        (sum, line) =>
-          sum + (Number(line.debit) || 0) - (Number(line.credit) || 0),
+        (sum, account) => sum + Math.abs(getAccountBalance(account.code)),
         0,
       );
 
     // ====================================================
-    // المخزون من حركات المشتريات والمبيعات
+    // الأصول غير المتداولة
     // ====================================================
 
-    const inventoryValue = calculateInventoryValue();
+    const nonCurrentAssetAccounts = assetAccounts.filter((account) => {
+      return isNonCurrentAssetAccount(account);
+    });
 
-    const inventoryFromJournals = journalsUpToDate
-      .filter((journal) => journal.status === "posted")
-      .flatMap((journal) => journal.lines)
-      .filter((line) => line.accountCode === "1104")
-      .reduce(
-        (sum, line) =>
-          sum + (Number(line.debit) || 0) - (Number(line.credit) || 0),
-        0,
-      );
+    const nonCurrentAssets = nonCurrentAssetAccounts
+      .filter((account) => !isAccumulatedDepreciation(account))
+      .map((account) => ({
+        name: account.name,
+        amount: Math.max(getAccountBalance(account.code), 0),
+      }))
+      .filter((item) => item.amount > 0.009);
 
-    /*
-      نستخدم أرصدة العملاء من المتجر عندما تكون موجودة،
-      وإلا نعتمد على القيود،
-      ثم المبيعات الآجلة.
-    */
+    // ====================================================
+    // الأصول المتداولة الأخرى
+    //
+    // هنا نستبعد:
+    // الصندوق
+    // البنك
+    // العملاء
+    // المخزون
+    // المصروفات المقدمة
+    // الأصول الثابتة
+    // ====================================================
 
-    const receivables =
-      customerReceivables > 0
-        ? customerReceivables
-        : customerReceivablesFromJournals > 0
-          ? customerReceivablesFromJournals
-          : customerReceivablesFromSales;
+    const otherCurrentAssets = assetAccounts
+      .filter((account) => {
+        if (account.code === "1000") {
+          return false;
+        }
 
-    /*
-      قيمة المخزون من حركة المنتجات،
-      وإذا لم توجد قيمة نستخدم قيود المخزون.
-    */
+        if (isCashAccount(account)) {
+          return false;
+        }
 
-    const inventory =
-      inventoryValue > 0 ? inventoryValue : inventoryFromJournals;
+        if (isBankAccount(account)) {
+          return false;
+        }
 
-    const cash = cashFromJournals > 0 ? cashFromJournals : cashFromSales;
+        if (isCustomerAccount(account)) {
+          return false;
+        }
 
-    const bank = bankFromJournals > 0 ? bankFromJournals : bankFromSales;
+        if (isInventoryAccount(account)) {
+          return false;
+        }
 
-    const prepaidExpenses = 0;
+        if (isPrepaidAccount(account)) {
+          return false;
+        }
+
+        if (isAccumulatedDepreciation(account)) {
+          return false;
+        }
+
+        if (isNonCurrentAssetAccount(account)) {
+          return false;
+        }
+
+        return true;
+      })
+      .map((account) => ({
+        name: account.name,
+        amount: Math.max(getAccountBalance(account.code), 0),
+      }))
+      .filter((item) => item.amount > 0.009);
+
+    // ====================================================
+    // الأصول المتداولة
+    // ====================================================
 
     const currentAssets = [
-      {
-        name: "النقدية بالصندوق",
-        amount: Math.max(cash, 0),
-      },
-      {
-        name: "البنوك",
-        amount: Math.max(bank, 0),
-      },
+      ...cashAccounts.map((account) => ({
+        name: account.name,
+        amount: Math.max(getAccountBalance(account.code), 0),
+      })),
+
+      ...bankAccounts.map((account) => ({
+        name: account.name,
+        amount: Math.max(getAccountBalance(account.code), 0),
+      })),
+
       {
         name: "العملاء والذمم المدينة",
-        amount: Math.max(receivables, 0),
+        amount: Math.max(customerReceivables, 0),
       },
+
       {
         name: "المخزون",
         amount: Math.max(inventory, 0),
       },
-      {
-        name: "المصروفات المدفوعة مقدماً",
-        amount: prepaidExpenses,
-      },
-    ];
 
-    const nonCurrentAssets = [
       {
-        name: "المباني",
-        amount: 0,
+        name: "المصروفات المدفوعة مقدمًا",
+        amount: Math.max(prepaidExpenses, 0),
       },
-      {
-        name: "السيارات والمركبات",
-        amount: 0,
-      },
-      {
-        name: "الأثاث والمعدات",
-        amount: 0,
-      },
-      {
-        name: "أجهزة الحاسب",
-        amount: 0,
-      },
-    ];
 
-    const accumulatedDepreciation = 0;
+      ...otherCurrentAssets,
+    ].filter((item) => item.amount > 0.009);
+
+    // ====================================================
+    // إجمالي الأصول المتداولة
+    // ====================================================
 
     const totalCurrentAssets = currentAssets.reduce(
       (sum, item) => sum + item.amount,
       0,
     );
 
+    // ====================================================
+    // إجمالي الأصول غير المتداولة قبل الإهلاك
+    // ====================================================
+
     const totalNonCurrentAssetsBeforeDepreciation = nonCurrentAssets.reduce(
       (sum, item) => sum + item.amount,
       0,
     );
 
-    const totalNonCurrentAssets =
-      totalNonCurrentAssetsBeforeDepreciation - accumulatedDepreciation;
+    // ====================================================
+    // صافي الأصول غير المتداولة
+    // ====================================================
 
-    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
-
-    /* =====================================================
-       الخصوم
-    ===================================================== */
-
-    const supplierBalances = suppliers.reduce(
-      (sum, supplier) => sum + (Number(supplier.balance) || 0),
+    const totalNonCurrentAssets = Math.max(
+      totalNonCurrentAssetsBeforeDepreciation - accumulatedDepreciation,
       0,
     );
 
-    const supplierCreditPurchases = purchasesUpToDate
-      .filter((purchase) => purchase.paymentMethod === "credit")
-      .reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0);
+    // ====================================================
+    // إجمالي الأصول
+    // ====================================================
 
-    const supplierPayablesFromJournals = journalsUpToDate
-      .filter((journal) => journal.status === "posted")
-      .flatMap((journal) => journal.lines)
-      .filter((line) => line.accountCode === "2101")
-      .reduce(
-        (sum, line) =>
-          sum + (Number(line.credit) || 0) - (Number(line.debit) || 0),
-        0,
-      );
+    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
 
-    const supplierPayables =
-      supplierBalances > 0
-        ? supplierBalances
-        : supplierPayablesFromJournals > 0
-          ? supplierPayablesFromJournals
-          : supplierCreditPurchases;
+    // ====================================================
+    // الخصوم
+    // ====================================================
+
+    const liabilityAccounts = accounts
+      .filter((account) => account.type === "liability")
+      .filter((account) => account.level > 0)
+      .filter((account) => Math.abs(getAccountBalance(account.code)) > 0.009);
+
+    // ====================================================
+    // الموردون
+    //
+    // 2001 = الموردين
+    // ====================================================
+
+    const supplierDetailAccounts = liabilityAccounts.filter(
+      (account) => account.parent === "2001",
+    );
+
+    const supplierPayables = supplierDetailAccounts.reduce(
+      (sum, account) => sum + getAccountBalance(account.code),
+      0,
+    );
+
+    // ====================================================
+    // الوكلاء
+    //
+    // 2002 = الوكلاء
+    // ====================================================
+
+    const agentDetailAccounts = liabilityAccounts.filter(
+      (account) => account.parent === "2002",
+    );
+
+    const agentPayables = agentDetailAccounts.reduce(
+      (sum, account) => sum + getAccountBalance(account.code),
+      0,
+    );
+
+    // ====================================================
+    // خصوم أخرى
+    // ====================================================
+
+    const otherLiabilities = liabilityAccounts
+      .filter((account) => {
+        const isSupplier = account.parent === "2001";
+
+        const isAgent = account.parent === "2002";
+
+        return !isSupplier && !isAgent && account.code !== "2000";
+      })
+      .map((account) => ({
+        name: account.name,
+        amount: Math.max(getAccountBalance(account.code), 0),
+      }))
+      .filter((item) => item.amount > 0.009);
+
+    // ====================================================
+    // الخصوم المتداولة
+    // ====================================================
 
     const currentLiabilities = [
       {
         name: "الموردون والدائنون",
         amount: Math.max(supplierPayables, 0),
       },
-      {
-        name: "المصروفات المستحقة",
-        amount: 0,
-      },
-      {
-        name: "الرواتب المستحقة",
-        amount: 0,
-      },
-      {
-        name: "ضريبة القيمة المضافة المستحقة",
-        amount: 0,
-      },
-    ];
 
-    const nonCurrentLiabilities = [
       {
-        name: "قروض طويلة الأجل",
-        amount: 0,
+        name: "الوكلاء",
+        amount: Math.max(agentPayables, 0),
       },
-    ];
+
+      ...otherLiabilities,
+    ].filter((item) => item.amount > 0.009);
+
+    // ====================================================
+    // الخصوم غير المتداولة
+    //
+    // نعتبر الحسابات التي تشير إلى:
+    // قروض طويلة الأجل
+    // التزامات طويلة الأجل
+    // تمويل طويل الأجل
+    // ====================================================
+
+    const nonCurrentLiabilityAccounts = liabilityAccounts.filter((account) => {
+      const name = account.name.toLowerCase();
+
+      const isSupplier = account.parent === "2001";
+
+      const isAgent = account.parent === "2002";
+
+      const isLongTerm =
+        name.includes("طويل الأجل") ||
+        name.includes("طويل الاجل") ||
+        name.includes("قرض") ||
+        name.includes("قروض") ||
+        name.includes("تمويل طويل") ||
+        name.includes("التزام طويل");
+
+      return !isSupplier && !isAgent && isLongTerm;
+    });
+
+    const nonCurrentLiabilities = nonCurrentLiabilityAccounts
+      .map((account) => ({
+        name: account.name,
+        amount: Math.max(getAccountBalance(account.code), 0),
+      }))
+      .filter((item) => item.amount > 0.009);
+
+    // ====================================================
+    // إجمالي الخصوم المتداولة
+    // ====================================================
 
     const totalCurrentLiabilities = currentLiabilities.reduce(
       (sum, item) => sum + item.amount,
       0,
     );
 
+    // ====================================================
+    // إجمالي الخصوم غير المتداولة
+    // ====================================================
+
     const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce(
       (sum, item) => sum + item.amount,
       0,
     );
 
+    // ====================================================
+    // إجمالي الخصوم
+    // ====================================================
+
     const totalLiabilities =
       totalCurrentLiabilities + totalNonCurrentLiabilities;
 
-    /* =====================================================
-       حقوق الملكية
-    ===================================================== */
+    // ====================================================
+    // حقوق الملكية
+    // ====================================================
 
-    const totalSales = salesUpToDate.reduce(
-      (sum, sale) => sum + (Number(sale.total) || 0),
+    const equityAccounts = accounts
+      .filter((account) => account.type === "equity")
+      .filter((account) => account.level > 0)
+      .filter((account) => Math.abs(getAccountBalance(account.code)) > 0.009);
+
+    const equity = equityAccounts.map((account) => ({
+      name: account.name,
+      amount: getAccountBalance(account.code),
+    }));
+
+    // ====================================================
+    // إجمالي حقوق الملكية من الحسابات
+    // ====================================================
+
+    const totalEquityFromAccounts = equity.reduce(
+      (sum, item) => sum + item.amount,
       0,
     );
 
-    const totalPurchases = purchasesUpToDate.reduce(
-      (sum, purchase) => sum + (Number(purchase.total) || 0),
-      0,
-    );
+    // ====================================================
+    // حقوق الملكية + صافي الربح
+    // ====================================================
 
-    const currentNetProfit = totalSales - totalPurchases;
-
-    const retainedEarnings = 0;
-
-    const equity = [
-      {
-        name: "رأس المال",
-        amount: OPENING_CAPITAL,
-      },
-      {
-        name: "أرباح محتجزة",
-        amount: retainedEarnings,
-      },
+    const equityWithProfit = [
+      ...equity,
+      ...(Math.abs(currentNetProfit) > 0.009
+        ? [
+            {
+              name: "صافي ربح / خسارة الفترة",
+              amount: currentNetProfit,
+            },
+          ]
+        : []),
     ];
 
-    const totalEquity = equity.reduce((sum, item) => sum + item.amount, 0);
+    // ====================================================
+    // إجمالي حقوق الملكية
+    // ====================================================
 
-    const totalEquityWithProfit = totalEquity + currentNetProfit;
+    const totalEquityWithProfit = totalEquityFromAccounts + currentNetProfit;
+
+    // ====================================================
+    // إجمالي الخصوم وحقوق الملكية
+    // ====================================================
 
     const totalLiabilitiesAndEquity = totalLiabilities + totalEquityWithProfit;
+
+    // ====================================================
+    // الفرق
+    // ====================================================
 
     const difference = totalAssets - totalLiabilitiesAndEquity;
 
     const isBalanced = Math.abs(difference) < 0.01;
 
+    // ====================================================
+    // رصيد الحسابات للتقرير
+    // ====================================================
+
+    const balancesForReport = new Map<
+      string,
+      {
+        debit: number;
+        credit: number;
+        balance: number;
+        rawBalance: number;
+      }
+    >();
+
+    accounts.forEach((account) => {
+      const data = accountBalances.get(account.code) || {
+        debit: 0,
+        credit: 0,
+      };
+
+      balancesForReport.set(account.code, {
+        debit: data.debit,
+        credit: data.credit,
+        balance: getAccountBalance(account.code),
+        rawBalance: getRawBalance(account.code),
+      });
+    });
+
     return {
       currentAssets,
       nonCurrentAssets,
       accumulatedDepreciation,
+
       totalCurrentAssets,
       totalNonCurrentAssetsBeforeDepreciation,
       totalNonCurrentAssets,
       totalAssets,
+
       currentLiabilities,
       nonCurrentLiabilities,
+
       totalCurrentLiabilities,
       totalNonCurrentLiabilities,
       totalLiabilities,
+
       equity,
+      equityWithProfit,
+
+      totalRevenue,
+      totalExpenses,
+
       currentNetProfit,
-      totalEquity,
+
+      totalEquityFromAccounts,
       totalEquityWithProfit,
+
       totalLiabilitiesAndEquity,
+
       difference,
       isBalanced,
-      totalSales,
-      totalPurchases,
+
+      accountBalances: balancesForReport,
+
+      postedJournals,
+
+      cash,
+      bank,
+      customerReceivables,
+      inventory,
     };
-  }, [
-    sales,
-    purchases,
-    products,
-    customers,
-    suppliers,
-    journals,
-    reportDate,
-    refreshKey,
-  ]);
+  }, [accounts, journals, sales, purchases, products, reportDate, refreshKey]);
+
+  // ======================================================
+  // استخراج البيانات
+  // ======================================================
 
   const {
     currentAssets,
     nonCurrentAssets,
     accumulatedDepreciation,
+
     totalCurrentAssets,
     totalNonCurrentAssets,
     totalAssets,
+
     currentLiabilities,
     nonCurrentLiabilities,
+
     totalCurrentLiabilities,
+    totalNonCurrentLiabilities,
     totalLiabilities,
-    equity,
+
+    equityWithProfit,
+
     currentNetProfit,
     totalEquityWithProfit,
+
     totalLiabilitiesAndEquity,
+
     difference,
     isBalanced,
   } = reportData;
@@ -463,7 +941,7 @@ export default function BalanceSheetPage() {
           </div>
 
           <p className="text-sm text-gray-500 mt-2">
-            تقرير أصول والتزامات وحقوق ملكية المنشأة
+            تقرير الأصول والالتزامات وحقوق الملكية حسب الحسابات والقيود المرحلة
           </p>
         </div>
 
@@ -540,7 +1018,9 @@ export default function BalanceSheetPage() {
       ================================================== */}
 
       <section className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden print:border-0 print:shadow-none">
-        {/* Header التقرير */}
+        {/* ==================================================
+            Header التقرير
+        ================================================== */}
 
         <div className="p-6 md:p-8 border-b-2 border-gray-300">
           <div className="flex flex-col md:flex-row justify-between gap-6">
@@ -586,6 +1066,8 @@ export default function BalanceSheetPage() {
 
         <div className="p-5 md:p-6 border-b border-gray-200 print:hidden">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* الأصول */}
+
             <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-5">
               <div className="flex items-center justify-between">
                 <div>
@@ -604,6 +1086,8 @@ export default function BalanceSheetPage() {
               </div>
             </div>
 
+            {/* الخصوم */}
+
             <div className="rounded-xl border-2 border-red-200 bg-red-50 p-5">
               <div className="flex items-center justify-between">
                 <div>
@@ -621,6 +1105,8 @@ export default function BalanceSheetPage() {
                 </div>
               </div>
             </div>
+
+            {/* حقوق الملكية */}
 
             <div className="rounded-xl border-2 border-green-200 bg-green-50 p-5">
               <div className="flex items-center justify-between">
@@ -660,22 +1146,30 @@ export default function BalanceSheetPage() {
               </div>
 
               <div className="border-2 border-gray-300 border-t-0 rounded-b-xl overflow-hidden">
+                {/* الأصول المتداولة */}
+
                 <div className="bg-blue-50 px-5 py-3 border-b border-blue-200">
                   <h4 className="font-bold text-blue-900">الأصول المتداولة</h4>
                 </div>
 
-                {currentAssets.map((item) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
-                  >
-                    <span className="text-gray-700">{item.name}</span>
-
-                    <span className="font-medium text-gray-900">
-                      {formatMoney(item.amount)}
-                    </span>
+                {currentAssets.length === 0 ? (
+                  <div className="px-5 py-5 text-center text-sm text-gray-400 border-b border-gray-200">
+                    لا توجد أرصدة
                   </div>
-                ))}
+                ) : (
+                  currentAssets.map((item, index) => (
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
+                    >
+                      <span className="text-gray-700">{item.name}</span>
+
+                      <span className="font-medium text-gray-900">
+                        {formatMoney(item.amount)}
+                      </span>
+                    </div>
+                  ))
+                )}
 
                 <div className="flex items-center justify-between px-5 py-4 bg-gray-100 border-b-2 border-gray-300">
                   <span className="font-bold text-gray-900">
@@ -687,24 +1181,32 @@ export default function BalanceSheetPage() {
                   </span>
                 </div>
 
+                {/* الأصول غير المتداولة */}
+
                 <div className="bg-blue-50 px-5 py-3 border-b border-blue-200">
                   <h4 className="font-bold text-blue-900">
                     الأصول غير المتداولة
                   </h4>
                 </div>
 
-                {nonCurrentAssets.map((item) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
-                  >
-                    <span className="text-gray-700">{item.name}</span>
-
-                    <span className="font-medium text-gray-900">
-                      {formatMoney(item.amount)}
-                    </span>
+                {nonCurrentAssets.length === 0 ? (
+                  <div className="px-5 py-5 text-center text-sm text-gray-400 border-b border-gray-200">
+                    لا توجد أرصدة
                   </div>
-                ))}
+                ) : (
+                  nonCurrentAssets.map((item, index) => (
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
+                    >
+                      <span className="text-gray-700">{item.name}</span>
+
+                      <span className="font-medium text-gray-900">
+                        {formatMoney(item.amount)}
+                      </span>
+                    </div>
+                  ))
+                )}
 
                 <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
                   <span className="text-gray-700">(-) مجمع الإهلاك</span>
@@ -748,22 +1250,30 @@ export default function BalanceSheetPage() {
               </div>
 
               <div className="border-2 border-gray-300 border-t-0 rounded-b-xl overflow-hidden">
+                {/* الخصوم المتداولة */}
+
                 <div className="bg-red-50 px-5 py-3 border-b border-red-200">
                   <h4 className="font-bold text-red-900">الخصوم المتداولة</h4>
                 </div>
 
-                {currentLiabilities.map((item) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
-                  >
-                    <span className="text-gray-700">{item.name}</span>
-
-                    <span className="font-medium text-gray-900">
-                      {formatMoney(item.amount)}
-                    </span>
+                {currentLiabilities.length === 0 ? (
+                  <div className="px-5 py-5 text-center text-sm text-gray-400 border-b border-gray-200">
+                    لا توجد أرصدة
                   </div>
-                ))}
+                ) : (
+                  currentLiabilities.map((item, index) => (
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
+                    >
+                      <span className="text-gray-700">{item.name}</span>
+
+                      <span className="font-medium text-gray-900">
+                        {formatMoney(item.amount)}
+                      </span>
+                    </div>
+                  ))
+                )}
 
                 <div className="flex items-center justify-between px-5 py-4 bg-gray-100 border-b-2 border-gray-300">
                   <span className="font-bold text-gray-900">
@@ -775,24 +1285,32 @@ export default function BalanceSheetPage() {
                   </span>
                 </div>
 
+                {/* الخصوم غير المتداولة */}
+
                 <div className="bg-red-50 px-5 py-3 border-b border-red-200">
                   <h4 className="font-bold text-red-900">
                     الخصوم غير المتداولة
                   </h4>
                 </div>
 
-                {nonCurrentLiabilities.map((item) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
-                  >
-                    <span className="text-gray-700">{item.name}</span>
-
-                    <span className="font-medium text-gray-900">
-                      {formatMoney(item.amount)}
-                    </span>
+                {nonCurrentLiabilities.length === 0 ? (
+                  <div className="px-5 py-5 text-center text-sm text-gray-400 border-b border-gray-200">
+                    لا توجد أرصدة
                   </div>
-                ))}
+                ) : (
+                  nonCurrentLiabilities.map((item, index) => (
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
+                    >
+                      <span className="text-gray-700">{item.name}</span>
+
+                      <span className="font-medium text-gray-900">
+                        {formatMoney(item.amount)}
+                      </span>
+                    </div>
+                  ))
+                )}
 
                 <div className="flex items-center justify-between px-5 py-4 bg-gray-100 border-b-2 border-gray-300">
                   <span className="font-bold text-gray-900">إجمالي الخصوم</span>
@@ -802,36 +1320,40 @@ export default function BalanceSheetPage() {
                   </span>
                 </div>
 
+                {/* حقوق الملكية */}
+
                 <div className="bg-green-50 px-5 py-3 border-b border-green-200">
                   <h4 className="font-bold text-green-900">حقوق الملكية</h4>
                 </div>
 
-                {equity.map((item) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
-                  >
-                    <span className="text-gray-700">{item.name}</span>
-
-                    <span className="font-medium text-gray-900">
-                      {formatMoney(item.amount)}
-                    </span>
+                {equityWithProfit.length === 0 ? (
+                  <div className="px-5 py-5 text-center text-sm text-gray-400 border-b border-gray-200">
+                    لا توجد أرصدة
                   </div>
-                ))}
+                ) : (
+                  equityWithProfit.map((item, index) => (
+                    <div
+                      key={`${item.name}-${index}`}
+                      className="flex items-center justify-between px-5 py-3 border-b border-gray-200"
+                    >
+                      <span className="text-gray-700">{item.name}</span>
 
-                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-                  <span className="text-gray-700">صافي ربح / خسارة الفترة</span>
-
-                  <span
-                    className={`font-bold ${
-                      currentNetProfit >= 0 ? "text-green-700" : "text-red-700"
-                    }`}
-                  >
-                    {currentNetProfit < 0
-                      ? `(${formatMoney(Math.abs(currentNetProfit))})`
-                      : formatMoney(currentNetProfit)}
-                  </span>
-                </div>
+                      <span
+                        className={`font-medium ${
+                          item.name.includes("صافي ربح")
+                            ? item.amount >= 0
+                              ? "text-green-700"
+                              : "text-red-700"
+                            : "text-gray-900"
+                        }`}
+                      >
+                        {item.amount < 0
+                          ? `(${formatMoney(Math.abs(item.amount))})`
+                          : formatMoney(item.amount)}
+                      </span>
+                    </div>
+                  ))
+                )}
 
                 <div className="flex items-center justify-between px-5 py-4 bg-gray-100 border-b-2 border-gray-300">
                   <span className="font-bold text-gray-900">
@@ -902,6 +1424,13 @@ export default function BalanceSheetPage() {
                     الفرق: {formatMoney(Math.abs(difference))} ريال
                   </p>
                 )}
+
+                {isBalanced && Math.abs(currentNetProfit) > 0.009 && (
+                  <p className="text-sm text-green-700 mt-2">
+                    صافي ربح / خسارة الفترة:{" "}
+                    <strong>{formatMoney(currentNetProfit)} ريال</strong>
+                  </p>
+                )}
               </div>
 
               <div className="text-left">
@@ -948,44 +1477,46 @@ export default function BalanceSheetPage() {
           Print CSS
       ====================================================== */}
 
-      <style jsx global>{`
-        @media print {
-          @page {
-            size: A4;
-            margin: 10mm;
-          }
+      <style jsx global>
+        {`
+          @media print {
+            @page {
+              size: A4;
+              margin: 10mm;
+            }
 
-          html,
-          body {
-            background: white !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
+            html,
+            body {
+              background: white !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
 
-          body {
-            color: #111827 !important;
-          }
+            body {
+              color: #111827 !important;
+            }
 
-          main {
-            background: white !important;
-            padding: 0 !important;
-            min-height: auto !important;
-          }
+            main {
+              background: white !important;
+              padding: 0 !important;
+              min-height: auto !important;
+            }
 
-          .print\\:hidden {
-            display: none !important;
-          }
+            .print\\:hidden {
+              display: none !important;
+            }
 
-          section {
-            box-shadow: none !important;
-          }
+            section {
+              box-shadow: none !important;
+            }
 
-          * {
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+            * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
           }
-        }
-      `}</style>
+        `}
+      </style>
     </main>
   );
 }

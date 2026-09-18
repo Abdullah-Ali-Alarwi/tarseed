@@ -23,6 +23,8 @@ type InventoryRow = {
   minQuantity: number;
   purchasePrice: number;
   sellingPrice: number;
+  purchasedQuantity: number;
+  soldQuantity: number;
 };
 
 const getCategory = (code: string) => {
@@ -69,13 +71,10 @@ export default function InventoryReportPage() {
   const inventory = useMemo<InventoryRow[]>(() => {
     return products.map((product) => {
       // --------------------------------------------------
-      // المشتريات الخاصة بالصنف
+      // جميع مشتريات الصنف
       // --------------------------------------------------
 
       const productPurchases = purchases
-        .filter((purchase) =>
-          purchase.items.some((item) => item.productId === product.id),
-        )
         .flatMap((purchase) =>
           purchase.items
             .filter((item) => item.productId === product.id)
@@ -85,16 +84,13 @@ export default function InventoryReportPage() {
               quantity: Number(item.quantity) || 0,
             })),
         )
-        .sort((a, b) => b.date.localeCompare(a.date));
+        .sort((a, b) => a.date.localeCompare(b.date));
 
       // --------------------------------------------------
-      // المبيعات الخاصة بالصنف
+      // جميع مبيعات الصنف
       // --------------------------------------------------
 
       const productSales = sales
-        .filter((sale) =>
-          sale.items.some((item) => item.productId === product.id),
-        )
         .flatMap((sale) =>
           sale.items
             .filter((item) => item.productId === product.id)
@@ -104,26 +100,10 @@ export default function InventoryReportPage() {
               quantity: Number(item.quantity) || 0,
             })),
         )
-        .sort((a, b) => b.date.localeCompare(a.date));
+        .sort((a, b) => a.date.localeCompare(b.date));
 
       // --------------------------------------------------
-      // آخر سعر شراء
-      // --------------------------------------------------
-
-      const lastPurchase = productPurchases[0];
-
-      const purchasePrice = lastPurchase?.price || 0;
-
-      // --------------------------------------------------
-      // آخر سعر بيع
-      // --------------------------------------------------
-
-      const lastSale = productSales[0];
-
-      const sellingPrice = lastSale?.price || 0;
-
-      // --------------------------------------------------
-      // إجمالي الكميات المشتراة
+      // إجمالي المشتريات
       // --------------------------------------------------
 
       const purchasedQuantity = productPurchases.reduce(
@@ -132,7 +112,7 @@ export default function InventoryReportPage() {
       );
 
       // --------------------------------------------------
-      // إجمالي الكميات المباعة
+      // إجمالي المبيعات
       // --------------------------------------------------
 
       const soldQuantity = productSales.reduce(
@@ -141,15 +121,42 @@ export default function InventoryReportPage() {
       );
 
       // --------------------------------------------------
-      // الرصيد الحالي
+      // المخزون الحالي
+      //
+      // لا نستخدم Math.max حتى لا نخفي العجز
       // --------------------------------------------------
 
-      const quantity = Math.max(purchasedQuantity - soldQuantity, 0);
+      const quantity = purchasedQuantity - soldQuantity;
 
-      /*
-        الحد الأدنى تجريبيًا في هذه المرحلة.
-        يمكن لاحقًا إضافة minStock إلى Product داخل Zustand.
-      */
+      // --------------------------------------------------
+      // متوسط تكلفة الشراء المرجح
+      //
+      // (إجمالي قيمة المشتريات) ÷ (إجمالي كمية المشتريات)
+      // --------------------------------------------------
+
+      const totalPurchaseCost = productPurchases.reduce(
+        (total, item) => total + item.quantity * item.price,
+        0,
+      );
+
+      const purchasePrice =
+        purchasedQuantity > 0 ? totalPurchaseCost / purchasedQuantity : 0;
+
+      // --------------------------------------------------
+      // آخر سعر بيع
+      // --------------------------------------------------
+
+      const lastSale = [...productSales]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .find((item) => item.price > 0);
+
+      const sellingPrice = lastSale?.price || 0;
+
+      // --------------------------------------------------
+      // الحد الأدنى للمخزون
+      //
+      // مؤقتًا حتى إضافة minQuantity إلى Product
+      // --------------------------------------------------
 
       const minQuantity = 10;
 
@@ -163,6 +170,8 @@ export default function InventoryReportPage() {
         minQuantity,
         purchasePrice,
         sellingPrice,
+        purchasedQuantity,
+        soldQuantity,
       };
     });
   }, [products, purchases, sales, refreshKey]);
@@ -172,7 +181,11 @@ export default function InventoryReportPage() {
   // ======================================================
 
   const getStockStatus = (item: InventoryRow) => {
-    if (item.quantity <= 0) {
+    if (item.quantity < 0) {
+      return "عجز";
+    }
+
+    if (item.quantity === 0) {
       return "نفد";
     }
 
@@ -224,12 +237,12 @@ export default function InventoryReportPage() {
   );
 
   const totalPurchaseValue = filteredInventory.reduce(
-    (sum, item) => sum + item.quantity * item.purchasePrice,
+    (sum, item) => sum + Math.max(item.quantity, 0) * item.purchasePrice,
     0,
   );
 
   const totalSellingValue = filteredInventory.reduce(
-    (sum, item) => sum + item.quantity * item.sellingPrice,
+    (sum, item) => sum + Math.max(item.quantity, 0) * item.sellingPrice,
     0,
   );
 
@@ -241,6 +254,10 @@ export default function InventoryReportPage() {
 
   const outOfStockCount = filteredInventory.filter(
     (item) => getStockStatus(item) === "نفد",
+  ).length;
+
+  const shortageCount = filteredInventory.filter(
+    (item) => getStockStatus(item) === "عجز",
   ).length;
 
   // ======================================================
@@ -413,6 +430,8 @@ export default function InventoryReportPage() {
                 <option value="منخفض">مخزون منخفض</option>
 
                 <option value="نفد">نفد المخزون</option>
+
+                <option value="عجز">عجز في المخزون</option>
               </select>
             </div>
           </div>
@@ -495,7 +514,9 @@ export default function InventoryReportPage() {
               SUMMARY
           ================================================== */}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+            {/* عدد الأصناف */}
+
             <div className="border-2 border-gray-200 rounded-xl p-5">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-gray-500">عدد الأصناف</p>
@@ -510,6 +531,8 @@ export default function InventoryReportPage() {
               <p className="text-xs text-gray-500 mt-1">صنف</p>
             </div>
 
+            {/* إجمالي الكميات */}
+
             <div className="border-2 border-blue-200 bg-blue-50 rounded-xl p-5">
               <p className="text-sm text-gray-600">إجمالي الكميات</p>
 
@@ -519,6 +542,8 @@ export default function InventoryReportPage() {
 
               <p className="text-xs text-gray-500 mt-1">وحدة</p>
             </div>
+
+            {/* قيمة التكلفة */}
 
             <div className="border-2 border-green-200 bg-green-50 rounded-xl p-5">
               <p className="text-sm text-gray-600">قيمة المخزون بالتكلفة</p>
@@ -530,6 +555,8 @@ export default function InventoryReportPage() {
               <p className="text-xs text-gray-500 mt-1">ريال</p>
             </div>
 
+            {/* قيمة البيع */}
+
             <div className="border-2 border-amber-200 bg-amber-50 rounded-xl p-5">
               <p className="text-sm text-gray-600">قيمة المخزون بالبيع</p>
 
@@ -540,15 +567,29 @@ export default function InventoryReportPage() {
               <p className="text-xs text-gray-500 mt-1">ريال</p>
             </div>
 
+            {/* منخفض */}
+
+            <div className="border-2 border-orange-200 bg-orange-50 rounded-xl p-5">
+              <p className="text-sm text-gray-600">مخزون منخفض</p>
+
+              <p className="text-2xl font-bold text-orange-700 mt-3">
+                {lowStockCount.toLocaleString("ar-SA")}
+              </p>
+
+              <p className="text-xs text-gray-500 mt-1">صنف</p>
+            </div>
+
+            {/* العجز */}
+
             <div className="border-2 border-red-200 bg-red-50 rounded-xl p-5">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-gray-600">أصناف تحتاج إعادة طلب</p>
+                <p className="text-sm text-gray-600">العجز / النفاد</p>
 
                 <FiAlertTriangle size={20} className="text-red-600" />
               </div>
 
               <p className="text-2xl font-bold text-red-700 mt-3">
-                {lowStockCount.toLocaleString("ar-SA")}
+                {(outOfStockCount + shortageCount).toLocaleString("ar-SA")}
               </p>
 
               <p className="text-xs text-gray-500 mt-1">صنف</p>
@@ -563,11 +604,12 @@ export default function InventoryReportPage() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <h3 className="font-bold text-gray-900">
-                  القيمة المتوقعة للمخزون
+                  الفرق بين قيمة البيع والتكلفة
                 </h3>
 
                 <p className="text-sm text-gray-500 mt-1">
-                  الفرق بين قيمة المخزون بسعر البيع وسعر التكلفة
+                  قيمة نظرية للأصناف الموجودة حاليًا بناءً على آخر سعر بيع
+                  ومتوسط تكلفة الشراء
                 </p>
               </div>
 
@@ -582,7 +624,7 @@ export default function InventoryReportPage() {
                     : formatMoney(expectedProfit)}
                 </p>
 
-                <p className="text-xs text-gray-500">هامش قيمة متوقع</p>
+                <p className="text-xs text-gray-500">قيمة نظرية متوقعة</p>
               </div>
             </div>
           </div>
@@ -593,7 +635,7 @@ export default function InventoryReportPage() {
 
           <div className="border-2 border-gray-300 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1100px] border-collapse">
+              <table className="w-full min-w-[1250px] border-collapse">
                 <thead>
                   <tr className="bg-gray-900 text-white">
                     <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
@@ -617,11 +659,19 @@ export default function InventoryReportPage() {
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
-                      الكمية
+                      مشتريات
+                    </th>
+
+                    <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
+                      مبيعات
+                    </th>
+
+                    <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
+                      الرصيد
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-left text-sm font-bold">
-                      سعر التكلفة
+                      متوسط التكلفة
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-left text-sm font-bold">
@@ -647,9 +697,13 @@ export default function InventoryReportPage() {
                     filteredInventory.map((item, index) => {
                       const status = getStockStatus(item);
 
-                      const purchaseValue = item.quantity * item.purchasePrice;
+                      const availableQuantity = Math.max(item.quantity, 0);
 
-                      const sellingValue = item.quantity * item.sellingPrice;
+                      const purchaseValue =
+                        availableQuantity * item.purchasePrice;
+
+                      const sellingValue =
+                        availableQuantity * item.sellingPrice;
 
                       return (
                         <tr
@@ -676,7 +730,21 @@ export default function InventoryReportPage() {
                             {item.unit}
                           </td>
 
-                          <td className="border border-gray-300 px-4 py-3 text-center text-sm font-bold text-gray-900">
+                          <td className="border border-gray-300 px-4 py-3 text-center text-sm text-gray-700">
+                            {item.purchasedQuantity.toLocaleString("ar-SA")}
+                          </td>
+
+                          <td className="border border-gray-300 px-4 py-3 text-center text-sm text-gray-700">
+                            {item.soldQuantity.toLocaleString("ar-SA")}
+                          </td>
+
+                          <td
+                            className={`border border-gray-300 px-4 py-3 text-center text-sm font-bold ${
+                              item.quantity < 0
+                                ? "text-red-700"
+                                : "text-gray-900"
+                            }`}
+                          >
                             {item.quantity.toLocaleString("ar-SA")}
                           </td>
 
@@ -703,7 +771,9 @@ export default function InventoryReportPage() {
                                   ? "bg-green-100 text-green-700"
                                   : status === "منخفض"
                                     ? "bg-amber-100 text-amber-700"
-                                    : "bg-red-100 text-red-700"
+                                    : status === "نفد"
+                                      ? "bg-red-100 text-red-700"
+                                      : "bg-red-200 text-red-800"
                               }`}
                             >
                               {status}
@@ -715,7 +785,7 @@ export default function InventoryReportPage() {
                   ) : (
                     <tr>
                       <td
-                        colSpan={11}
+                        colSpan={13}
                         className="border border-gray-300 px-4 py-12 text-center text-gray-500"
                       >
                         لا توجد أصناف مطابقة للبحث
@@ -731,6 +801,18 @@ export default function InventoryReportPage() {
                       className="border-2 border-gray-400 px-4 py-4 text-right font-bold text-gray-900"
                     >
                       إجمالي التقرير
+                    </td>
+
+                    <td className="border-2 border-gray-400 px-4 py-4 text-center font-bold text-gray-900">
+                      {filteredInventory
+                        .reduce((sum, item) => sum + item.purchasedQuantity, 0)
+                        .toLocaleString("ar-SA")}
+                    </td>
+
+                    <td className="border-2 border-gray-400 px-4 py-4 text-center font-bold text-gray-900">
+                      {filteredInventory
+                        .reduce((sum, item) => sum + item.soldQuantity, 0)
+                        .toLocaleString("ar-SA")}
                     </td>
 
                     <td className="border-2 border-gray-400 px-4 py-4 text-center font-bold text-gray-900">
@@ -757,10 +839,10 @@ export default function InventoryReportPage() {
           </div>
 
           {/* =================================================
-              LOW STOCK
+              LOW STOCK / SHORTAGE
           ================================================== */}
 
-          {(lowStockCount > 0 || outOfStockCount > 0) && (
+          {(lowStockCount > 0 || outOfStockCount > 0 || shortageCount > 0) && (
             <div className="mt-6 border-2 border-amber-300 bg-amber-50 rounded-xl overflow-hidden print:break-inside-avoid">
               <div className="p-5 border-b border-amber-200 flex items-center gap-3">
                 <FiAlertTriangle size={22} className="text-amber-600" />
@@ -783,7 +865,15 @@ export default function InventoryReportPage() {
                       </th>
 
                       <th className="px-4 py-3 text-center text-sm font-bold text-gray-800">
-                        الكمية الحالية
+                        المشتريات
+                      </th>
+
+                      <th className="px-4 py-3 text-center text-sm font-bold text-gray-800">
+                        المبيعات
+                      </th>
+
+                      <th className="px-4 py-3 text-center text-sm font-bold text-gray-800">
+                        الرصيد
                       </th>
 
                       <th className="px-4 py-3 text-center text-sm font-bold text-gray-800">
@@ -811,7 +901,21 @@ export default function InventoryReportPage() {
                               {item.name}
                             </td>
 
-                            <td className="px-4 py-3 text-center text-sm font-bold text-red-600">
+                            <td className="px-4 py-3 text-center text-sm text-gray-700">
+                              {item.purchasedQuantity.toLocaleString("ar-SA")}
+                            </td>
+
+                            <td className="px-4 py-3 text-center text-sm text-gray-700">
+                              {item.soldQuantity.toLocaleString("ar-SA")}
+                            </td>
+
+                            <td
+                              className={`px-4 py-3 text-center text-sm font-bold ${
+                                item.quantity < 0
+                                  ? "text-red-700"
+                                  : "text-gray-900"
+                              }`}
+                            >
                               {item.quantity.toLocaleString("ar-SA")}
                             </td>
 
@@ -822,14 +926,18 @@ export default function InventoryReportPage() {
                             <td className="px-4 py-3 text-center">
                               <span
                                 className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold ${
-                                  itemStatus === "نفد"
-                                    ? "bg-red-100 text-red-700"
-                                    : "bg-amber-200 text-amber-800"
+                                  itemStatus === "عجز"
+                                    ? "bg-red-200 text-red-800"
+                                    : itemStatus === "نفد"
+                                      ? "bg-red-100 text-red-700"
+                                      : "bg-amber-200 text-amber-800"
                                 }`}
                               >
-                                {itemStatus === "نفد"
-                                  ? "نفد المخزون"
-                                  : "إعادة طلب"}
+                                {itemStatus === "عجز"
+                                  ? "عجز في المخزون"
+                                  : itemStatus === "نفد"
+                                    ? "نفد المخزون"
+                                    : "إعادة طلب"}
                               </span>
                             </td>
                           </tr>
@@ -840,6 +948,21 @@ export default function InventoryReportPage() {
               </div>
             </div>
           )}
+
+          {/* =================================================
+              ACCOUNTING NOTE
+          ================================================== */}
+
+          <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+            <p className="font-bold mb-1">ملاحظة</p>
+
+            <p>
+              يتم احتساب الكمية الحالية في هذا التقرير من إجمالي المشتريات
+              مطروحًا منها إجمالي المبيعات. أما القيمة المحاسبية للمخزون في
+              الميزانية فتحتاج إلى ربط عمليات المخزون بقيود محاسبية على حساب أصل
+              المخزون.
+            </p>
+          </div>
 
           {/* =================================================
               FOOTER

@@ -9,8 +9,10 @@ import {
   FiPrinter,
   FiSave,
   FiCheckCircle,
-  FiBookOpen,
+  FiTruck,
+  FiPercent,
 } from "react-icons/fi";
+
 import { useERPStore } from "@/Store/erpStore";
 
 type PaymentMethod = "cash" | "bank" | "credit";
@@ -23,34 +25,23 @@ type PurchaseFormItem = {
   discount: number;
 };
 
+type SupplierWithAccount = {
+  accountCode?: string;
+  accountName?: string;
+};
+
+type TaxMode = "none" | "tax";
+
 export default function NewPurchasePage() {
   // ======================================================
   // Zustand
   // ======================================================
 
   const products = useERPStore((state) => state.products);
-
   const suppliers = useERPStore((state) => state.suppliers);
-
   const purchases = useERPStore((state) => state.purchases);
-
   const accounts = useERPStore((state) => state.accounts);
-
   const addPurchase = useERPStore((state) => state.addPurchase);
-
-  // ======================================================
-  // الحسابات الفرعية فقط
-  // ======================================================
-
-  const subAccounts = useMemo(() => {
-    return accounts
-      .filter((account) => account.level > 0)
-      .sort((a, b) =>
-        a.code.localeCompare(b.code, undefined, {
-          numeric: true,
-        }),
-      );
-  }, [accounts]);
 
   // ======================================================
   // بيانات الفاتورة
@@ -60,12 +51,26 @@ export default function NewPurchasePage() {
 
   const [supplierId, setSupplierId] = useState("");
 
-  // الحساب المحاسبي
-  const [accountCode, setAccountCode] = useState("");
-
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
 
   const [notes, setNotes] = useState("");
+
+  // ======================================================
+  // الضريبة
+  // ======================================================
+
+  /*
+   * none = بدون ضريبة
+   * tax  = مع ضريبة
+   */
+  const [taxMode, setTaxMode] = useState<TaxMode>("none");
+
+  /*
+   * نسبة الضريبة
+   *
+   * القيمة الافتراضية 15%
+   */
+  const [taxRate, setTaxRate] = useState(15);
 
   // ======================================================
   // الأصناف
@@ -92,7 +97,7 @@ export default function NewPurchasePage() {
   const [savedInvoiceNumber, setSavedInvoiceNumber] = useState("");
 
   // ======================================================
-  // رقم فاتورة المشتريات تلقائيًا
+  // رقم فاتورة المشتريات
   // ======================================================
 
   const invoiceNumber = useMemo(() => {
@@ -106,7 +111,7 @@ export default function NewPurchasePage() {
 
     const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1001;
 
-    return "PUR-" + nextNumber;
+    return `PUR-${nextNumber}`;
   }, [purchases]);
 
   // ======================================================
@@ -118,12 +123,51 @@ export default function NewPurchasePage() {
   }, [suppliers, supplierId]);
 
   // ======================================================
-  // الحساب المختار
+  // حساب المورد
   // ======================================================
 
-  const selectedAccount = useMemo(() => {
-    return subAccounts.find((account) => account.code === accountCode);
-  }, [subAccounts, accountCode]);
+  const getSupplierAccount = (supplierIdValue: string) => {
+    const supplier = suppliers.find((item) => item.id === supplierIdValue);
+
+    if (!supplier) {
+      return null;
+    }
+
+    const supplierWithAccount = supplier as typeof supplier &
+      SupplierWithAccount;
+
+    // ------------------------------------------------------
+    // الحساب المرتبط مباشرة بالمورد
+    // ------------------------------------------------------
+
+    if (supplierWithAccount.accountCode) {
+      const account = accounts.find(
+        (item) =>
+          item.code === supplierWithAccount.accountCode &&
+          item.parent === "2001" &&
+          item.level > 1 &&
+          item.type === "liability",
+      );
+
+      if (account) {
+        return account;
+      }
+    }
+
+    // ------------------------------------------------------
+    // البحث باسم المورد
+    // ------------------------------------------------------
+
+    const accountByName = accounts.find(
+      (item) =>
+        item.parent === "2001" &&
+        item.level > 1 &&
+        item.type === "liability" &&
+        item.name.trim() === supplier.name.trim(),
+    );
+
+    return accountByName || null;
+  };
 
   // ======================================================
   // الحصول على المنتج
@@ -152,7 +196,7 @@ export default function NewPurchasePage() {
   };
 
   // ======================================================
-  // المجموع
+  // الإجمالي قبل الضريبة
   // ======================================================
 
   const subtotal = useMemo(() => {
@@ -165,27 +209,46 @@ export default function NewPurchasePage() {
 
   const totalDiscount = useMemo(() => {
     return items.reduce((total, item) => {
-      const itemSubtotal =
-        (Number(item.quantity) || 0) * (Number(item.price) || 0);
+      const quantity = Number(item.quantity) || 0;
 
-      const discountAmount =
-        itemSubtotal * ((Number(item.discount) || 0) / 100);
+      const price = Number(item.price) || 0;
+
+      const discount = Number(item.discount) || 0;
+
+      const itemSubtotal = quantity * price;
+
+      const discountAmount = itemSubtotal * (discount / 100);
 
       return total + discountAmount;
     }, 0);
   }, [items]);
 
   // ======================================================
-  // الضريبة
+  // قيمة الضريبة
   // ======================================================
 
-  const tax = subtotal * 0.15;
+  const tax = useMemo(() => {
+    /*
+     * إذا اختار المستخدم بدون ضريبة
+     * فالضريبة = صفر.
+     */
+
+    if (taxMode === "none") {
+      return 0;
+    }
+
+    const rate = Number(taxRate) || 0;
+
+    return subtotal * (rate / 100);
+  }, [subtotal, taxMode, taxRate]);
 
   // ======================================================
   // الإجمالي النهائي
   // ======================================================
 
-  const grandTotal = subtotal + tax;
+  const grandTotal = useMemo(() => {
+    return subtotal + tax;
+  }, [subtotal, tax]);
 
   // ======================================================
   // تنسيق المبالغ
@@ -199,7 +262,7 @@ export default function NewPurchasePage() {
   };
 
   // ======================================================
-  // التاريخ للطباعة
+  // تنسيق التاريخ للطباعة
   // ======================================================
 
   const formatDateForPrint = (value: string) => {
@@ -217,7 +280,7 @@ export default function NewPurchasePage() {
   };
 
   // ======================================================
-  // طريقة الدفع
+  // اسم طريقة الدفع
   // ======================================================
 
   const getPaymentMethodName = (method: PaymentMethod) => {
@@ -243,17 +306,11 @@ export default function NewPurchasePage() {
   const addItem = () => {
     setItems((current) => [
       ...current,
-
       {
         id: Date.now() + Math.floor(Math.random() * 10000),
-
         productId: "",
-
         quantity: 1,
-
-        // السعر يتم تحديده عند الشراء
         price: 0,
-
         discount: 0,
       },
     ]);
@@ -293,12 +350,7 @@ export default function NewPurchasePage() {
         if (field === "productId") {
           return {
             ...item,
-
             productId: value,
-
-            // لا يوجد سعر داخل Product
-            // السعر يكتبه المستخدم هنا
-            price: 0,
           };
         }
 
@@ -306,7 +358,6 @@ export default function NewPurchasePage() {
 
         return {
           ...item,
-
           [field]:
             Number.isFinite(numericValue) && numericValue >= 0
               ? numericValue
@@ -319,40 +370,83 @@ export default function NewPurchasePage() {
   };
 
   // ======================================================
+  // تغيير الضريبة
+  // ======================================================
+
+  const handleTaxModeChange = (mode: TaxMode) => {
+    setTaxMode(mode);
+
+    /*
+     * إذا اختار بدون ضريبة
+     * لا نحتاج تصفير النسبة.
+     *
+     * نحتفظ بها في حالة إعادة
+     * اختيار "مع ضريبة".
+     */
+
+    setIsSaved(false);
+  };
+
+  // ======================================================
+  // تغيير نسبة الضريبة
+  // ======================================================
+
+  const handleTaxRateChange = (value: string) => {
+    const numericValue = Number(value);
+
+    setTaxRate(
+      Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0,
+    );
+
+    setIsSaved(false);
+  };
+
+  // ======================================================
   // التحقق من الفاتورة
   // ======================================================
 
   const validateInvoice = () => {
     if (!supplierId) {
       alert("يرجى اختيار المورد.");
-
       return false;
     }
 
-    // الحساب المحاسبي إلزامي
-    if (!accountCode) {
-      alert("يرجى اختيار الحساب المحاسبي.");
+    const supplier = suppliers.find((item) => item.id === supplierId);
 
+    if (!supplier) {
+      alert("المورد غير موجود.");
       return false;
     }
 
-    // التأكد من وجود الحساب
-    const account = accounts.find((item) => item.code === accountCode);
+    // ----------------------------------------------------
+    // الحساب المحاسبي
+    // ----------------------------------------------------
 
-    if (!account) {
-      alert("الحساب المحاسبي غير موجود.");
+    const supplierAccount = getSupplierAccount(supplierId);
 
-      return false;
-    }
-
-    // السماح بالحسابات الفرعية فقط
-    if (account.level === 0) {
+    if (!supplierAccount) {
       alert(
-        "لا يمكن استخدام حساب رئيسي في فاتورة المشتريات. يجب اختيار حساب فرعي.",
+        "هذا المورد غير مرتبط بحساب محاسبي صحيح تحت مجموعة الموردين. يرجى ربط المورد بحسابه أولًا.",
       );
 
       return false;
     }
+
+    // ----------------------------------------------------
+    // التحقق من الضريبة
+    // ----------------------------------------------------
+
+    if (taxMode === "tax") {
+      if (!Number.isFinite(Number(taxRate)) || Number(taxRate) < 0) {
+        alert("يرجى إدخال نسبة ضريبة صحيحة.");
+
+        return false;
+      }
+    }
+
+    // ----------------------------------------------------
+    // الأصناف
+    // ----------------------------------------------------
 
     const validItems = items.filter(
       (item) => item.productId && item.quantity > 0 && item.price > 0,
@@ -360,6 +454,20 @@ export default function NewPurchasePage() {
 
     if (validItems.length === 0) {
       alert("يرجى إضافة صنف واحد على الأقل مع الكمية وسعر الشراء.");
+
+      return false;
+    }
+
+    // ----------------------------------------------------
+    // المنتجات
+    // ----------------------------------------------------
+
+    const invalidProduct = validItems.find(
+      (item) => !products.some((product) => product.id === item.productId),
+    );
+
+    if (invalidProduct) {
+      alert("يوجد صنف غير موجود في قائمة المنتجات.");
 
       return false;
     }
@@ -380,20 +488,13 @@ export default function NewPurchasePage() {
 
     if (!supplier) {
       alert("المورد غير موجود.");
-
       return;
     }
 
-    const account = accounts.find((item) => item.code === accountCode);
+    const supplierAccount = getSupplierAccount(supplierId);
 
-    if (!account) {
-      alert("الحساب المحاسبي غير موجود.");
-
-      return;
-    }
-
-    if (account.level === 0) {
-      alert("يجب اختيار حساب فرعي فقط.");
+    if (!supplierAccount) {
+      alert("تعذر العثور على الحساب المحاسبي المرتبط بالمورد.");
 
       return;
     }
@@ -416,18 +517,25 @@ export default function NewPurchasePage() {
 
         discount: item.discount,
 
-        tax: 15,
+        /*
+         * ضريبة الصنف هنا هي نسبة الضريبة
+         * وليس قيمة الضريبة.
+         *
+         * بما أن الضريبة تحسب على مستوى
+         * الفاتورة، نحفظ النسبة المستخدمة.
+         */
+        tax: taxMode === "tax" ? taxRate : 0,
 
         total: getItemTotal(item),
       };
     });
 
     // ==================================================
-    // الإضافة إلى Zustand
+    // إضافة الفاتورة إلى Zustand
     // ==================================================
 
     addPurchase({
-      invoiceNumber: invoiceNumber,
+      invoiceNumber,
 
       date,
 
@@ -435,9 +543,9 @@ export default function NewPurchasePage() {
 
       supplierName: supplier.name,
 
-      accountCode: account.code,
+      accountCode: supplierAccount.code,
 
-      accountName: account.name,
+      accountName: supplierAccount.name,
 
       paymentMethod,
 
@@ -447,7 +555,15 @@ export default function NewPurchasePage() {
 
       discount: totalDiscount,
 
+      /*
+       * قيمة الضريبة الفعلية
+       */
       tax,
+
+      /*
+       * نسبة الضريبة
+       */
+      taxRate: taxMode === "tax" ? taxRate : 0,
 
       total: grandTotal,
 
@@ -455,18 +571,18 @@ export default function NewPurchasePage() {
     });
 
     // ==================================================
-    // نجاح الحفظ
+    // حالة الحفظ
     // ==================================================
 
     setSavedInvoiceNumber(invoiceNumber);
 
     setIsSaved(true);
+
     setShowSuccess(true);
 
     alert("تم حفظ فاتورة المشتريات بنجاح.");
 
-    // إخفاء رسالة النجاح
-    setTimeout(() => {
+    window.setTimeout(() => {
       setShowSuccess(false);
     }, 3000);
   };
@@ -477,7 +593,7 @@ export default function NewPurchasePage() {
 
   const handlePrint = () => {
     if (!isSaved) {
-      alert("يجب حفظ الفاتورة أولاً قبل الطباعة.");
+      alert("يجب حفظ الفاتورة أولًا قبل الطباعة.");
 
       return;
     }
@@ -499,36 +615,63 @@ export default function NewPurchasePage() {
         const product = getProduct(item.productId);
 
         return `
-              <tr>
-                <td>${index + 1}</td>
+            <tr>
+              <td>
+                ${index + 1}
+              </td>
 
-                <td class="item-name">
-                  ${product?.name || "-"}
-                </td>
+              <td class="item-name">
+                ${product?.name || "-"}
+              </td>
 
-                <td>
-                  ${product?.unit || "-"}
-                </td>
+              <td>
+                ${product?.unit || "-"}
+              </td>
 
-                <td>
-                  ${item.quantity}
-                </td>
+              <td>
+                ${item.quantity}
+              </td>
 
-                <td>
-                  ${formatMoney(item.price)}
-                </td>
+              <td>
+                ${formatMoney(item.price)}
+              </td>
 
-                <td>
-                  ${item.discount}%
-                </td>
+              <td>
+                ${item.discount}%
+              </td>
 
-                <td class="bold">
-                  ${formatMoney(getItemTotal(item))}
-                </td>
-              </tr>
-            `;
+              <td class="bold">
+                ${formatMoney(getItemTotal(item))}
+              </td>
+            </tr>
+          `;
       })
       .join("");
+
+    const taxHTML =
+      taxMode === "tax"
+        ? `
+          <div class="total-row">
+            <span class="total-label">
+              ضريبة القيمة المضافة (${taxRate}%)
+            </span>
+
+            <span class="total-value">
+              ${formatMoney(tax)} ريال
+            </span>
+          </div>
+        `
+        : `
+          <div class="total-row">
+            <span class="total-label">
+              الضريبة
+            </span>
+
+            <span class="total-value">
+              بدون ضريبة
+            </span>
+          </div>
+        `;
 
     const printHTML = `
       <!DOCTYPE html>
@@ -538,556 +681,612 @@ export default function NewPurchasePage() {
         dir="rtl"
       >
 
-      <head>
-        <meta charset="UTF-8" />
+        <head>
 
-        <title>
-          فاتورة مشتريات
-          ${savedInvoiceNumber}
-        </title>
+          <meta charset="UTF-8" />
 
-        <style>
+          <title>
+            فاتورة مشتريات
+            ${savedInvoiceNumber}
+          </title>
 
-          @page {
-            size: A4;
-            margin: 12mm;
-          }
+          <style>
 
-          * {
-            box-sizing: border-box;
-          }
-
-          html,
-          body {
-            margin: 0;
-            padding: 0;
-            background: white;
-          }
-
-          body {
-            font-family:
-              Arial,
-              Tahoma,
-              sans-serif;
-
-            color:
-              #111827;
-
-            direction: rtl;
-
-            font-size: 13px;
-          }
-
-          .invoice {
-            width: 100%;
-            max-width: 186mm;
-            margin: 0 auto;
-          }
-
-          .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #2563eb;
-          }
-
-          .company-name {
-            font-size: 24px;
-            font-weight: 800;
-            color: #2563eb;
-            margin-bottom: 5px;
-          }
-
-          .company-subtitle {
-            color: #6b7280;
-            font-size: 14px;
-            margin-bottom: 12px;
-          }
-
-          .company-info {
-            color: #6b7280;
-            line-height: 1.8;
-          }
-
-          .invoice-side {
-            text-align: left;
-          }
-
-          .invoice-title {
-            display: inline-block;
-            background: #eff6ff;
-            color: #1d4ed8;
-            border: 1px solid #bfdbfe;
-            padding: 8px 18px;
-            border-radius: 6px;
-            font-size: 18px;
-            font-weight: 800;
-            margin-bottom: 14px;
-          }
-
-          .invoice-info {
-            border-collapse: collapse;
-          }
-
-          .invoice-info td {
-            padding: 4px 0 4px 12px;
-          }
-
-          .invoice-info .label {
-            color: #6b7280;
-          }
-
-          .invoice-info .value {
-            font-weight: 700;
-          }
-
-          .section {
-            margin-top: 20px;
-          }
-
-          .section-title {
-            font-size: 15px;
-            font-weight: 800;
-            color: #111827;
-            margin-bottom: 10px;
-          }
-
-          .supplier-box {
-            display: grid;
-            grid-template-columns: 1.5fr 1fr 1fr;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            overflow: hidden;
-          }
-
-          .supplier-cell {
-            padding: 12px;
-            border-left: 1px solid #d1d5db;
-          }
-
-          .supplier-cell:last-child {
-            border-left: none;
-          }
-
-          .cell-label {
-            color: #6b7280;
-            font-size: 11px;
-            margin-bottom: 5px;
-          }
-
-          .cell-value {
-            font-weight: 700;
-            color: #111827;
-          }
-
-          .account-box {
-            margin-top: 10px;
-            border: 1px solid #bfdbfe;
-            background: #eff6ff;
-            padding: 10px 12px;
-            border-radius: 6px;
-          }
-
-          .account-label {
-            color: #6b7280;
-            font-size: 11px;
-          }
-
-          .account-value {
-            color: #1d4ed8;
-            font-weight: 800;
-            margin-top: 4px;
-          }
-
-          .items-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-          }
-
-          .items-table th {
-            background: #eff6ff;
-            color: #1e3a8a;
-            border: 1px solid #bfdbfe;
-            padding: 10px 7px;
-            font-size: 12px;
-            font-weight: 800;
-          }
-
-          .items-table td {
-            border: 1px solid #d1d5db;
-            padding: 10px 7px;
-            text-align: center;
-            color: #111827;
-            font-size: 12px;
-          }
-
-          .items-table .item-name {
-            text-align: right;
-            font-weight: 600;
-          }
-
-          .bold {
-            font-weight: 800;
-          }
-
-          .totals-wrapper {
-            display: flex;
-            justify-content: flex-start;
-            margin-top: 18px;
-          }
-
-          .totals {
-            width: 330px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            overflow: hidden;
-          }
-
-          .total-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 14px;
-            border-bottom: 1px solid #e5e7eb;
-          }
-
-          .total-row:last-child {
-            border-bottom: none;
-          }
-
-          .total-label {
-            color: #6b7280;
-          }
-
-          .total-value {
-            font-weight: 700;
-          }
-
-          .grand-total {
-            background: #eff6ff;
-            color: #1d4ed8;
-            font-size: 16px;
-            font-weight: 800;
-          }
-
-          .grand-total .total-label,
-          .grand-total .total-value {
-            color: #1d4ed8;
-          }
-
-          .notes {
-            margin-top: 20px;
-            border-top: 1px solid #d1d5db;
-            padding-top: 14px;
-          }
-
-          .notes-title {
-            font-weight: 800;
-            margin-bottom: 7px;
-          }
-
-          .notes-text {
-            color: #4b5563;
-            min-height: 35px;
-            line-height: 1.7;
-          }
-
-          .footer {
-            margin-top: 35px;
-            padding-top: 12px;
-            border-top: 1px solid #d1d5db;
-            text-align: center;
-            color: #6b7280;
-            font-size: 11px;
-          }
-
-          @media print {
-            body {
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
+            @page {
+              size: A4;
+              margin: 12mm;
             }
-          }
 
-        </style>
-      </head>
+            * {
+              box-sizing: border-box;
+            }
 
-      <body>
+            html,
+            body {
+              margin: 0;
+              padding: 0;
+              background: white;
+            }
 
-        <div class="invoice">
+            body {
+              font-family:
+                Arial,
+                Tahoma,
+                sans-serif;
 
-          <div class="header">
+              color: #111827;
 
-            <div>
+              direction: rtl;
 
-              <div class="company-name">
-                شركة الجابري
+              font-size: 13px;
+            }
+
+            .invoice {
+              width: 100%;
+              max-width: 186mm;
+              margin: 0 auto;
+            }
+
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+
+              padding-bottom: 20px;
+
+              border-bottom:
+                2px solid
+                #2563eb;
+            }
+
+            .company-name {
+              font-size: 24px;
+              font-weight: 800;
+
+              color: #2563eb;
+
+              margin-bottom: 5px;
+            }
+
+            .company-subtitle {
+              color: #6b7280;
+              font-size: 14px;
+
+              margin-bottom: 12px;
+            }
+
+            .company-info {
+              color: #6b7280;
+              line-height: 1.8;
+            }
+
+            .invoice-side {
+              text-align: left;
+            }
+
+            .invoice-title {
+              display: inline-block;
+
+              background: #eff6ff;
+              color: #1d4ed8;
+
+              border:
+                1px solid
+                #bfdbfe;
+
+              padding:
+                8px 18px;
+
+              border-radius: 6px;
+
+              font-size: 18px;
+              font-weight: 800;
+
+              margin-bottom: 14px;
+            }
+
+            .invoice-info {
+              border-collapse: collapse;
+            }
+
+            .invoice-info td {
+              padding:
+                4px 0
+                4px 12px;
+            }
+
+            .invoice-info .label {
+              color: #6b7280;
+            }
+
+            .invoice-info .value {
+              font-weight: 700;
+            }
+
+            .section {
+              margin-top: 20px;
+            }
+
+            .section-title {
+              font-size: 15px;
+              font-weight: 800;
+
+              color: #111827;
+
+              margin-bottom: 10px;
+            }
+
+            .supplier-box {
+              display: grid;
+
+              grid-template-columns:
+                1.5fr
+                1fr
+                1fr;
+
+              border:
+                1px solid
+                #d1d5db;
+
+              border-radius: 6px;
+
+              overflow: hidden;
+            }
+
+            .supplier-cell {
+              padding: 12px;
+
+              border-left:
+                1px solid
+                #d1d5db;
+            }
+
+            .supplier-cell:last-child {
+              border-left: none;
+            }
+
+            .cell-label {
+              color: #6b7280;
+
+              font-size: 11px;
+
+              margin-bottom: 5px;
+            }
+
+            .cell-value {
+              font-weight: 700;
+
+              color: #111827;
+            }
+
+            .items-table {
+              width: 100%;
+
+              border-collapse: collapse;
+
+              margin-top: 10px;
+            }
+
+            .items-table th {
+              background: #eff6ff;
+
+              color: #1e3a8a;
+
+              border:
+                1px solid
+                #bfdbfe;
+
+              padding:
+                10px 7px;
+
+              font-size: 12px;
+
+              font-weight: 800;
+            }
+
+            .items-table td {
+              border:
+                1px solid
+                #d1d5db;
+
+              padding:
+                10px 7px;
+
+              text-align: center;
+
+              color: #111827;
+
+              font-size: 12px;
+            }
+
+            .items-table .item-name {
+              text-align: right;
+
+              font-weight: 600;
+            }
+
+            .bold {
+              font-weight: 800;
+            }
+
+            .totals-wrapper {
+              display: flex;
+
+              justify-content: flex-start;
+
+              margin-top: 18px;
+            }
+
+            .totals {
+              width: 330px;
+
+              border:
+                1px solid
+                #d1d5db;
+
+              border-radius: 6px;
+
+              overflow: hidden;
+            }
+
+            .total-row {
+              display: flex;
+
+              justify-content:
+                space-between;
+
+              padding:
+                10px 14px;
+
+              border-bottom:
+                1px solid
+                #e5e7eb;
+            }
+
+            .total-row:last-child {
+              border-bottom: none;
+            }
+
+            .total-label {
+              color: #6b7280;
+            }
+
+            .total-value {
+              font-weight: 700;
+            }
+
+            .grand-total {
+              background: #eff6ff;
+
+              color: #1d4ed8;
+
+              font-size: 16px;
+
+              font-weight: 800;
+            }
+
+            .grand-total
+            .total-label,
+            .grand-total
+            .total-value {
+              color: #1d4ed8;
+            }
+
+            .notes {
+              margin-top: 20px;
+
+              border-top:
+                1px solid
+                #d1d5db;
+
+              padding-top: 14px;
+            }
+
+            .notes-title {
+              font-weight: 800;
+
+              margin-bottom: 7px;
+            }
+
+            .notes-text {
+              color: #4b5563;
+
+              min-height: 35px;
+
+              line-height: 1.7;
+            }
+
+            .footer {
+              margin-top: 35px;
+
+              padding-top: 12px;
+
+              border-top:
+                1px solid
+                #d1d5db;
+
+              text-align: center;
+
+              color: #6b7280;
+
+              font-size: 11px;
+            }
+
+            @media print {
+
+              body {
+                -webkit-print-color-adjust:
+                  exact;
+
+                print-color-adjust:
+                  exact;
+              }
+
+            }
+
+          </style>
+
+        </head>
+
+        <body>
+
+          <div class="invoice">
+
+            <div class="header">
+
+              <div>
+
+                <div class="company-name">
+                  شركة الجابري
+                </div>
+
+                <div class="company-subtitle">
+                  للعسل والزيوت الطبيعة وخدمات العمرة
+                </div>
+
+                <div class="company-info">
+                  البيضاء - اليمن
+                  <br />
+                  هاتف: 734 434 443
+                </div>
+
               </div>
 
-              <div class="company-subtitle">
-                للعسل والزيوت الطبيعة وخدمات العمره
-              </div>
+              <div class="invoice-side">
 
-              <div class="company-info">
-                البيضاء - اليمن
-                <br />
-                هاتف: 734 434 443
+                <div class="invoice-title">
+                  فاتورة مشتريات
+                </div>
+
+                <table class="invoice-info">
+
+                  <tr>
+
+                    <td class="label">
+                      رقم الفاتورة:
+                    </td>
+
+                    <td class="value">
+                      ${savedInvoiceNumber}
+                    </td>
+
+                  </tr>
+
+                  <tr>
+
+                    <td class="label">
+                      التاريخ:
+                    </td>
+
+                    <td class="value">
+                      ${formatDateForPrint(date)}
+                    </td>
+
+                  </tr>
+
+                  <tr>
+
+                    <td class="label">
+                      الضريبة:
+                    </td>
+
+                    <td class="value">
+                      ${taxMode === "tax" ? `${taxRate}%` : "بدون ضريبة"}
+                    </td>
+
+                  </tr>
+
+                </table>
+
               </div>
 
             </div>
 
-            <div class="invoice-side">
+            <div class="section">
 
-              <div class="invoice-title">
-                فاتورة مشتريات
+              <div class="section-title">
+                بيانات المورد
               </div>
 
-              <table class="invoice-info">
+              <div class="supplier-box">
 
-                <tr>
+                <div class="supplier-cell">
 
-                  <td class="label">
-                    رقم الفاتورة:
-                  </td>
+                  <div class="cell-label">
+                    اسم المورد
+                  </div>
 
-                  <td class="value">
-                    ${savedInvoiceNumber}
-                  </td>
+                  <div class="cell-value">
+                    ${selectedSupplier?.name || "-"}
+                  </div>
 
-                </tr>
+                </div>
 
-                <tr>
+                <div class="supplier-cell">
 
-                  <td class="label">
-                    التاريخ:
-                  </td>
+                  <div class="cell-label">
+                    رقم الهاتف
+                  </div>
 
-                  <td class="value">
-                    ${formatDateForPrint(date)}
-                  </td>
+                  <div class="cell-value">
+                    ${selectedSupplier?.phone || "-"}
+                  </div>
 
-                </tr>
+                </div>
+
+                <div class="supplier-cell">
+
+                  <div class="cell-label">
+                    طريقة الدفع
+                  </div>
+
+                  <div class="cell-value">
+                    ${getPaymentMethodName(paymentMethod)}
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+
+            <div class="section">
+
+              <div class="section-title">
+                تفاصيل المشتريات
+              </div>
+
+              <table class="items-table">
+
+                <thead>
+
+                  <tr>
+
+                    <th style="width: 35px;">
+                      #
+                    </th>
+
+                    <th>
+                      الصنف
+                    </th>
+
+                    <th style="width: 65px;">
+                      الوحدة
+                    </th>
+
+                    <th style="width: 65px;">
+                      الكمية
+                    </th>
+
+                    <th style="width: 90px;">
+                      سعر الشراء
+                    </th>
+
+                    <th style="width: 70px;">
+                      الخصم
+                    </th>
+
+                    <th style="width: 105px;">
+                      الإجمالي
+                    </th>
+
+                  </tr>
+
+                </thead>
+
+                <tbody>
+                  ${itemsHTML}
+                </tbody>
 
               </table>
 
             </div>
 
-          </div>
+            <div class="totals-wrapper">
 
-          <div class="section">
+              <div class="totals">
 
-            <div class="section-title">
-              بيانات المورد
-            </div>
+                <div class="total-row">
 
-            <div class="supplier-box">
+                  <span class="total-label">
+                    الإجمالي قبل الخصم
+                  </span>
 
-              <div class="supplier-cell">
+                  <span class="total-value">
+                    ${formatMoney(subtotal + totalDiscount)} ريال
+                  </span>
 
-                <div class="cell-label">
-                  اسم المورد
                 </div>
 
-                <div class="cell-value">
-                  ${selectedSupplier?.name || "-"}
-                </div>
+                <div class="total-row">
 
-              </div>
-
-              <div class="supplier-cell">
-
-                <div class="cell-label">
-                  رقم الهاتف
-                </div>
-
-                <div class="cell-value">
-                  ${selectedSupplier?.phone || "-"}
-                </div>
-
-              </div>
-
-              <div class="supplier-cell">
-
-                <div class="cell-label">
-                  طريقة الدفع
-                </div>
-
-                <div class="cell-value">
-                  ${getPaymentMethodName(paymentMethod)}
-                </div>
-
-              </div>
-
-            </div>
-
-            <div class="account-box">
-
-              <div class="account-label">
-                الحساب المحاسبي
-              </div>
-
-              <div class="account-value">
-                ${
-                  selectedAccount
-                    ? `${selectedAccount.code} - ${selectedAccount.name}`
-                    : "-"
-                }
-              </div>
-
-            </div>
-
-          </div>
-
-          <div class="section">
-
-            <div class="section-title">
-              تفاصيل المشتريات
-            </div>
-
-            <table class="items-table">
-
-              <thead>
-
-                <tr>
-
-                  <th style="width: 35px;">
-                    #
-                  </th>
-
-                  <th>
-                    الصنف
-                  </th>
-
-                  <th style="width: 65px;">
-                    الوحدة
-                  </th>
-
-                  <th style="width: 65px;">
-                    الكمية
-                  </th>
-
-                  <th style="width: 90px;">
-                    سعر الشراء
-                  </th>
-
-                  <th style="width: 70px;">
+                  <span class="total-label">
                     الخصم
-                  </th>
+                  </span>
 
-                  <th style="width: 105px;">
-                    الإجمالي
-                  </th>
+                  <span class="total-value">
+                    ${formatMoney(totalDiscount)} ريال
+                  </span>
 
-                </tr>
+                </div>
 
-              </thead>
+                <div class="total-row">
 
-              <tbody>
+                  <span class="total-label">
+                    الإجمالي قبل الضريبة
+                  </span>
 
-                ${itemsHTML}
+                  <span class="total-value">
+                    ${formatMoney(subtotal)} ريال
+                  </span>
 
-              </tbody>
+                </div>
 
-            </table>
+                ${taxHTML}
 
-          </div>
+                <div class="total-row grand-total">
 
-          <div class="totals-wrapper">
+                  <span class="total-label">
+                    الإجمالي النهائي
+                  </span>
 
-            <div class="totals">
+                  <span class="total-value">
+                    ${formatMoney(grandTotal)} ريال
+                  </span>
 
-              <div class="total-row">
-
-                <span class="total-label">
-                  الإجمالي قبل الخصم
-                </span>
-
-                <span class="total-value">
-                  ${formatMoney(subtotal + totalDiscount)} ريال
-                </span>
-
-              </div>
-
-              <div class="total-row">
-
-                <span class="total-label">
-                  الخصم
-                </span>
-
-                <span class="total-value">
-                  ${formatMoney(totalDiscount)} ريال
-                </span>
-
-              </div>
-
-              <div class="total-row">
-
-                <span class="total-label">
-                  الإجمالي قبل الضريبة
-                </span>
-
-                <span class="total-value">
-                  ${formatMoney(subtotal)} ريال
-                </span>
-
-              </div>
-
-              <div class="total-row">
-
-                <span class="total-label">
-                  ضريبة القيمة المضافة (15%)
-                </span>
-
-                <span class="total-value">
-                  ${formatMoney(tax)} ريال
-                </span>
-
-              </div>
-
-              <div class="total-row grand-total">
-
-                <span class="total-label">
-                  الإجمالي النهائي
-                </span>
-
-                <span class="total-value">
-                  ${formatMoney(grandTotal)} ريال
-                </span>
+                </div>
 
               </div>
 
             </div>
 
-          </div>
+            <div class="notes">
 
-          <div class="notes">
+              <div class="notes-title">
+                ملاحظات
+              </div>
 
-            <div class="notes-title">
-              ملاحظات
+              <div class="notes-text">
+                ${notes || "لا توجد ملاحظات"}
+              </div>
+
             </div>
 
-            <div class="notes-text">
-              ${notes || "لا توجد ملاحظات"}
+            <div class="footer">
+
+              شركة الجابري للعسل والزيوت الطبيعة وخدمات العمرة
+
+              <br />
+
+              نشكركم على التعامل معنا
+
             </div>
 
           </div>
 
-          <div class="footer">
+          <script>
 
-            شركة الجابري للعسل والزيوت الطبيعة وخدمات العمره
-
-            <br />
-
-            نشكركم على التعامل معنا
-
-          </div>
-
-        </div>
-
-        <script>
-
-          window.onload =
-            function () {
+            window.onload = function () {
 
               setTimeout(
                 function () {
@@ -1098,14 +1297,13 @@ export default function NewPurchasePage() {
 
             };
 
-          window.onafterprint =
-            function () {
+            window.onafterprint = function () {
               window.close();
             };
 
-        </script>
+          </script>
 
-      </body>
+        </body>
 
       </html>
     `;
@@ -1117,13 +1315,17 @@ export default function NewPurchasePage() {
     printWindow.document.close();
   };
 
+  // ======================================================
+  // الواجهة
+  // ======================================================
+
   return (
     <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
-      {/* ==================================================
-          Header
-      ================================================== */}
-
       <div className="max-w-7xl mx-auto mb-6">
+        {/* ==================================================
+            Header
+        ================================================== */}
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-2 text-sm">
@@ -1166,9 +1368,14 @@ export default function NewPurchasePage() {
             <button
               type="button"
               onClick={handleSave}
-              className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition"
+              disabled={isSaved}
+              className={`inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-medium transition ${
+                isSaved
+                  ? "bg-green-100 text-green-700 cursor-default"
+                  : "bg-blue-600 hover:bg-blue-700 text-white"
+              }`}
             >
-              <FiSave size={19} />
+              {isSaved ? <FiCheckCircle size={19} /> : <FiSave size={19} />}
 
               {isSaved ? "تم الحفظ" : "حفظ الفاتورة"}
             </button>
@@ -1207,7 +1414,7 @@ export default function NewPurchasePage() {
               <h2 className="text-2xl font-bold text-blue-600">شركة الجابري</h2>
 
               <p className="text-gray-500 mt-1">
-                للعسل والزيوت الطبيعة وخدمات العمره
+                للعسل والزيوت الطبيعة وخدمات العمرة
               </p>
 
               <p className="text-sm text-gray-500 mt-3">البيضاء - اليمن</p>
@@ -1237,8 +1444,8 @@ export default function NewPurchasePage() {
                   <input
                     type="date"
                     value={date}
-                    onChange={(e) => {
-                      setDate(e.target.value);
+                    onChange={(event) => {
+                      setDate(event.target.value);
 
                       setIsSaved(false);
                     }}
@@ -1255,9 +1462,21 @@ export default function NewPurchasePage() {
         ================================================== */}
 
         <div className="p-6 border-b border-gray-200">
-          <h3 className="font-bold text-gray-800 mb-5">بيانات المورد</h3>
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+              <FiTruck size={20} />
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+            <div>
+              <h3 className="font-bold text-gray-800">بيانات المورد</h3>
+
+              <p className="text-xs text-gray-400 mt-1">
+                اختر المورد فقط، وسيتم التعامل مع حسابه داخليًا.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {/* المورد */}
 
             <div>
@@ -1267,8 +1486,8 @@ export default function NewPurchasePage() {
 
               <select
                 value={supplierId}
-                onChange={(e) => {
-                  setSupplierId(e.target.value);
+                onChange={(event) => {
+                  setSupplierId(event.target.value);
 
                   setIsSaved(false);
                 }}
@@ -1278,7 +1497,7 @@ export default function NewPurchasePage() {
 
                 {suppliers.map((supplier) => (
                   <option key={supplier.id} value={supplier.id}>
-                    {supplier.id} - {supplier.name}
+                    {supplier.name}
                   </option>
                 ))}
               </select>
@@ -1296,52 +1515,6 @@ export default function NewPurchasePage() {
               )}
             </div>
 
-            {/* الحساب المحاسبي */}
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                الحساب المحاسبي
-              </label>
-
-              <div className="relative">
-                <FiBookOpen
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  size={18}
-                />
-
-                <select
-                  value={accountCode}
-                  onChange={(e) => {
-                    setAccountCode(e.target.value);
-
-                    setIsSaved(false);
-                  }}
-                  className="w-full h-12 pl-3 pr-10 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                >
-                  <option value="">اختر الحساب الفرعي</option>
-
-                  {subAccounts.map((account) => (
-                    <option key={account.id} value={account.code}>
-                      {account.code} - {account.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {subAccounts.length === 0 && (
-                <p className="text-xs text-red-500 mt-2 leading-5">
-                  لا توجد حسابات فرعية. أضف حسابًا رئيسيًا ثم أضف حسابًا فرعيًا
-                  من دليل الحسابات.
-                </p>
-              )}
-
-              {selectedAccount && (
-                <p className="text-xs text-blue-600 mt-2">
-                  الحساب المحدد: {selectedAccount.code} - {selectedAccount.name}
-                </p>
-              )}
-            </div>
-
             {/* طريقة الدفع */}
 
             <div>
@@ -1351,8 +1524,8 @@ export default function NewPurchasePage() {
 
               <select
                 value={paymentMethod}
-                onChange={(e) => {
-                  setPaymentMethod(e.target.value as PaymentMethod);
+                onChange={(event) => {
+                  setPaymentMethod(event.target.value as PaymentMethod);
 
                   setIsSaved(false);
                 }}
@@ -1375,6 +1548,95 @@ export default function NewPurchasePage() {
 
               <div className="w-full h-12 px-4 bg-gray-50 text-gray-700 border border-gray-200 rounded-lg flex items-center">
                 {paymentMethod === "credit" ? "آجلة" : "مدفوعة"}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ==================================================
+            Tax
+        ================================================== */}
+
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+              <FiPercent size={20} />
+            </div>
+
+            <div>
+              <h3 className="font-bold text-gray-800">ضريبة القيمة المضافة</h3>
+
+              <p className="text-xs text-gray-400 mt-1">
+                يمكنك إصدار الفاتورة بالضريبة أو بدون ضريبة وتحديد النسبة.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {/* نوع الضريبة */}
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                الضريبة
+              </label>
+
+              <select
+                value={taxMode}
+                onChange={(event) =>
+                  handleTaxModeChange(event.target.value as TaxMode)
+                }
+                className="w-full h-12 px-4 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+              >
+                <option value="none">بدون ضريبة</option>
+
+                <option value="tax">مع ضريبة</option>
+              </select>
+            </div>
+
+            {/* نسبة الضريبة */}
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                نسبة الضريبة %
+              </label>
+
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={taxRate}
+                  disabled={taxMode === "none"}
+                  onChange={(event) => handleTaxRateChange(event.target.value)}
+                  className={`w-full h-12 px-4 pl-12 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none transition ${
+                    taxMode === "none"
+                      ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                      : "focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                  }`}
+                />
+
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold">
+                  %
+                </span>
+              </div>
+            </div>
+
+            {/* قيمة الضريبة */}
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                قيمة الضريبة
+              </label>
+
+              <div
+                className={`w-full h-12 px-4 rounded-lg border flex items-center font-bold ${
+                  taxMode === "tax"
+                    ? "bg-amber-50 border-amber-200 text-amber-700"
+                    : "bg-gray-50 border-gray-200 text-gray-500"
+                }`}
+              >
+                {formatMoney(tax)} ريال
               </div>
             </div>
           </div>
@@ -1448,19 +1710,15 @@ export default function NewPurchasePage() {
 
                   return (
                     <tr key={item.id}>
-                      {/* الرقم */}
-
                       <td className="border border-gray-300 px-4 py-3 text-center text-gray-700">
                         {index + 1}
                       </td>
 
-                      {/* الصنف */}
-
                       <td className="border border-gray-300 px-4 py-3">
                         <select
                           value={item.productId}
-                          onChange={(e) =>
-                            updateItem(item.id, "productId", e.target.value)
+                          onChange={(event) =>
+                            updateItem(item.id, "productId", event.target.value)
                           }
                           className="w-full h-11 px-3 bg-white text-gray-900 border border-gray-300 rounded-md outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         >
@@ -1468,13 +1726,13 @@ export default function NewPurchasePage() {
 
                           {products.map((product) => (
                             <option key={product.id} value={product.id}>
-                              {product.code} - {product.name}
+                              {product.code}
+                              {" - "}
+                              {product.name}
                             </option>
                           ))}
                         </select>
                       </td>
-
-                      {/* الوحدة */}
 
                       <td className="border border-gray-300 px-4 py-3 text-center">
                         <span className="text-sm text-gray-600">
@@ -1482,22 +1740,18 @@ export default function NewPurchasePage() {
                         </span>
                       </td>
 
-                      {/* الكمية */}
-
                       <td className="border border-gray-300 px-4 py-3">
                         <input
                           type="number"
                           min="1"
                           step="0.01"
                           value={item.quantity}
-                          onChange={(e) =>
-                            updateItem(item.id, "quantity", e.target.value)
+                          onChange={(event) =>
+                            updateItem(item.id, "quantity", event.target.value)
                           }
                           className="w-24 h-11 px-3 bg-white text-gray-900 border border-gray-300 rounded-md outline-none text-center focus:border-blue-500"
                         />
                       </td>
-
-                      {/* السعر */}
 
                       <td className="border border-gray-300 px-4 py-3">
                         <input
@@ -1505,14 +1759,12 @@ export default function NewPurchasePage() {
                           min="0"
                           step="0.01"
                           value={item.price}
-                          onChange={(e) =>
-                            updateItem(item.id, "price", e.target.value)
+                          onChange={(event) =>
+                            updateItem(item.id, "price", event.target.value)
                           }
                           className="w-32 h-11 px-3 bg-white text-gray-900 border border-gray-300 rounded-md outline-none text-center focus:border-blue-500"
                         />
                       </td>
-
-                      {/* الخصم */}
 
                       <td className="border border-gray-300 px-4 py-3">
                         <input
@@ -1521,20 +1773,17 @@ export default function NewPurchasePage() {
                           max="100"
                           step="0.01"
                           value={item.discount}
-                          onChange={(e) =>
-                            updateItem(item.id, "discount", e.target.value)
+                          onChange={(event) =>
+                            updateItem(item.id, "discount", event.target.value)
                           }
                           className="w-24 h-11 px-3 bg-white text-gray-900 border border-gray-300 rounded-md outline-none text-center focus:border-blue-500"
                         />
                       </td>
 
-                      {/* الإجمالي */}
-
                       <td className="border border-gray-300 px-4 py-3 text-center font-bold text-gray-900 whitespace-nowrap">
-                        {formatMoney(getItemTotal(item))} ريال
+                        {formatMoney(getItemTotal(item))}
+                        {" ريال"}
                       </td>
-
-                      {/* حذف */}
 
                       <td className="border border-gray-300 px-4 py-3 text-center">
                         <button
@@ -1542,6 +1791,7 @@ export default function NewPurchasePage() {
                           onClick={() => removeItem(item.id)}
                           disabled={items.length === 1}
                           className="p-2.5 text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed"
+                          title="حذف الصنف"
                         >
                           <FiTrash2 size={18} />
                         </button>
@@ -1565,7 +1815,8 @@ export default function NewPurchasePage() {
                 <span className="text-gray-500">الإجمالي قبل الخصم</span>
 
                 <span className="font-semibold text-gray-900">
-                  {formatMoney(subtotal + totalDiscount)} ريال
+                  {formatMoney(subtotal + totalDiscount)}
+                  {" ريال"}
                 </span>
               </div>
 
@@ -1573,7 +1824,8 @@ export default function NewPurchasePage() {
                 <span className="text-gray-500">الخصم</span>
 
                 <span className="font-semibold text-red-600">
-                  - {formatMoney(totalDiscount)} ريال
+                  - {formatMoney(totalDiscount)}
+                  {" ريال"}
                 </span>
               </div>
 
@@ -1581,17 +1833,26 @@ export default function NewPurchasePage() {
                 <span className="text-gray-500">الإجمالي قبل الضريبة</span>
 
                 <span className="font-semibold text-gray-900">
-                  {formatMoney(subtotal)} ريال
+                  {formatMoney(subtotal)}
+                  {" ريال"}
                 </span>
               </div>
 
               <div className="flex justify-between px-5 py-4 border-b border-gray-200">
                 <span className="text-gray-500">
-                  ضريبة القيمة المضافة (15%)
+                  {taxMode === "tax"
+                    ? `ضريبة القيمة المضافة (${taxRate}%)`
+                    : "الضريبة"}
                 </span>
 
-                <span className="font-semibold text-gray-900">
-                  {formatMoney(tax)} ريال
+                <span
+                  className={`font-semibold ${
+                    taxMode === "tax" ? "text-amber-600" : "text-gray-400"
+                  }`}
+                >
+                  {taxMode === "tax" ? formatMoney(tax) : "بدون ضريبة"}
+
+                  {taxMode === "tax" && " ريال"}
                 </span>
               </div>
 
@@ -1601,7 +1862,8 @@ export default function NewPurchasePage() {
                 </span>
 
                 <span className="text-xl font-bold text-blue-600">
-                  {formatMoney(grandTotal)} ريال
+                  {formatMoney(grandTotal)}
+                  {" ريال"}
                 </span>
               </div>
             </div>
@@ -1617,8 +1879,8 @@ export default function NewPurchasePage() {
 
           <textarea
             value={notes}
-            onChange={(e) => {
-              setNotes(e.target.value);
+            onChange={(event) => {
+              setNotes(event.target.value);
 
               setIsSaved(false);
             }}

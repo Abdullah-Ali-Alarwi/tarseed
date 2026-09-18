@@ -2,10 +2,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 // ======================================================
-// أنواع البيانات
-// ======================================================
-
-// ======================================================
 // المنتجات
 // ======================================================
 
@@ -26,6 +22,10 @@ export interface Customer {
   phone?: string;
   address?: string;
   balance?: number;
+
+  // الحساب المحاسبي الخاص بالعميل
+  accountCode?: string;
+  accountName?: string;
 }
 
 // ======================================================
@@ -38,6 +38,26 @@ export interface Supplier {
   phone?: string;
   address?: string;
   balance?: number;
+
+  // الحساب المحاسبي الخاص بالمورد
+  accountCode?: string;
+  accountName?: string;
+}
+
+// ======================================================
+// الوكلاء
+// ======================================================
+
+export interface Agent {
+  id: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  balance?: number;
+
+  // الحساب المحاسبي الخاص بالوكيل
+  accountCode?: string;
+  accountName?: string;
 }
 
 // ======================================================
@@ -66,12 +86,13 @@ export interface Sale {
   customerId: string;
   customerName: string;
 
-  // الحساب المحاسبي المرتبط بالفاتورة
-  // يجب أن يكون حسابًا فرعيًا
   accountCode: string;
   accountName: string;
 
-  paymentMethod: "cash" | "bank" | "credit";
+  paymentMethod:
+    | "cash"
+    | "bank"
+    | "credit";
 
   items: SaleItem[];
 
@@ -109,12 +130,13 @@ export interface Purchase {
   supplierId: string;
   supplierName: string;
 
-  // الحساب المحاسبي المرتبط بالفاتورة
-  // يجب أن يكون حسابًا فرعيًا
   accountCode: string;
   accountName: string;
 
-  paymentMethod: "cash" | "bank" | "credit";
+  paymentMethod:
+    | "cash"
+    | "bank"
+    | "credit";
 
   items: PurchaseItem[];
 
@@ -127,7 +149,7 @@ export interface Purchase {
 }
 
 // ======================================================
-// الحسابات المحاسبية
+// أنواع الحسابات
 // ======================================================
 
 export type AccountType =
@@ -137,19 +159,30 @@ export type AccountType =
   | "revenue"
   | "expense";
 
+// ======================================================
+// الحساب المحاسبي
+// ======================================================
+
 export interface Account {
   id: string;
   code: string;
   name: string;
   type: AccountType;
+
+  // كود الحساب الأب
   parent: string;
+
+  // 0 = رئيسي
+  // 1 = فرعي
+  // 2 = فرعي من فرعي
+  // وهكذا
   level: number;
+
   description?: string;
 }
 
 // ======================================================
 // بيانات تعديل الحساب
-// منع تعديل id و code
 // ======================================================
 
 export type AccountUpdateData = Partial<
@@ -157,7 +190,7 @@ export type AccountUpdateData = Partial<
 >;
 
 // ======================================================
-// القيود اليومية
+// سطر القيد اليومي
 // ======================================================
 
 export interface JournalLine {
@@ -169,7 +202,17 @@ export interface JournalLine {
   credit: number;
 }
 
-export type JournalStatus = "posted" | "draft";
+// ======================================================
+// حالة القيد
+// ======================================================
+
+export type JournalStatus =
+  | "posted"
+  | "draft";
+
+// ======================================================
+// القيد اليومي
+// ======================================================
 
 export interface JournalEntry {
   id: string;
@@ -186,41 +229,39 @@ export interface JournalEntry {
 }
 
 // ======================================================
-// توليد كود الأصناف تلقائيًا
+// بيانات إضافة وكيل
+// ======================================================
+
+export type AddAgentData = Omit<
+  Agent,
+  "id" | "accountCode" | "accountName"
+> & {
+  accountType: AccountType;
+  accountParent: string;
+};
+
+// ======================================================
+// بيانات تعديل وكيل
+// ======================================================
+
+export type UpdateAgentData = Partial<
+  Omit<
+    Agent,
+    "id" | "accountCode" | "accountName"
+  >
+> & {
+  accountType?: AccountType;
+  accountParent?: string;
+};
+
+// ======================================================
+// الكود الأساسي للأصناف
 // ======================================================
 
 const PRODUCT_BASE_CODE = 1001;
 
-function generateProductCode(
-  products: Product[]
-): string {
-  const usedCodes = products
-    .map((product) => Number(product.code))
-    .filter((code) => Number.isFinite(code));
-
-  // أول صنف
-  if (usedCodes.length === 0) {
-    return String(PRODUCT_BASE_CODE);
-  }
-
-  // أعلى رقم موجود
-  let nextCode = Math.max(...usedCodes) + 1;
-
-  // التأكد من عدم وجود تكرار
-  while (
-    products.some(
-      (product) =>
-        Number(product.code) === nextCode
-    )
-  ) {
-    nextCode++;
-  }
-
-  return String(nextCode);
-}
-
 // ======================================================
-// أرقام الحسابات الرئيسية
+// الأكواد الأساسية للحسابات
 // ======================================================
 
 const ROOT_ACCOUNT_BASE_CODES: Record<
@@ -235,18 +276,240 @@ const ROOT_ACCOUNT_BASE_CODES: Record<
 };
 
 // ======================================================
-// توليد رقم الحساب الرئيسي
-//
-// الأصول:
-// 1000
-// 1100
-// 1200
-//
-// الالتزامات:
-// 2000
-// 2100
-// 2200
-//
+// الأكواد الافتراضية المهمة
+// ======================================================
+
+const ACCOUNT_CODES = {
+  ASSETS: "1000",
+  CUSTOMERS: "1001",
+
+  CASH: "1002",
+  BANK: "1003",
+
+  LIABILITIES: "2000",
+  SUPPLIERS: "2001",
+  AGENTS: "2002",
+
+  EQUITY: "3000",
+
+  REVENUE: "4000",
+  SALES: "4001",
+
+  EXPENSES: "5000",
+  PURCHASES: "5001",
+} as const;
+
+// ======================================================
+// إنشاء ID
+// ======================================================
+
+function generateId(
+  prefix: string
+): string {
+  return `${prefix}-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+// ======================================================
+// توليد كود المنتج
+// ======================================================
+
+function generateProductCode(
+  products: Product[]
+): string {
+  const codes = products
+    .map((product) =>
+      Number(product.code)
+    )
+    .filter((code) =>
+      Number.isFinite(code)
+    );
+
+  if (codes.length === 0) {
+    return String(
+      PRODUCT_BASE_CODE
+    );
+  }
+
+  let nextCode =
+    Math.max(...codes) + 1;
+
+  while (
+    products.some(
+      (product) =>
+        Number(product.code) ===
+        nextCode
+    )
+  ) {
+    nextCode++;
+  }
+
+  return String(nextCode);
+}
+
+// ======================================================
+// الحسابات الافتراضية
+// ======================================================
+
+function createDefaultAccounts(): Account[] {
+  return [
+    // ==================================================
+    // الأصول
+    // ==================================================
+
+    {
+      id: "ACCOUNT-1000",
+      code: "1000",
+      name: "الأصول",
+      type: "asset",
+      parent: "",
+      level: 0,
+      description:
+        "الحساب الرئيسي للأصول",
+    },
+
+    {
+      id: "ACCOUNT-1001",
+      code: "1001",
+      name: "العملاء",
+      type: "asset",
+      parent: "1000",
+      level: 1,
+      description:
+        "الحساب الرئيسي للعملاء",
+    },
+
+    {
+      id: "ACCOUNT-1002",
+      code: "1002",
+      name: "الصندوق",
+      type: "asset",
+      parent: "1000",
+      level: 1,
+      description:
+        "حساب الصندوق والنقدية",
+    },
+
+    {
+      id: "ACCOUNT-1003",
+      code: "1003",
+      name: "البنك",
+      type: "asset",
+      parent: "1000",
+      level: 1,
+      description:
+        "حساب البنك",
+    },
+
+    // ==================================================
+    // الالتزامات
+    // ==================================================
+
+    {
+      id: "ACCOUNT-2000",
+      code: "2000",
+      name: "الالتزامات",
+      type: "liability",
+      parent: "",
+      level: 0,
+      description:
+        "الحساب الرئيسي للالتزامات",
+    },
+
+    {
+      id: "ACCOUNT-2001",
+      code: "2001",
+      name: "الموردين",
+      type: "liability",
+      parent: "2000",
+      level: 1,
+      description:
+        "الحساب الرئيسي للموردين",
+    },
+
+    {
+      id: "ACCOUNT-2002",
+      code: "2002",
+      name: "الوكلاء",
+      type: "liability",
+      parent: "2000",
+      level: 1,
+      description:
+        "الحساب الرئيسي للوكلاء",
+    },
+
+    // ==================================================
+    // حقوق الملكية
+    // ==================================================
+
+    {
+      id: "ACCOUNT-3000",
+      code: "3000",
+      name: "حقوق الملكية",
+      type: "equity",
+      parent: "",
+      level: 0,
+      description:
+        "الحساب الرئيسي لحقوق الملكية",
+    },
+
+    // ==================================================
+    // الإيرادات
+    // ==================================================
+
+    {
+      id: "ACCOUNT-4000",
+      code: "4000",
+      name: "الإيرادات",
+      type: "revenue",
+      parent: "",
+      level: 0,
+      description:
+        "الحساب الرئيسي للإيرادات",
+    },
+
+    {
+      id: "ACCOUNT-4001",
+      code: "4001",
+      name: "المبيعات",
+      type: "revenue",
+      parent: "4000",
+      level: 1,
+      description:
+        "حساب إيرادات المبيعات",
+    },
+
+    // ==================================================
+    // المصروفات
+    // ==================================================
+
+    {
+      id: "ACCOUNT-5000",
+      code: "5000",
+      name: "المصروفات",
+      type: "expense",
+      parent: "",
+      level: 0,
+      description:
+        "الحساب الرئيسي للمصروفات",
+    },
+
+    {
+      id: "ACCOUNT-5001",
+      code: "5001",
+      name: "المشتريات",
+      type: "expense",
+      parent: "5000",
+      level: 1,
+      description:
+        "حساب المشتريات",
+    },
+  ];
+}
+
+// ======================================================
+// توليد كود حساب رئيسي
 // ======================================================
 
 function generateRootAccountCode(
@@ -256,25 +519,41 @@ function generateRootAccountCode(
   const baseCode =
     ROOT_ACCOUNT_BASE_CODES[type];
 
-  const rootAccounts = accounts.filter(
-    (account) =>
-      account.level === 0 &&
-      account.type === type &&
-      !account.parent
-  );
+  const rootAccounts =
+    accounts.filter(
+      (account) =>
+        account.level === 0 &&
+        account.type === type &&
+        !account.parent
+    );
 
   if (rootAccounts.length === 0) {
-    return baseCode.toString();
+    let code = baseCode;
+
+    while (
+      accounts.some(
+        (account) =>
+          Number(account.code) ===
+          code
+      )
+    ) {
+      code += 100;
+    }
+
+    return String(code);
   }
 
-  const usedCodes = rootAccounts
-    .map((account) => Number(account.code))
-    .filter((code) => Number.isFinite(code));
+  const codes = rootAccounts
+    .map((account) =>
+      Number(account.code)
+    )
+    .filter((code) =>
+      Number.isFinite(code)
+    );
 
   let nextCode =
-    Math.max(...usedCodes) + 100;
+    Math.max(...codes) + 100;
 
-  // التأكد من عدم التكرار
   while (
     accounts.some(
       (account) =>
@@ -285,28 +564,23 @@ function generateRootAccountCode(
     nextCode += 100;
   }
 
-  return nextCode.toString();
+  return String(nextCode);
 }
 
 // ======================================================
-// توليد رقم الحساب الفرعي
-//
-// الأب 1000
-//
-// 1001
-// 1002
-// 1003
-//
+// توليد كود حساب تحت أي حساب
 // ======================================================
 
 function generateChildAccountCode(
   accounts: Account[],
   parentCode: string
 ): string {
-  const parentAccount = accounts.find(
-    (account) =>
-      account.code === parentCode
-  );
+  const parentAccount =
+    accounts.find(
+      (account) =>
+        account.code ===
+        parentCode
+    );
 
   if (!parentAccount) {
     throw new Error(
@@ -314,17 +588,12 @@ function generateChildAccountCode(
     );
   }
 
-  // الحساب الأب يجب أن يكون رئيسيًا
-  if (parentAccount.level !== 0) {
-    throw new Error(
-      "لا يمكن استخدام حساب فرعي كحساب أب."
+  const children =
+    accounts.filter(
+      (account) =>
+        account.parent ===
+        parentCode
     );
-  }
-
-  const children = accounts.filter(
-    (account) =>
-      account.parent === parentCode
-  );
 
   const parentNumber =
     Number(parentCode);
@@ -335,19 +604,35 @@ function generateChildAccountCode(
     );
   }
 
-  // أول حساب فرعي
   if (children.length === 0) {
-    return String(parentNumber + 1);
+    let firstCode =
+      parentNumber + 1;
+
+    while (
+      accounts.some(
+        (account) =>
+          Number(account.code) ===
+          firstCode
+      )
+    ) {
+      firstCode++;
+    }
+
+    return String(firstCode);
   }
 
-  const childNumbers = children
-    .map((account) => Number(account.code))
-    .filter((code) => Number.isFinite(code));
+  const childNumbers =
+    children
+      .map((account) =>
+        Number(account.code)
+      )
+      .filter((code) =>
+        Number.isFinite(code)
+      );
 
   let nextCode =
     Math.max(...childNumbers) + 1;
 
-  // التأكد من عدم التكرار
   while (
     accounts.some(
       (account) =>
@@ -362,7 +647,7 @@ function generateChildAccountCode(
 }
 
 // ======================================================
-// توليد رقم الحساب
+// توليد كود الحساب
 // ======================================================
 
 function generateAccountCode(
@@ -384,36 +669,472 @@ function generateAccountCode(
 }
 
 // ======================================================
-// إنشاء ID آمن
+// البحث عن حساب
 // ======================================================
 
-function generateId(
-  prefix: string
-): string {
-  return `${prefix}-${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+function findAccount(
+  accounts: Account[],
+  code?: string
+): Account | undefined {
+  if (!code) {
+    return undefined;
+  }
+
+  return accounts.find(
+    (account) =>
+      account.code === code
+  );
 }
 
 // ======================================================
-// Store Interface
+// إنشاء رقم قيد
+// ======================================================
+
+function generateJournalNumber(
+  entries: JournalEntry[]
+): string {
+  const numbers = entries
+    .map((entry) => {
+      const match =
+        entry.number.match(
+          /(\d+)$/
+        );
+
+      return match
+        ? Number(match[1])
+        : 0;
+    })
+    .filter((number) =>
+      Number.isFinite(number)
+    );
+
+  const next =
+    numbers.length > 0
+      ? Math.max(...numbers) + 1
+      : 1;
+
+  return `JV-${String(
+    next
+  ).padStart(4, "0")}`;
+}
+
+// ======================================================
+// التحقق من توازن القيد
+// ======================================================
+
+function isJournalBalanced(
+  lines: JournalLine[]
+): boolean {
+  const debit = lines.reduce(
+    (sum, line) =>
+      sum +
+      Number(line.debit || 0),
+    0
+  );
+
+  const credit = lines.reduce(
+    (sum, line) =>
+      sum +
+      Number(line.credit || 0),
+    0
+  );
+
+  return (
+    Math.abs(
+      debit - credit
+    ) < 0.000001
+  );
+}
+
+// ======================================================
+// إنشاء سطر قيد
+// ======================================================
+
+function createJournalLine(
+  account: Account,
+  description: string,
+  debit: number,
+  credit: number
+): JournalLine {
+  return {
+    id: generateId(
+      "JLINE"
+    ),
+
+    accountCode:
+      account.code,
+
+    accountName:
+      account.name,
+
+    description,
+
+    debit:
+      Number(debit || 0),
+
+    credit:
+      Number(credit || 0),
+  };
+}
+
+// ======================================================
+// معرفة الحساب المقابل للبيع
+// ======================================================
+
+function getSaleDebitAccount(
+  accounts: Account[],
+  sale: Sale
+): Account | undefined {
+  if (
+    sale.paymentMethod ===
+    "cash"
+  ) {
+    return findAccount(
+      accounts,
+      ACCOUNT_CODES.CASH
+    );
+  }
+
+  if (
+    sale.paymentMethod ===
+    "bank"
+  ) {
+    return findAccount(
+      accounts,
+      ACCOUNT_CODES.BANK
+    );
+  }
+
+  return findAccount(
+    accounts,
+    sale.accountCode
+  );
+}
+
+// ======================================================
+// معرفة الحساب المقابل للشراء
+// ======================================================
+
+function getPurchaseCreditAccount(
+  accounts: Account[],
+  purchase: Purchase
+): Account | undefined {
+  if (
+    purchase.paymentMethod ===
+    "cash"
+  ) {
+    return findAccount(
+      accounts,
+      ACCOUNT_CODES.CASH
+    );
+  }
+
+  if (
+    purchase.paymentMethod ===
+    "bank"
+  ) {
+    return findAccount(
+      accounts,
+      ACCOUNT_CODES.BANK
+    );
+  }
+
+  return findAccount(
+    accounts,
+    purchase.accountCode
+  );
+}
+
+// ======================================================
+// إنشاء قيد المبيعات
+// ======================================================
+
+function createSaleJournalEntry(
+  accounts: Account[],
+  entries: JournalEntry[],
+  sale: Sale,
+  saleId: string
+): JournalEntry | null {
+  const amount =
+    Number(sale.total || 0);
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    return null;
+  }
+
+  const debitAccount =
+    getSaleDebitAccount(
+      accounts,
+      sale
+    );
+
+  const salesAccount =
+    findAccount(
+      accounts,
+      ACCOUNT_CODES.SALES
+    );
+
+  if (!debitAccount) {
+    console.error(
+      "حساب الطرف المدين في المبيعات غير موجود."
+    );
+
+    return null;
+  }
+
+  if (!salesAccount) {
+    console.error(
+      "حساب المبيعات 4001 غير موجود."
+    );
+
+    return null;
+  }
+
+  const debitDescription =
+    sale.paymentMethod ===
+    "credit"
+      ? `بيع آجل للعميل: ${sale.customerName}`
+      : `بيع ${sale.paymentMethod === "cash" ? "نقدي" : "بنكي"} للعميل: ${sale.customerName}`;
+
+  const lines: JournalLine[] = [
+    createJournalLine(
+      debitAccount,
+      debitDescription,
+      amount,
+      0
+    ),
+
+    createJournalLine(
+      salesAccount,
+      `إيراد مبيعات - فاتورة ${sale.invoiceNumber}`,
+      0,
+      amount
+    ),
+  ];
+
+  if (
+    !isJournalBalanced(lines)
+  ) {
+    console.error(
+      "قيد المبيعات غير متوازن."
+    );
+
+    return null;
+  }
+
+  return {
+    id: generateId(
+      "JOURNAL"
+    ),
+
+    number:
+      generateJournalNumber(
+        entries
+      ),
+
+    date: sale.date,
+
+    reference:
+      `SALE:${saleId}`,
+
+    description:
+      `قيد مبيعات - ${sale.invoiceNumber}`,
+
+    debit: amount,
+
+    credit: amount,
+
+    status: "posted",
+
+    user: "system",
+
+    createdAt:
+      new Date().toISOString(),
+
+    lines,
+  };
+}
+
+// ======================================================
+// إنشاء قيد المشتريات
+// ======================================================
+
+function createPurchaseJournalEntry(
+  accounts: Account[],
+  entries: JournalEntry[],
+  purchase: Purchase,
+  purchaseId: string
+): JournalEntry | null {
+  const amount =
+    Number(purchase.total || 0);
+
+  if (
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    return null;
+  }
+
+  const purchasesAccount =
+    findAccount(
+      accounts,
+      ACCOUNT_CODES.PURCHASES
+    );
+
+  const creditAccount =
+    getPurchaseCreditAccount(
+      accounts,
+      purchase
+    );
+
+  if (!purchasesAccount) {
+    console.error(
+      "حساب المشتريات 5001 غير موجود."
+    );
+
+    return null;
+  }
+
+  if (!creditAccount) {
+    console.error(
+      "حساب الطرف الدائن في المشتريات غير موجود."
+    );
+
+    return null;
+  }
+
+  const creditDescription =
+    purchase.paymentMethod ===
+    "credit"
+      ? `شراء آجل من المورد: ${purchase.supplierName}`
+      : `شراء ${purchase.paymentMethod === "cash" ? "نقدي" : "بنكي"} من المورد: ${purchase.supplierName}`;
+
+  const lines: JournalLine[] = [
+    createJournalLine(
+      purchasesAccount,
+      `مشتريات - فاتورة ${purchase.invoiceNumber}`,
+      amount,
+      0
+    ),
+
+    createJournalLine(
+      creditAccount,
+      creditDescription,
+      0,
+      amount
+    ),
+  ];
+
+  if (
+    !isJournalBalanced(lines)
+  ) {
+    console.error(
+      "قيد المشتريات غير متوازن."
+    );
+
+    return null;
+  }
+
+  return {
+    id: generateId(
+      "JOURNAL"
+    ),
+
+    number:
+      generateJournalNumber(
+        entries
+      ),
+
+    date: purchase.date,
+
+    reference:
+      `PURCHASE:${purchaseId}`,
+
+    description:
+      `قيد مشتريات - ${purchase.invoiceNumber}`,
+
+    debit: amount,
+
+    credit: amount,
+
+    status: "posted",
+
+    user: "system",
+
+    createdAt:
+      new Date().toISOString(),
+
+    lines,
+  };
+}
+
+// ======================================================
+// التحقق من أن الحساب ليس داخل شجرته
+// ======================================================
+
+function isDescendant(
+  accounts: Account[],
+  possibleChildCode: string,
+  possibleParentCode: string
+): boolean {
+  let current =
+    accounts.find(
+      (account) =>
+        account.code ===
+        possibleParentCode
+    );
+
+  while (current) {
+    if (
+      current.parent ===
+      possibleChildCode
+    ) {
+      return true;
+    }
+
+    if (!current.parent) {
+      break;
+    }
+
+    current =
+      accounts.find(
+        (account) =>
+          account.code ===
+          current!.parent
+      );
+  }
+
+  return false;
+}
+
+// ======================================================
+// واجهة Zustand
 // ======================================================
 
 interface ERPStore {
-  // ====================================================
+  // ==================================================
   // المنتجات
-  // ====================================================
+  // ==================================================
 
   products: Product[];
 
   addProduct: (
-    product: Omit<Product, "id" | "code">
+    product: Omit<
+      Product,
+      "id" | "code"
+    >
   ) => void;
 
   updateProduct: (
     id: string,
     data: Partial<
-      Omit<Product, "id" | "code">
+      Omit<
+        Product,
+        "id" | "code"
+      >
     >
   ) => void;
 
@@ -421,9 +1142,9 @@ interface ERPStore {
     id: string
   ) => void;
 
-  // ====================================================
+  // ==================================================
   // العملاء
-  // ====================================================
+  // ==================================================
 
   customers: Customer[];
 
@@ -440,9 +1161,9 @@ interface ERPStore {
     id: string
   ) => void;
 
-  // ====================================================
+  // ==================================================
   // الموردون
-  // ====================================================
+  // ==================================================
 
   suppliers: Supplier[];
 
@@ -459,9 +1180,28 @@ interface ERPStore {
     id: string
   ) => void;
 
-  // ====================================================
+  // ==================================================
+  // الوكلاء
+  // ==================================================
+
+  agents: Agent[];
+
+  addAgent: (
+    agent: AddAgentData
+  ) => void;
+
+  updateAgent: (
+    id: string,
+    data: UpdateAgentData
+  ) => void;
+
+  deleteAgent: (
+    id: string
+  ) => void;
+
+  // ==================================================
   // المبيعات
-  // ====================================================
+  // ==================================================
 
   sales: Sale[];
 
@@ -478,14 +1218,17 @@ interface ERPStore {
     id: string
   ) => void;
 
-  // ====================================================
+  // ==================================================
   // المشتريات
-  // ====================================================
+  // ==================================================
 
   purchases: Purchase[];
 
   addPurchase: (
-    purchase: Omit<Purchase, "id">
+    purchase: Omit<
+      Purchase,
+      "id"
+    >
   ) => void;
 
   updatePurchase: (
@@ -497,14 +1240,17 @@ interface ERPStore {
     id: string
   ) => void;
 
-  // ====================================================
+  // ==================================================
   // الحسابات
-  // ====================================================
+  // ==================================================
 
   accounts: Account[];
 
   addAccount: (
-    account: Omit<Account, "id" | "code">
+    account: Omit<
+      Account,
+      "id" | "code"
+    >
   ) => void;
 
   updateAccount: (
@@ -516,14 +1262,17 @@ interface ERPStore {
     id: string
   ) => void;
 
-  // ====================================================
+  // ==================================================
   // القيود اليومية
-  // ====================================================
+  // ==================================================
 
   journalEntries: JournalEntry[];
 
   addJournalEntry: (
-    entry: Omit<JournalEntry, "id">
+    entry: Omit<
+      JournalEntry,
+      "id"
+    >
   ) => void;
 
   updateJournalEntry: (
@@ -535,9 +1284,9 @@ interface ERPStore {
     id: string
   ) => void;
 
-  // ====================================================
-  // مسح جميع البيانات
-  // ====================================================
+  // ==================================================
+  // مسح البيانات
+  // ==================================================
 
   clearStore: () => void;
 }
@@ -556,44 +1305,34 @@ export const useERPStore =
 
         products: [],
 
-        // --------------------------------------------------
-        // إضافة صنف
-        //
-        // code يتم إنشاؤه تلقائيًا
-        // --------------------------------------------------
-
         addProduct: (product) =>
           set((state) => {
-            const generatedCode =
+            const code =
               generateProductCode(
                 state.products
               );
 
             const newProduct: Product = {
-              id: generateId("PRODUCT"),
+              id: generateId(
+                "PRODUCT"
+              ),
 
-              code: generatedCode,
+              code,
 
-              name: product.name.trim(),
+              name:
+                product.name.trim(),
 
-              unit: product.unit.trim(),
+              unit:
+                product.unit.trim(),
             };
 
             return {
-              ...state,
-
               products: [
                 ...state.products,
                 newProduct,
               ],
             };
           }),
-
-        // --------------------------------------------------
-        // تعديل الصنف
-        //
-        // code لا يمكن تغييره
-        // --------------------------------------------------
 
         updateProduct: (
           id,
@@ -613,8 +1352,6 @@ export const useERPStore =
             ).code;
 
             return {
-              ...state,
-
               products:
                 state.products.map(
                   (product) =>
@@ -627,10 +1364,6 @@ export const useERPStore =
                 ),
             };
           }),
-
-        // --------------------------------------------------
-        // حذف الصنف
-        // --------------------------------------------------
 
         deleteProduct: (id) =>
           set((state) => ({
@@ -648,41 +1381,381 @@ export const useERPStore =
         customers: [],
 
         addCustomer: (customer) =>
-          set((state) => ({
-            customers: [
-              ...state.customers,
+          set((state) => {
+            const cleanName =
+              customer.name.trim();
+
+            if (!cleanName) {
+              console.error(
+                "اسم العميل مطلوب."
+              );
+
+              return state;
+            }
+
+            const exists =
+              state.customers.some(
+                (item) =>
+                  item.name
+                    .trim()
+                    .toLowerCase() ===
+                  cleanName.toLowerCase()
+              );
+
+            if (exists) {
+              console.error(
+                "هذا العميل موجود مسبقًا."
+              );
+
+              return state;
+            }
+
+            // ------------------------------------------
+            // حساب العملاء الرئيسي
+            // ------------------------------------------
+
+            const customersParent =
+              findAccount(
+                state.accounts,
+                ACCOUNT_CODES.CUSTOMERS
+              );
+
+            if (!customersParent) {
+              console.error(
+                "حساب العملاء 1001 غير موجود."
+              );
+
+              return state;
+            }
+
+            // ------------------------------------------
+            // إنشاء حساب العميل
+            // ------------------------------------------
+
+            const accountCode =
+              generateChildAccountCode(
+                state.accounts,
+                customersParent.code
+              );
+
+            const customerAccount: Account =
+              {
+                id: generateId(
+                  "ACCOUNT"
+                ),
+
+                code: accountCode,
+
+                name: cleanName,
+
+                type: "asset",
+
+                parent:
+                  customersParent.code,
+
+                level:
+                  customersParent.level +
+                  1,
+
+                description:
+                  `حساب العميل: ${cleanName}`,
+              };
+
+            const newCustomer: Customer =
               {
                 ...customer,
-                id: generateId("CUSTOMER"),
-              },
-            ],
-          })),
+
+                id: generateId(
+                  "CUSTOMER"
+                ),
+
+                name: cleanName,
+
+                phone:
+                  customer.phone?.trim() ||
+                  "",
+
+                address:
+                  customer.address?.trim() ||
+                  "",
+
+                balance:
+                  customer.balance ?? 0,
+
+                accountCode,
+
+                accountName:
+                  cleanName,
+              };
+
+            let journalEntries =
+              state.journalEntries;
+
+            // ------------------------------------------
+            // رصيد افتتاحي للعميل
+            // ------------------------------------------
+
+            const openingBalance =
+              Number(
+                customer.balance ?? 0
+              );
+
+            if (
+              Number.isFinite(
+                openingBalance
+              ) &&
+              openingBalance !== 0
+            ) {
+              const equityAccount =
+                findAccount(
+                  state.accounts,
+                  ACCOUNT_CODES.EQUITY
+                );
+
+              if (equityAccount) {
+                const amount =
+                  Math.abs(
+                    openingBalance
+                  );
+
+                const debit =
+                  openingBalance > 0
+                    ? amount
+                    : 0;
+
+                const credit =
+                  openingBalance < 0
+                    ? amount
+                    : 0;
+
+                const lines: JournalLine[] =
+                  [
+                    createJournalLine(
+                      customerAccount,
+                      `رصيد افتتاحي للعميل: ${cleanName}`,
+                      debit,
+                      credit
+                    ),
+
+                    createJournalLine(
+                      equityAccount,
+                      `مقابل الرصيد الافتتاحي للعميل: ${cleanName}`,
+                      credit,
+                      debit
+                    ),
+                  ];
+
+                journalEntries = [
+                  ...journalEntries,
+                  {
+                    id: generateId(
+                      "JOURNAL"
+                    ),
+
+                    number:
+                      generateJournalNumber(
+                        journalEntries
+                      ),
+
+                    date:
+                      new Date()
+                        .toISOString()
+                        .slice(
+                          0,
+                          10
+                        ),
+
+                    reference:
+                      `CUSTOMER_OPENING:${newCustomer.id}`,
+
+                    description:
+                      `رصيد افتتاحي للعميل ${cleanName}`,
+
+                    debit:
+                      amount,
+
+                    credit:
+                      amount,
+
+                    status:
+                      "posted",
+
+                    user:
+                      "system",
+
+                    createdAt:
+                      new Date().toISOString(),
+
+                    lines,
+                  },
+                ];
+              }
+            }
+
+            return {
+              customers: [
+                ...state.customers,
+                newCustomer,
+              ],
+
+              accounts: [
+                ...state.accounts,
+                customerAccount,
+              ],
+
+              journalEntries,
+            };
+          }),
 
         updateCustomer: (
           id,
           data
         ) =>
-          set((state) => ({
-            customers:
-              state.customers.map(
+          set((state) => {
+            const current =
+              state.customers.find(
                 (customer) =>
                   customer.id === id
-                    ? {
-                        ...customer,
-                        ...data,
-                      }
-                    : customer
-              ),
-          })),
+              );
+
+            if (!current) {
+              return state;
+            }
+
+            const newName =
+              data.name?.trim();
+
+            if (newName) {
+              const duplicate =
+                state.customers.some(
+                  (customer) =>
+                    customer.id !== id &&
+                    customer.name
+                      .trim()
+                      .toLowerCase() ===
+                      newName.toLowerCase()
+                );
+
+              if (duplicate) {
+                console.error(
+                  "اسم العميل مستخدم لعميل آخر."
+                );
+
+                return state;
+              }
+            }
+
+            let accounts =
+              state.accounts;
+
+            if (
+              newName &&
+              newName !==
+                current.name &&
+              current.accountCode
+            ) {
+              accounts =
+                accounts.map(
+                  (account) =>
+                    account.code ===
+                    current.accountCode
+                      ? {
+                          ...account,
+                          name: newName,
+                          description:
+                            `حساب العميل: ${newName}`,
+                        }
+                      : account
+                );
+            }
+
+            return {
+              customers:
+                state.customers.map(
+                  (customer) =>
+                    customer.id === id
+                      ? {
+                          ...customer,
+                          ...data,
+                          name:
+                            newName ??
+                            customer.name,
+                          accountName:
+                            newName ??
+                            customer.accountName,
+                        }
+                      : customer
+                ),
+
+              accounts,
+            };
+          }),
 
         deleteCustomer: (id) =>
-          set((state) => ({
-            customers:
-              state.customers.filter(
-                (customer) =>
-                  customer.id !== id
-              ),
-          })),
+          set((state) => {
+            const customer =
+              state.customers.find(
+                (item) =>
+                  item.id === id
+              );
+
+            if (!customer) {
+              return state;
+            }
+
+            const hasSales =
+              state.sales.some(
+                (sale) =>
+                  sale.customerId === id
+              );
+
+            if (hasSales) {
+              console.error(
+                "لا يمكن حذف العميل لأنه مرتبط بالمبيعات."
+              );
+
+              return state;
+            }
+
+            if (
+              customer.accountCode
+            ) {
+              const used =
+                state.journalEntries.some(
+                  (entry) =>
+                    entry.lines.some(
+                      (line) =>
+                        line.accountCode ===
+                        customer.accountCode
+                    )
+                );
+
+              if (used) {
+                console.error(
+                  "لا يمكن حذف العميل لأن حسابه مستخدم في القيود اليومية."
+                );
+
+                return state;
+              }
+            }
+
+            return {
+              customers:
+                state.customers.filter(
+                  (item) =>
+                    item.id !== id
+                ),
+
+              accounts:
+                customer.accountCode
+                  ? state.accounts.filter(
+                      (account) =>
+                        account.code !==
+                        customer.accountCode
+                    )
+                  : state.accounts,
+            };
+          }),
 
         // ==================================================
         // الموردون
@@ -691,41 +1764,805 @@ export const useERPStore =
         suppliers: [],
 
         addSupplier: (supplier) =>
-          set((state) => ({
-            suppliers: [
-              ...state.suppliers,
+          set((state) => {
+            const cleanName =
+              supplier.name.trim();
+
+            if (!cleanName) {
+              console.error(
+                "اسم المورد مطلوب."
+              );
+
+              return state;
+            }
+
+            const exists =
+              state.suppliers.some(
+                (item) =>
+                  item.name
+                    .trim()
+                    .toLowerCase() ===
+                  cleanName.toLowerCase()
+              );
+
+            if (exists) {
+              console.error(
+                "هذا المورد موجود مسبقًا."
+              );
+
+              return state;
+            }
+
+            const suppliersParent =
+              findAccount(
+                state.accounts,
+                ACCOUNT_CODES.SUPPLIERS
+              );
+
+            if (!suppliersParent) {
+              console.error(
+                "حساب الموردين 2001 غير موجود."
+              );
+
+              return state;
+            }
+
+            const accountCode =
+              generateChildAccountCode(
+                state.accounts,
+                suppliersParent.code
+              );
+
+            const supplierAccount: Account =
+              {
+                id: generateId(
+                  "ACCOUNT"
+                ),
+
+                code: accountCode,
+
+                name: cleanName,
+
+                type: "liability",
+
+                parent:
+                  suppliersParent.code,
+
+                level:
+                  suppliersParent.level +
+                  1,
+
+                description:
+                  `حساب المورد: ${cleanName}`,
+              };
+
+            const newSupplier: Supplier =
               {
                 ...supplier,
-                id: generateId("SUPPLIER"),
-              },
-            ],
-          })),
+
+                id: generateId(
+                  "SUPPLIER"
+                ),
+
+                name: cleanName,
+
+                phone:
+                  supplier.phone?.trim() ||
+                  "",
+
+                address:
+                  supplier.address?.trim() ||
+                  "",
+
+                balance:
+                  supplier.balance ?? 0,
+
+                accountCode,
+
+                accountName:
+                  cleanName,
+              };
+
+            let journalEntries =
+              state.journalEntries;
+
+            // ------------------------------------------
+            // رصيد افتتاحي للمورد
+            // ------------------------------------------
+
+            const openingBalance =
+              Number(
+                supplier.balance ?? 0
+              );
+
+            if (
+              Number.isFinite(
+                openingBalance
+              ) &&
+              openingBalance !== 0
+            ) {
+              const equityAccount =
+                findAccount(
+                  state.accounts,
+                  ACCOUNT_CODES.EQUITY
+                );
+
+              if (equityAccount) {
+                const amount =
+                  Math.abs(
+                    openingBalance
+                  );
+
+                const debit =
+                  openingBalance < 0
+                    ? amount
+                    : 0;
+
+                const credit =
+                  openingBalance > 0
+                    ? amount
+                    : 0;
+
+                const lines: JournalLine[] =
+                  [
+                    createJournalLine(
+                      equityAccount,
+                      `مقابل الرصيد الافتتاحي للمورد: ${cleanName}`,
+                      debit,
+                      credit
+                    ),
+
+                    createJournalLine(
+                      supplierAccount,
+                      `رصيد افتتاحي للمورد: ${cleanName}`,
+                      credit,
+                      debit
+                    ),
+                  ];
+
+                journalEntries = [
+                  ...journalEntries,
+                  {
+                    id: generateId(
+                      "JOURNAL"
+                    ),
+
+                    number:
+                      generateJournalNumber(
+                        journalEntries
+                      ),
+
+                    date:
+                      new Date()
+                        .toISOString()
+                        .slice(
+                          0,
+                          10
+                        ),
+
+                    reference:
+                      `SUPPLIER_OPENING:${newSupplier.id}`,
+
+                    description:
+                      `رصيد افتتاحي للمورد ${cleanName}`,
+
+                    debit:
+                      amount,
+
+                    credit:
+                      amount,
+
+                    status:
+                      "posted",
+
+                    user:
+                      "system",
+
+                    createdAt:
+                      new Date().toISOString(),
+
+                    lines,
+                  },
+                ];
+              }
+            }
+
+            return {
+              suppliers: [
+                ...state.suppliers,
+                newSupplier,
+              ],
+
+              accounts: [
+                ...state.accounts,
+                supplierAccount,
+              ],
+
+              journalEntries,
+            };
+          }),
 
         updateSupplier: (
           id,
           data
         ) =>
-          set((state) => ({
-            suppliers:
-              state.suppliers.map(
+          set((state) => {
+            const current =
+              state.suppliers.find(
                 (supplier) =>
                   supplier.id === id
-                    ? {
-                        ...supplier,
-                        ...data,
-                      }
-                    : supplier
-              ),
-          })),
+              );
+
+            if (!current) {
+              return state;
+            }
+
+            const newName =
+              data.name?.trim();
+
+            if (newName) {
+              const duplicate =
+                state.suppliers.some(
+                  (supplier) =>
+                    supplier.id !== id &&
+                    supplier.name
+                      .trim()
+                      .toLowerCase() ===
+                      newName.toLowerCase()
+                );
+
+              if (duplicate) {
+                console.error(
+                  "اسم المورد مستخدم لمورد آخر."
+                );
+
+                return state;
+              }
+            }
+
+            let accounts =
+              state.accounts;
+
+            if (
+              newName &&
+              newName !==
+                current.name &&
+              current.accountCode
+            ) {
+              accounts =
+                accounts.map(
+                  (account) =>
+                    account.code ===
+                    current.accountCode
+                      ? {
+                          ...account,
+                          name: newName,
+                          description:
+                            `حساب المورد: ${newName}`,
+                        }
+                      : account
+                );
+            }
+
+            return {
+              suppliers:
+                state.suppliers.map(
+                  (supplier) =>
+                    supplier.id === id
+                      ? {
+                          ...supplier,
+                          ...data,
+                          name:
+                            newName ??
+                            supplier.name,
+                          accountName:
+                            newName ??
+                            supplier.accountName,
+                        }
+                      : supplier
+                ),
+
+              accounts,
+            };
+          }),
 
         deleteSupplier: (id) =>
-          set((state) => ({
-            suppliers:
-              state.suppliers.filter(
-                (supplier) =>
-                  supplier.id !== id
-              ),
-          })),
+          set((state) => {
+            const supplier =
+              state.suppliers.find(
+                (item) =>
+                  item.id === id
+              );
+
+            if (!supplier) {
+              return state;
+            }
+
+            const hasPurchases =
+              state.purchases.some(
+                (purchase) =>
+                  purchase.supplierId === id
+              );
+
+            if (hasPurchases) {
+              console.error(
+                "لا يمكن حذف المورد لأنه مرتبط بالمشتريات."
+              );
+
+              return state;
+            }
+
+            if (
+              supplier.accountCode
+            ) {
+              const used =
+                state.journalEntries.some(
+                  (entry) =>
+                    entry.lines.some(
+                      (line) =>
+                        line.accountCode ===
+                        supplier.accountCode
+                    )
+                );
+
+              if (used) {
+                console.error(
+                  "لا يمكن حذف المورد لأن حسابه مستخدم في القيود اليومية."
+                );
+
+                return state;
+              }
+            }
+
+            return {
+              suppliers:
+                state.suppliers.filter(
+                  (item) =>
+                    item.id !== id
+                ),
+
+              accounts:
+                supplier.accountCode
+                  ? state.accounts.filter(
+                      (account) =>
+                        account.code !==
+                        supplier.accountCode
+                    )
+                  : state.accounts,
+            };
+          }),
+
+        // ==================================================
+        // الوكلاء
+        // ==================================================
+
+        agents: [],
+
+        addAgent: (agent) =>
+          set((state) => {
+            const cleanName =
+              agent.name.trim();
+
+            if (!cleanName) {
+              console.error(
+                "اسم الوكيل مطلوب."
+              );
+
+              return state;
+            }
+
+            const exists =
+              state.agents.some(
+                (item) =>
+                  item.name
+                    .trim()
+                    .toLowerCase() ===
+                  cleanName.toLowerCase()
+              );
+
+            if (exists) {
+              console.error(
+                "هذا الوكيل موجود مسبقًا."
+              );
+
+              return state;
+            }
+
+            const parentCode =
+              agent.accountParent?.trim() ||
+              "";
+
+            if (!parentCode) {
+              console.error(
+                "يجب اختيار حساب الأب."
+              );
+
+              return state;
+            }
+
+            const parentAccount =
+              findAccount(
+                state.accounts,
+                parentCode
+              );
+
+            if (!parentAccount) {
+              console.error(
+                "حساب الأب غير موجود."
+              );
+
+              return state;
+            }
+
+            if (
+              parentAccount.type !==
+              agent.accountType
+            ) {
+              console.error(
+                "نوع الحساب لا يتطابق مع نوع الحساب الأب."
+              );
+
+              return state;
+            }
+
+            const accountCode =
+              generateChildAccountCode(
+                state.accounts,
+                parentCode
+              );
+
+            const agentAccount: Account =
+              {
+                id: generateId(
+                  "ACCOUNT"
+                ),
+
+                code: accountCode,
+
+                name: cleanName,
+
+                type:
+                  agent.accountType,
+
+                parent:
+                  parentCode,
+
+                level:
+                  parentAccount.level +
+                  1,
+
+                description:
+                  `حساب الوكيل: ${cleanName}`,
+              };
+
+            const newAgent: Agent =
+              {
+                id: generateId(
+                  "AGENT"
+                ),
+
+                name: cleanName,
+
+                phone:
+                  agent.phone?.trim() ||
+                  "",
+
+                address:
+                  agent.address?.trim() ||
+                  "",
+
+                balance:
+                  agent.balance ?? 0,
+
+                accountCode,
+
+                accountName:
+                  cleanName,
+              };
+
+            return {
+              agents: [
+                ...state.agents,
+                newAgent,
+              ],
+
+              accounts: [
+                ...state.accounts,
+                agentAccount,
+              ],
+            };
+          }),
+
+        updateAgent: (
+          id,
+          data
+        ) =>
+          set((state) => {
+            const current =
+              state.agents.find(
+                (agent) =>
+                  agent.id === id
+              );
+
+            if (!current) {
+              return state;
+            }
+
+            const newName =
+              data.name?.trim();
+
+            if (newName) {
+              const duplicate =
+                state.agents.some(
+                  (agent) =>
+                    agent.id !== id &&
+                    agent.name
+                      .trim()
+                      .toLowerCase() ===
+                      newName.toLowerCase()
+                );
+
+              if (duplicate) {
+                console.error(
+                  "اسم الوكيل مستخدم لوكيل آخر."
+                );
+
+                return state;
+              }
+            }
+
+            const currentAccount =
+              findAccount(
+                state.accounts,
+                current.accountCode
+              );
+
+            const newType =
+              data.accountType ??
+              currentAccount?.type ??
+              "liability";
+
+            const newParent =
+              data.accountParent !==
+              undefined
+                ? data.accountParent.trim()
+                : currentAccount?.parent ||
+                  "";
+
+            let accounts =
+              state.accounts;
+
+            let finalCode =
+              current.accountCode;
+
+            const accountChanged =
+              newParent !==
+                (currentAccount?.parent ||
+                  "") ||
+              newType !==
+                currentAccount?.type;
+
+            if (accountChanged) {
+              if (!newParent) {
+                console.error(
+                  "يجب اختيار حساب الأب."
+                );
+
+                return state;
+              }
+
+              const parentAccount =
+                findAccount(
+                  state.accounts,
+                  newParent
+                );
+
+              if (!parentAccount) {
+                console.error(
+                  "حساب الأب الجديد غير موجود."
+                );
+
+                return state;
+              }
+
+              if (
+                parentAccount.type !==
+                newType
+              ) {
+                console.error(
+                  "نوع الحساب لا يتطابق مع نوع حساب الأب."
+                );
+
+                return state;
+              }
+
+              if (
+                current.accountCode ===
+                newParent
+              ) {
+                console.error(
+                  "لا يمكن وضع الحساب تحت نفسه."
+                );
+
+                return state;
+              }
+
+              if (
+                current.accountCode &&
+                isDescendant(
+                  state.accounts,
+                  current.accountCode,
+                  newParent
+                )
+              ) {
+                console.error(
+                  "لا يمكن نقل الحساب تحت أحد حساباته الفرعية."
+                );
+
+                return state;
+              }
+
+              const used =
+                current.accountCode
+                  ? state.journalEntries.some(
+                      (entry) =>
+                        entry.lines.some(
+                          (line) =>
+                            line.accountCode ===
+                            current.accountCode
+                        )
+                    )
+                  : false;
+
+              if (used) {
+                console.error(
+                  "لا يمكن تغيير حساب الوكيل لأن الحساب مستخدم في القيود اليومية."
+                );
+
+                return state;
+              }
+
+              finalCode =
+                generateChildAccountCode(
+                  state.accounts,
+                  newParent
+                );
+
+              const newAccount: Account =
+                {
+                  id: generateId(
+                    "ACCOUNT"
+                  ),
+
+                  code: finalCode,
+
+                  name:
+                    newName ??
+                    current.name,
+
+                  type: newType,
+
+                  parent:
+                    newParent,
+
+                  level:
+                    parentAccount.level +
+                    1,
+
+                  description:
+                    `حساب الوكيل: ${
+                      newName ??
+                      current.name
+                    }`,
+                };
+
+              accounts =
+                accounts.filter(
+                  (account) =>
+                    account.code !==
+                    current.accountCode
+                );
+
+              accounts = [
+                ...accounts,
+                newAccount,
+              ];
+            } else if (
+              current.accountCode &&
+              newName &&
+              newName !==
+                current.name
+            ) {
+              accounts =
+                accounts.map(
+                  (account) =>
+                    account.code ===
+                    current.accountCode
+                      ? {
+                          ...account,
+                          name: newName,
+                          description:
+                            `حساب الوكيل: ${newName}`,
+                        }
+                      : account
+                );
+            }
+
+            return {
+              agents:
+                state.agents.map(
+                  (agent) =>
+                    agent.id === id
+                      ? {
+                          ...agent,
+                          ...data,
+                          name:
+                            newName ??
+                            agent.name,
+                          accountCode:
+                            finalCode,
+                          accountName:
+                            newName ??
+                            agent.accountName,
+                        }
+                      : agent
+                ),
+
+              accounts,
+            };
+          }),
+
+        deleteAgent: (id) =>
+          set((state) => {
+            const agent =
+              state.agents.find(
+                (item) =>
+                  item.id === id
+              );
+
+            if (!agent) {
+              return state;
+            }
+
+            if (
+              agent.accountCode
+            ) {
+              const used =
+                state.journalEntries.some(
+                  (entry) =>
+                    entry.lines.some(
+                      (line) =>
+                        line.accountCode ===
+                        agent.accountCode
+                    )
+                );
+
+              if (used) {
+                console.error(
+                  "لا يمكن حذف الوكيل لأن حسابه مستخدم في القيود اليومية."
+                );
+
+                return state;
+              }
+            }
+
+            return {
+              agents:
+                state.agents.filter(
+                  (item) =>
+                    item.id !== id
+                ),
+
+              accounts:
+                agent.accountCode
+                  ? state.accounts.filter(
+                      (account) =>
+                        account.code !==
+                        agent.accountCode
+                    )
+                  : state.accounts,
+            };
+          }),
 
         // ==================================================
         // المبيعات
@@ -733,92 +2570,175 @@ export const useERPStore =
 
         sales: [],
 
-        // --------------------------------------------------
-        // إضافة فاتورة مبيعات
-        //
-        // الحساب يجب أن يكون فرعيًا
-        // --------------------------------------------------
-
         addSale: (sale) =>
           set((state) => {
-            const account =
-              state.accounts.find(
+            const customer =
+              state.customers.find(
                 (item) =>
-                  item.code ===
-                  sale.accountCode
+                  item.id ===
+                  sale.customerId
               );
 
-            if (!account) {
+            if (!customer) {
               console.error(
-                "لا يمكن إضافة فاتورة المبيعات: الحساب غير موجود."
+                "العميل غير موجود."
               );
 
               return state;
             }
 
-            if (account.level === 0) {
+            if (
+              !customer.accountCode
+            ) {
               console.error(
-                "لا يمكن استخدام حساب رئيسي في فاتورة المبيعات."
+                "العميل لا يملك حسابًا محاسبيًا."
               );
 
               return state;
             }
 
-            const newSale: Sale = {
-              ...sale,
+            const customerAccount =
+              findAccount(
+                state.accounts,
+                customer.accountCode
+              );
 
-              id: generateId("SALE"),
+            if (!customerAccount) {
+              console.error(
+                "حساب العميل غير موجود."
+              );
 
-              accountCode:
-                account.code,
+              return state;
+            }
 
-              accountName:
-                account.name,
-            };
+            const newSaleId =
+              generateId(
+                "SALE"
+              );
+
+            const newSale: Sale =
+              {
+                ...sale,
+
+                id: newSaleId,
+
+                accountCode:
+                  customerAccount.code,
+
+                accountName:
+                  customerAccount.name,
+
+                customerName:
+                  customer.name,
+              };
+
+            const journal =
+              createSaleJournalEntry(
+                state.accounts,
+                state.journalEntries,
+                newSale,
+                newSaleId
+              );
+
+            if (!journal) {
+              return state;
+            }
 
             return {
-              ...state,
-
               sales: [
                 ...state.sales,
                 newSale,
               ],
+
+              journalEntries: [
+                ...state.journalEntries,
+                journal,
+              ],
             };
           }),
-
-        // --------------------------------------------------
-        // تعديل فاتورة مبيعات
-        // --------------------------------------------------
 
         updateSale: (
           id,
           data
         ) =>
           set((state) => {
-            const currentSale =
+            const current =
               state.sales.find(
                 (sale) =>
                   sale.id === id
               );
 
-            if (!currentSale) {
+            if (!current) {
               return state;
             }
 
-            let updatedData = {
-              ...data,
-            };
+            const updatedSale: Sale =
+              {
+                ...current,
+                ...data,
+              };
 
-            // إذا تم تغيير الحساب
+            if (
+              data.customerId !==
+              undefined
+            ) {
+              const customer =
+                state.customers.find(
+                  (item) =>
+                    item.id ===
+                    data.customerId
+                );
+
+              if (!customer) {
+                console.error(
+                  "العميل غير موجود."
+                );
+
+                return state;
+              }
+
+              if (
+                !customer.accountCode
+              ) {
+                console.error(
+                  "العميل لا يملك حسابًا محاسبيًا."
+                );
+
+                return state;
+              }
+
+              const account =
+                findAccount(
+                  state.accounts,
+                  customer.accountCode
+                );
+
+              if (!account) {
+                console.error(
+                  "حساب العميل غير موجود."
+                );
+
+                return state;
+              }
+
+              updatedSale.customerName =
+                customer.name;
+
+              updatedSale.accountCode =
+                account.code;
+
+              updatedSale.accountName =
+                account.name;
+            }
+
             if (
               data.accountCode !==
               undefined
             ) {
               const account =
-                state.accounts.find(
-                  (item) =>
-                    item.code ===
-                    data.accountCode
+                findAccount(
+                  state.accounts,
+                  data.accountCode
                 );
 
               if (!account) {
@@ -829,42 +2749,54 @@ export const useERPStore =
                 return state;
               }
 
-              if (account.level === 0) {
-                console.error(
-                  "لا يمكن استخدام حساب رئيسي في فاتورة المبيعات."
-                );
+              updatedSale.accountCode =
+                account.code;
 
-                return state;
-              }
+              updatedSale.accountName =
+                account.name;
+            }
 
-              updatedData = {
-                ...updatedData,
-                accountCode:
-                  account.code,
-                accountName:
-                  account.name,
-              };
+            const oldJournal =
+              state.journalEntries.find(
+                (entry) =>
+                  entry.reference ===
+                  `SALE:${id}`
+              );
+
+            const entriesWithoutOld =
+              state.journalEntries.filter(
+                (entry) =>
+                  entry.reference !==
+                  `SALE:${id}`
+              );
+
+            const newJournal =
+              createSaleJournalEntry(
+                state.accounts,
+                entriesWithoutOld,
+                updatedSale,
+                id
+              );
+
+            if (!newJournal) {
+              return state;
             }
 
             return {
-              ...state,
-
               sales:
                 state.sales.map(
                   (sale) =>
                     sale.id === id
-                      ? {
-                          ...sale,
-                          ...updatedData,
-                        }
+                      ? updatedSale
                       : sale
                 ),
+
+              journalEntries: [
+                ...entriesWithoutOld,
+                newJournal,
+              ],
             };
           }),
-
-        // --------------------------------------------------
-        // حذف فاتورة مبيعات
-        // --------------------------------------------------
 
         deleteSale: (id) =>
           set((state) => ({
@@ -872,6 +2804,13 @@ export const useERPStore =
               state.sales.filter(
                 (sale) =>
                   sale.id !== id
+              ),
+
+            journalEntries:
+              state.journalEntries.filter(
+                (entry) =>
+                  entry.reference !==
+                  `SALE:${id}`
               ),
           })),
 
@@ -881,95 +2820,175 @@ export const useERPStore =
 
         purchases: [],
 
-        // --------------------------------------------------
-        // إضافة فاتورة مشتريات
-        //
-        // الحساب يجب أن يكون فرعيًا
-        // --------------------------------------------------
-
         addPurchase: (purchase) =>
           set((state) => {
-            const account =
-              state.accounts.find(
+            const supplier =
+              state.suppliers.find(
                 (item) =>
-                  item.code ===
-                  purchase.accountCode
+                  item.id ===
+                  purchase.supplierId
               );
 
-            if (!account) {
+            if (!supplier) {
               console.error(
-                "لا يمكن إضافة فاتورة المشتريات: الحساب غير موجود."
+                "المورد غير موجود."
               );
 
               return state;
             }
 
-            if (account.level === 0) {
+            if (
+              !supplier.accountCode
+            ) {
               console.error(
-                "لا يمكن استخدام حساب رئيسي في فاتورة المشتريات."
+                "المورد لا يملك حسابًا محاسبيًا."
               );
 
               return state;
             }
+
+            const supplierAccount =
+              findAccount(
+                state.accounts,
+                supplier.accountCode
+              );
+
+            if (!supplierAccount) {
+              console.error(
+                "حساب المورد غير موجود."
+              );
+
+              return state;
+            }
+
+            const newPurchaseId =
+              generateId(
+                "PURCHASE"
+              );
 
             const newPurchase: Purchase =
               {
                 ...purchase,
 
-                id: generateId(
-                  "PURCHASE"
-                ),
+                id: newPurchaseId,
 
                 accountCode:
-                  account.code,
+                  supplierAccount.code,
 
                 accountName:
-                  account.name,
+                  supplierAccount.name,
+
+                supplierName:
+                  supplier.name,
               };
 
-            return {
-              ...state,
+            const journal =
+              createPurchaseJournalEntry(
+                state.accounts,
+                state.journalEntries,
+                newPurchase,
+                newPurchaseId
+              );
 
+            if (!journal) {
+              return state;
+            }
+
+            return {
               purchases: [
                 ...state.purchases,
                 newPurchase,
               ],
+
+              journalEntries: [
+                ...state.journalEntries,
+                journal,
+              ],
             };
           }),
-
-        // --------------------------------------------------
-        // تعديل فاتورة مشتريات
-        // --------------------------------------------------
 
         updatePurchase: (
           id,
           data
         ) =>
           set((state) => {
-            const currentPurchase =
+            const current =
               state.purchases.find(
                 (purchase) =>
                   purchase.id === id
               );
 
-            if (!currentPurchase) {
+            if (!current) {
               return state;
             }
 
-            let updatedData = {
-              ...data,
-            };
+            const updatedPurchase: Purchase =
+              {
+                ...current,
+                ...data,
+              };
 
-            // إذا تم تغيير الحساب
+            if (
+              data.supplierId !==
+              undefined
+            ) {
+              const supplier =
+                state.suppliers.find(
+                  (item) =>
+                    item.id ===
+                    data.supplierId
+                );
+
+              if (!supplier) {
+                console.error(
+                  "المورد غير موجود."
+                );
+
+                return state;
+              }
+
+              if (
+                !supplier.accountCode
+              ) {
+                console.error(
+                  "المورد لا يملك حسابًا محاسبيًا."
+                );
+
+                return state;
+              }
+
+              const account =
+                findAccount(
+                  state.accounts,
+                  supplier.accountCode
+                );
+
+              if (!account) {
+                console.error(
+                  "حساب المورد غير موجود."
+                );
+
+                return state;
+              }
+
+              updatedPurchase.supplierName =
+                supplier.name;
+
+              updatedPurchase.accountCode =
+                account.code;
+
+              updatedPurchase.accountName =
+                account.name;
+            }
+
             if (
               data.accountCode !==
               undefined
             ) {
               const account =
-                state.accounts.find(
-                  (item) =>
-                    item.code ===
-                    data.accountCode
+                findAccount(
+                  state.accounts,
+                  data.accountCode
                 );
 
               if (!account) {
@@ -980,42 +2999,47 @@ export const useERPStore =
                 return state;
               }
 
-              if (account.level === 0) {
-                console.error(
-                  "لا يمكن استخدام حساب رئيسي في فاتورة المشتريات."
-                );
+              updatedPurchase.accountCode =
+                account.code;
 
-                return state;
-              }
+              updatedPurchase.accountName =
+                account.name;
+            }
 
-              updatedData = {
-                ...updatedData,
-                accountCode:
-                  account.code,
-                accountName:
-                  account.name,
-              };
+            const entriesWithoutOld =
+              state.journalEntries.filter(
+                (entry) =>
+                  entry.reference !==
+                  `PURCHASE:${id}`
+              );
+
+            const newJournal =
+              createPurchaseJournalEntry(
+                state.accounts,
+                entriesWithoutOld,
+                updatedPurchase,
+                id
+              );
+
+            if (!newJournal) {
+              return state;
             }
 
             return {
-              ...state,
-
               purchases:
                 state.purchases.map(
                   (purchase) =>
                     purchase.id === id
-                      ? {
-                          ...purchase,
-                          ...updatedData,
-                        }
+                      ? updatedPurchase
                       : purchase
                 ),
+
+              journalEntries: [
+                ...entriesWithoutOld,
+                newJournal,
+              ],
             };
           }),
-
-        // --------------------------------------------------
-        // حذف فاتورة مشتريات
-        // --------------------------------------------------
 
         deletePurchase: (id) =>
           set((state) => ({
@@ -1024,190 +3048,48 @@ export const useERPStore =
                 (purchase) =>
                   purchase.id !== id
               ),
+
+            journalEntries:
+              state.journalEntries.filter(
+                (entry) =>
+                  entry.reference !==
+                  `PURCHASE:${id}`
+              ),
           })),
 
         // ==================================================
         // الحسابات
         // ==================================================
 
-        accounts: [],
-
-        // --------------------------------------------------
-        // إضافة حساب
-        //
-        // code لا يتم إدخاله من المستخدم
-        // يتم إنشاؤه تلقائيًا
-        // --------------------------------------------------
+        accounts:
+          createDefaultAccounts(),
 
         addAccount: (account) =>
           set((state) => {
+            const cleanName =
+              account.name.trim();
+
+            if (!cleanName) {
+              console.error(
+                "اسم الحساب مطلوب."
+              );
+
+              return state;
+            }
+
             const parentCode =
               account.parent?.trim() ||
               "";
 
-            // ----------------------------------------------
-            // البحث عن الأب
-            // ----------------------------------------------
+            let parentAccount:
+              | Account
+              | undefined;
 
-            const parentAccount =
-              parentCode
-                ? state.accounts.find(
-                    (item) =>
-                      item.code ===
-                      parentCode
-                  )
-                : undefined;
-
-            // ----------------------------------------------
-            // إذا كان هناك أب يجب أن يكون موجودًا
-            // ----------------------------------------------
-
-            if (
-              parentCode &&
-              !parentAccount
-            ) {
-              console.error(
-                "لا يمكن إضافة الحساب: الحساب الأب غير موجود."
-              );
-
-              return state;
-            }
-
-            // ----------------------------------------------
-            // الأب يجب أن يكون رئيسيًا
-            // ----------------------------------------------
-
-            if (
-              parentAccount &&
-              parentAccount.level !== 0
-            ) {
-              console.error(
-                "لا يمكن استخدام حساب فرعي كحساب أب."
-              );
-
-              return state;
-            }
-
-            // ----------------------------------------------
-            // نوع الحساب يجب أن يطابق الأب
-            // ----------------------------------------------
-
-            if (
-              parentAccount &&
-              parentAccount.type !==
-                account.type
-            ) {
-              console.error(
-                "نوع الحساب لا يتطابق مع نوع الحساب الأب."
-              );
-
-              return state;
-            }
-
-            // ----------------------------------------------
-            // المستوى
-            // ----------------------------------------------
-
-            const level =
-              parentAccount
-                ? 1
-                : 0;
-
-            // ----------------------------------------------
-            // الرقم التلقائي
-            // ----------------------------------------------
-
-            const generatedCode =
-              generateAccountCode(
-                state.accounts,
-                account.type,
-                parentCode
-              );
-
-            // ----------------------------------------------
-            // إنشاء الحساب
-            // ----------------------------------------------
-
-            const newAccount: Account = {
-              id: generateId(
-                "ACCOUNT"
-              ),
-
-              code: generatedCode,
-
-              name: account.name.trim(),
-
-              type: account.type,
-
-              parent: parentCode,
-
-              level,
-
-              description:
-                account.description?.trim() ||
-                "",
-            };
-
-            return {
-              ...state,
-
-              accounts: [
-                ...state.accounts,
-                newAccount,
-              ],
-            };
-          }),
-
-        // --------------------------------------------------
-        // تعديل حساب
-        // --------------------------------------------------
-
-        updateAccount: (
-          id,
-          data
-        ) =>
-          set((state) => {
-            const currentAccount =
-              state.accounts.find(
-                (account) =>
-                  account.id === id
-              );
-
-            if (!currentAccount) {
-              return state;
-            }
-
-            // ----------------------------------------------
-            // منع الحساب من أن يجعل نفسه أبًا
-            // ----------------------------------------------
-
-            if (
-              data.parent !==
-                undefined &&
-              data.parent ===
-                currentAccount.code
-            ) {
-              console.error(
-                "لا يمكن للحساب أن يكون أبًا لنفسه."
-              );
-
-              return state;
-            }
-
-            // ----------------------------------------------
-            // التحقق من الأب الجديد
-            // ----------------------------------------------
-
-            if (
-              data.parent !==
-                undefined &&
-              data.parent !== ""
-            ) {
-              const parentAccount =
-                state.accounts.find(
-                  (account) =>
-                    account.code ===
-                    data.parent
+            if (parentCode) {
+              parentAccount =
+                findAccount(
+                  state.accounts,
+                  parentCode
                 );
 
               if (!parentAccount) {
@@ -1219,23 +3101,8 @@ export const useERPStore =
               }
 
               if (
-                parentAccount.level !==
-                0
-              ) {
-                console.error(
-                  "لا يمكن استخدام حساب فرعي كحساب أب."
-                );
-
-                return state;
-              }
-
-              const newType =
-                data.type ??
-                currentAccount.type;
-
-              if (
                 parentAccount.type !==
-                newType
+                account.type
               ) {
                 console.error(
                   "نوع الحساب لا يتطابق مع نوع الحساب الأب."
@@ -1245,12 +3112,138 @@ export const useERPStore =
               }
             }
 
-            // ----------------------------------------------
-            // منع تغيير الكود
-            // ----------------------------------------------
+            const level =
+              parentAccount
+                ? parentAccount.level +
+                  1
+                : 0;
+
+            const code =
+              generateAccountCode(
+                state.accounts,
+                account.type,
+                parentCode
+              );
+
+            const newAccount: Account =
+              {
+                id: generateId(
+                  "ACCOUNT"
+                ),
+
+                code,
+
+                name: cleanName,
+
+                type:
+                  account.type,
+
+                parent:
+                  parentCode,
+
+                level,
+
+                description:
+                  account.description?.trim() ||
+                  "",
+              };
+
+            return {
+              accounts: [
+                ...state.accounts,
+                newAccount,
+              ],
+            };
+          }),
+
+        updateAccount: (
+          id,
+          data
+        ) =>
+          set((state) => {
+            const current =
+              state.accounts.find(
+                (account) =>
+                  account.id === id
+              );
+
+            if (!current) {
+              return state;
+            }
+
+            const newParent =
+              data.parent !==
+              undefined
+                ? data.parent.trim()
+                : current.parent;
+
+            const newType =
+              data.type ??
+              current.type;
+
+            if (
+              newParent ===
+              current.code
+            ) {
+              console.error(
+                "لا يمكن للحساب أن يكون أبًا لنفسه."
+              );
+
+              return state;
+            }
+
+            if (
+              newParent &&
+              isDescendant(
+                state.accounts,
+                current.code,
+                newParent
+              )
+            ) {
+              console.error(
+                "لا يمكن نقل الحساب تحت أحد حساباته الفرعية."
+              );
+
+              return state;
+            }
+
+            let newLevel = 0;
+
+            if (newParent) {
+              const parent =
+                findAccount(
+                  state.accounts,
+                  newParent
+                );
+
+              if (!parent) {
+                console.error(
+                  "الحساب الأب غير موجود."
+                );
+
+                return state;
+              }
+
+              if (
+                parent.type !==
+                newType
+              ) {
+                console.error(
+                  "نوع الحساب لا يتطابق مع نوع الحساب الأب."
+                );
+
+                return state;
+              }
+
+              newLevel =
+                parent.level + 1;
+            }
 
             const safeData = {
               ...data,
+              parent: newParent,
+              type: newType,
+              level: newLevel,
             };
 
             delete (
@@ -1262,8 +3255,6 @@ export const useERPStore =
             ).code;
 
             return {
-              ...state,
-
               accounts:
                 state.accounts.map(
                   (account) =>
@@ -1277,10 +3268,6 @@ export const useERPStore =
             };
           }),
 
-        // --------------------------------------------------
-        // حذف حساب
-        // --------------------------------------------------
-
         deleteAccount: (id) =>
           set((state) => {
             const account =
@@ -1292,10 +3279,6 @@ export const useERPStore =
             if (!account) {
               return state;
             }
-
-            // ----------------------------------------------
-            // منع حذف حساب له أبناء
-            // ----------------------------------------------
 
             const hasChildren =
               state.accounts.some(
@@ -1312,10 +3295,6 @@ export const useERPStore =
               return state;
             }
 
-            // ----------------------------------------------
-            // منع حذفه إذا كان في المبيعات
-            // ----------------------------------------------
-
             const usedInSales =
               state.sales.some(
                 (sale) =>
@@ -1325,15 +3304,11 @@ export const useERPStore =
 
             if (usedInSales) {
               console.error(
-                "لا يمكن حذف الحساب لأنه مستخدم في فواتير المبيعات."
+                "لا يمكن حذف الحساب لأنه مستخدم في المبيعات."
               );
 
               return state;
             }
-
-            // ----------------------------------------------
-            // منع حذفه إذا كان في المشتريات
-            // ----------------------------------------------
 
             const usedInPurchases =
               state.purchases.some(
@@ -1344,15 +3319,11 @@ export const useERPStore =
 
             if (usedInPurchases) {
               console.error(
-                "لا يمكن حذف الحساب لأنه مستخدم في فواتير المشتريات."
+                "لا يمكن حذف الحساب لأنه مستخدم في المشتريات."
               );
 
               return state;
             }
-
-            // ----------------------------------------------
-            // منع حذفه إذا كان في القيود
-            // ----------------------------------------------
 
             const usedInJournal =
               state.journalEntries.some(
@@ -1372,9 +3343,52 @@ export const useERPStore =
               return state;
             }
 
-            return {
-              ...state,
+            const linkedCustomer =
+              state.customers.some(
+                (customer) =>
+                  customer.accountCode ===
+                  account.code
+              );
 
+            if (linkedCustomer) {
+              console.error(
+                "لا يمكن حذف الحساب لأنه مرتبط بعميل."
+              );
+
+              return state;
+            }
+
+            const linkedSupplier =
+              state.suppliers.some(
+                (supplier) =>
+                  supplier.accountCode ===
+                  account.code
+              );
+
+            if (linkedSupplier) {
+              console.error(
+                "لا يمكن حذف الحساب لأنه مرتبط بمورد."
+              );
+
+              return state;
+            }
+
+            const linkedAgent =
+              state.agents.some(
+                (agent) =>
+                  agent.accountCode ===
+                  account.code
+              );
+
+            if (linkedAgent) {
+              console.error(
+                "لا يمكن حذف الحساب لأنه مرتبط بوكيل."
+              );
+
+              return state;
+            }
+
+            return {
               accounts:
                 state.accounts.filter(
                   (item) =>
@@ -1389,50 +3403,146 @@ export const useERPStore =
 
         journalEntries: [],
 
-        // --------------------------------------------------
-        // إضافة قيد
-        // --------------------------------------------------
-
         addJournalEntry: (entry) =>
-          set((state) => ({
-            journalEntries: [
-              ...state.journalEntries,
-              {
-                ...entry,
+          set((state) => {
+            if (
+              !entry.lines ||
+              entry.lines.length < 2
+            ) {
+              console.error(
+                "القيد يجب أن يحتوي على سطرين على الأقل."
+              );
 
-                id: generateId(
-                  "JOURNAL"
-                ),
-              },
-            ],
-          })),
+              return state;
+            }
 
-        // --------------------------------------------------
-        // تعديل قيد
-        // --------------------------------------------------
+            if (
+              !isJournalBalanced(
+                entry.lines
+              )
+            ) {
+              console.error(
+                "لا يمكن حفظ قيد غير متوازن."
+              );
+
+              return state;
+            }
+
+            const totalDebit =
+              entry.lines.reduce(
+                (sum, line) =>
+                  sum +
+                  Number(
+                    line.debit || 0
+                  ),
+                0
+              );
+
+            const totalCredit =
+              entry.lines.reduce(
+                (sum, line) =>
+                  sum +
+                  Number(
+                    line.credit || 0
+                  ),
+                0
+              );
+
+            return {
+              journalEntries: [
+                ...state.journalEntries,
+                {
+                  ...entry,
+
+                  id: generateId(
+                    "JOURNAL"
+                  ),
+
+                  debit:
+                    totalDebit,
+
+                  credit:
+                    totalCredit,
+                },
+              ],
+            };
+          }),
 
         updateJournalEntry: (
           id,
           data
         ) =>
-          set((state) => ({
-            journalEntries:
-              state.journalEntries.map(
+          set((state) => {
+            const current =
+              state.journalEntries.find(
                 (entry) =>
                   entry.id === id
-                    ? {
-                        ...entry,
-                        ...data,
-                      }
-                    : entry
-              ),
-          })),
+              );
 
-        // --------------------------------------------------
-        // حذف قيد
-        // --------------------------------------------------
+            if (!current) {
+              return state;
+            }
 
-        deleteJournalEntry: (id) =>
+            const updated =
+              {
+                ...current,
+                ...data,
+              };
+
+            if (
+              data.lines &&
+              !isJournalBalanced(
+                data.lines
+              )
+            ) {
+              console.error(
+                "لا يمكن تعديل القيد إلى قيد غير متوازن."
+              );
+
+              return state;
+            }
+
+            const lines =
+              updated.lines;
+
+            const debit =
+              lines.reduce(
+                (sum, line) =>
+                  sum +
+                  Number(
+                    line.debit || 0
+                  ),
+                0
+              );
+
+            const credit =
+              lines.reduce(
+                (sum, line) =>
+                  sum +
+                  Number(
+                    line.credit || 0
+                  ),
+                0
+              );
+
+            return {
+              journalEntries:
+                state.journalEntries.map(
+                  (entry) =>
+                    entry.id === id
+                      ? {
+                          ...updated,
+                          debit,
+                          credit,
+                        }
+                      : entry
+                ),
+            };
+          }),
+
+        deleteJournalEntry: (
+          id
+        ) =>
           set((state) => ({
             journalEntries:
               state.journalEntries.filter(
@@ -1442,7 +3552,7 @@ export const useERPStore =
           })),
 
         // ==================================================
-        // مسح جميع بيانات النظام
+        // مسح جميع البيانات
         // ==================================================
 
         clearStore: () =>
@@ -1450,15 +3560,107 @@ export const useERPStore =
             products: [],
             customers: [],
             suppliers: [],
+            agents: [],
             sales: [],
             purchases: [],
-            accounts: [],
+            accounts:
+              createDefaultAccounts(),
             journalEntries: [],
           }),
       }),
 
+      // ====================================================
+      // Persist
+      // ====================================================
+
       {
         name: "erp-storage",
+
+        merge: (
+          persistedState,
+          currentState
+        ) => {
+          const persisted =
+            persistedState as Partial<ERPStore>;
+
+          // ----------------------------------------------
+          // الحسابات
+          // ----------------------------------------------
+
+          let accounts =
+            currentState.accounts;
+
+          if (
+            persisted.accounts &&
+            persisted.accounts.length > 0
+          ) {
+            accounts =
+              persisted.accounts;
+          }
+
+          // ----------------------------------------------
+          // إضافة الحسابات الافتراضية المفقودة
+          // ----------------------------------------------
+
+          const defaultAccounts =
+            createDefaultAccounts();
+
+          for (const defaultAccount of defaultAccounts) {
+            const exists =
+              accounts.some(
+                (account) =>
+                  account.code ===
+                  defaultAccount.code
+              );
+
+            if (!exists) {
+              accounts = [
+                ...accounts,
+                defaultAccount,
+              ];
+            }
+          }
+
+          // ----------------------------------------------
+          // البيانات القديمة
+          // ----------------------------------------------
+
+          return {
+            ...currentState,
+
+            ...persisted,
+
+            accounts,
+
+            products:
+              persisted.products ??
+              currentState.products,
+
+            customers:
+              persisted.customers ??
+              currentState.customers,
+
+            suppliers:
+              persisted.suppliers ??
+              currentState.suppliers,
+
+            agents:
+              persisted.agents ??
+              currentState.agents,
+
+            sales:
+              persisted.sales ??
+              currentState.sales,
+
+            purchases:
+              persisted.purchases ??
+              currentState.purchases,
+
+            journalEntries:
+              persisted.journalEntries ??
+              currentState.journalEntries,
+          };
+        },
       }
     )
   );

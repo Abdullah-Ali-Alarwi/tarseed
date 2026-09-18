@@ -13,6 +13,7 @@ import {
   FiCheckCircle,
   FiPrinter,
   FiBookOpen,
+  FiAlertCircle,
 } from "react-icons/fi";
 import { useERPStore } from "@/Store/erpStore";
 
@@ -37,20 +38,6 @@ export default function NewSalesPage() {
   const sales = useERPStore((state) => state.sales);
   const accounts = useERPStore((state) => state.accounts);
   const addSale = useERPStore((state) => state.addSale);
-
-  // ======================================================
-  // الحسابات الفرعية فقط
-  // ======================================================
-
-  const subAccounts = useMemo(() => {
-    return accounts
-      .filter((account) => account.level > 0)
-      .sort((a, b) =>
-        a.code.localeCompare(b.code, undefined, {
-          numeric: true,
-        }),
-      );
-  }, [accounts]);
 
   // ======================================================
   // بيانات الفاتورة
@@ -108,6 +95,20 @@ export default function NewSalesPage() {
   }, [sales]);
 
   // ======================================================
+  // الحسابات الفرعية
+  // ======================================================
+
+  const subAccounts = useMemo(() => {
+    return accounts
+      .filter((account) => account.level > 0)
+      .sort((a, b) =>
+        a.code.localeCompare(b.code, undefined, {
+          numeric: true,
+        }),
+      );
+  }, [accounts]);
+
+  // ======================================================
   // العميل المختار
   // ======================================================
 
@@ -116,12 +117,95 @@ export default function NewSalesPage() {
   }, [customers, customerId]);
 
   // ======================================================
+  // حساب العميل
+  // العملاء تحت 1001
+  // ======================================================
+
+  const customerAccount = useMemo(() => {
+    if (!selectedCustomer) {
+      return undefined;
+    }
+
+    return accounts.find(
+      (account) =>
+        account.code !== "1001" &&
+        account.level > 1 &&
+        account.parent === "1001" &&
+        account.name === selectedCustomer.name,
+    );
+  }, [accounts, selectedCustomer]);
+
+  // ======================================================
+  // حساب الصندوق
+  // ======================================================
+
+  const cashAccount = useMemo(() => {
+    return accounts.find(
+      (account) => account.code === "1002" && account.level > 0,
+    );
+  }, [accounts]);
+
+  // ======================================================
+  // حساب البنك
+  // ======================================================
+
+  const bankAccount = useMemo(() => {
+    return accounts.find(
+      (account) => account.code === "1003" && account.level > 0,
+    );
+  }, [accounts]);
+
+  // ======================================================
+  // الحساب المتاح حسب طريقة الدفع
+  // ======================================================
+
+  const availableAccounts = useMemo(() => {
+    if (paymentMethod === "credit") {
+      return customerAccount ? [customerAccount] : [];
+    }
+
+    if (paymentMethod === "cash") {
+      return cashAccount ? [cashAccount] : [];
+    }
+
+    if (paymentMethod === "bank") {
+      return bankAccount ? [bankAccount] : [];
+    }
+
+    return [];
+  }, [paymentMethod, customerAccount, cashAccount, bankAccount]);
+
+  // ======================================================
   // الحساب المختار
   // ======================================================
 
   const selectedAccount = useMemo(() => {
     return subAccounts.find((account) => account.code === accountCode);
   }, [subAccounts, accountCode]);
+
+  // ======================================================
+  // تحديث الحساب تلقائيًا
+  // ======================================================
+
+  useMemo(() => {
+    let nextAccountCode = "";
+
+    if (paymentMethod === "credit") {
+      nextAccountCode = customerAccount?.code || "";
+    }
+
+    if (paymentMethod === "cash") {
+      nextAccountCode = cashAccount?.code || "";
+    }
+
+    if (paymentMethod === "bank") {
+      nextAccountCode = bankAccount?.code || "";
+    }
+
+    if (nextAccountCode !== accountCode) {
+      setAccountCode(nextAccountCode);
+    }
+  }, [paymentMethod, customerAccount, cashAccount, bankAccount, accountCode]);
 
   // ======================================================
   // الحصول على المنتج
@@ -296,7 +380,6 @@ export default function NewSalesPage() {
           return {
             ...item,
             productId: value,
-            price: item.price,
           };
         }
 
@@ -316,17 +399,71 @@ export default function NewSalesPage() {
   };
 
   // ======================================================
-  // التحقق من الفاتورة
+  // تغيير العميل
   // ======================================================
 
-  const validateInvoice = () => {
-    if (!customerId) {
-      alert("يرجى اختيار العميل.");
-      return false;
+  const handleCustomerChange = (value: string) => {
+    setCustomerId(value);
+    setIsSaved(false);
+
+    const customer = customers.find((item) => item.id === value);
+
+    if (paymentMethod === "credit") {
+      const account = customer
+        ? accounts.find(
+            (item) =>
+              item.code !== "1001" &&
+              item.level > 1 &&
+              item.parent === "1001" &&
+              item.name === customer.name,
+          )
+        : undefined;
+
+      setAccountCode(account?.code || "");
+    }
+  };
+
+  // ======================================================
+  // تغيير طريقة الدفع
+  // ======================================================
+
+  const handlePaymentMethodChange = (method: PaymentMethod) => {
+    setPaymentMethod(method);
+    setIsSaved(false);
+
+    if (method === "credit") {
+      setAccountCode(customerAccount?.code || "");
+      return;
     }
 
+    if (method === "cash") {
+      setAccountCode(cashAccount?.code || "");
+      return;
+    }
+
+    if (method === "bank") {
+      setAccountCode(bankAccount?.code || "");
+    }
+  };
+
+  // ======================================================
+  // التحقق من الحساب حسب طريقة الدفع
+  // ======================================================
+
+  const validatePaymentAccount = () => {
     if (!accountCode) {
-      alert("يرجى اختيار الحساب المحاسبي للفواتير.");
+      if (paymentMethod === "credit") {
+        alert("لا يوجد حساب محاسبي مرتبط بهذا العميل تحت حساب 1001 العملاء.");
+      }
+
+      if (paymentMethod === "cash") {
+        alert("حساب الصندوق 1002 غير موجود في دليل الحسابات.");
+      }
+
+      if (paymentMethod === "bank") {
+        alert("حساب البنك 1003 غير موجود في دليل الحسابات.");
+      }
+
       return false;
     }
 
@@ -338,9 +475,53 @@ export default function NewSalesPage() {
     }
 
     if (account.level === 0) {
-      alert(
-        "لا يمكن استخدام حساب رئيسي في فاتورة المبيعات. يجب اختيار حساب فرعي.",
-      );
+      alert("لا يمكن استخدام حساب رئيسي في فاتورة المبيعات.");
+      return false;
+    }
+
+    if (paymentMethod === "credit") {
+      if (account.parent !== "1001") {
+        alert(
+          "فاتورة البيع الآجلة يجب أن ترتبط بحساب العميل تحت 1001 العملاء.",
+        );
+        return false;
+      }
+
+      if (selectedCustomer && account.name !== selectedCustomer.name) {
+        alert("الحساب المحاسبي لا يطابق حساب العميل المحدد.");
+        return false;
+      }
+    }
+
+    if (paymentMethod === "cash" && account.code !== "1002") {
+      alert("المبيعات النقدية يجب أن ترتبط بحساب الصندوق 1002.");
+      return false;
+    }
+
+    if (paymentMethod === "bank" && account.code !== "1003") {
+      alert("المبيعات البنكية يجب أن ترتبط بحساب البنك 1003.");
+      return false;
+    }
+
+    return true;
+  };
+
+  // ======================================================
+  // التحقق من الفاتورة
+  // ======================================================
+
+  const validateInvoice = () => {
+    if (!customerId) {
+      alert("يرجى اختيار العميل.");
+      return false;
+    }
+
+    if (!selectedCustomer) {
+      alert("العميل المحدد غير موجود.");
+      return false;
+    }
+
+    if (!validatePaymentAccount()) {
       return false;
     }
 
@@ -381,11 +562,6 @@ export default function NewSalesPage() {
       return;
     }
 
-    if (account.level === 0) {
-      alert("يجب استخدام حساب فرعي فقط.");
-      return;
-    }
-
     const validItems = items.filter(
       (item) => item.productId && item.quantity > 0 && item.price > 0,
     );
@@ -423,7 +599,7 @@ export default function NewSalesPage() {
     setIsSaved(true);
 
     alert(
-      `تم حفظ فاتورة المبيعات بنجاح\nالحساب: ${account.code} - ${account.name}`,
+      `تم حفظ فاتورة المبيعات بنجاح\n\nالفاتورة: ${invoiceNumber}\nالعميل: ${customer.name}\nالحساب: ${account.code} - ${account.name}\nطريقة الدفع: ${getPaymentMethodName()}\nالإجمالي: ${formatMoney(grandTotal)} ريال`,
     );
   };
 
@@ -485,7 +661,8 @@ export default function NewSalesPage() {
             </div>
 
             <p className="text-sm text-gray-500 mt-2">
-              إنشاء فاتورة مبيعات جديدة وإضافة الأصناف وربطها بالحساب المحاسبي
+              إنشاء فاتورة مبيعات وربطها تلقائيًا بالحساب المحاسبي المناسب
+              والأستاذ العام
             </p>
           </div>
 
@@ -516,7 +693,7 @@ export default function NewSalesPage() {
                   <h2 className="font-bold text-gray-900">بيانات الفاتورة</h2>
 
                   <p className="text-sm text-gray-500 mt-1">
-                    المعلومات الأساسية لفاتورة المبيعات
+                    المعلومات الأساسية وربط الفاتورة بالحساب المحاسبي
                   </p>
                 </div>
               </div>
@@ -587,10 +764,9 @@ export default function NewSalesPage() {
 
                     <select
                       value={customerId}
-                      onChange={(event) => {
-                        setCustomerId(event.target.value);
-                        setIsSaved(false);
-                      }}
+                      onChange={(event) =>
+                        handleCustomerChange(event.target.value)
+                      }
                       required
                       className="w-full h-12 bg-gray-50 border-2 border-gray-300 rounded-lg pr-10 pl-3 text-sm text-gray-900 font-medium outline-none hover:border-gray-400 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-100 transition"
                     >
@@ -633,9 +809,9 @@ export default function NewSalesPage() {
                       required
                       className="w-full h-12 bg-gray-50 border-2 border-gray-300 rounded-lg pr-10 pl-3 text-sm text-gray-900 font-medium outline-none hover:border-gray-400 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-100 transition"
                     >
-                      <option value="">اختر الحساب الفرعي</option>
+                      <option value="">اختر الحساب المحاسبي</option>
 
-                      {subAccounts.map((account) => (
+                      {availableAccounts.map((account) => (
                         <option key={account.id} value={account.code}>
                           {account.code} - {account.name}
                         </option>
@@ -643,16 +819,9 @@ export default function NewSalesPage() {
                     </select>
                   </div>
 
-                  {subAccounts.length === 0 ? (
-                    <p className="text-[10px] text-red-500 mt-1 leading-5">
-                      لا توجد حسابات فرعية. أضف حسابًا رئيسيًا ثم حسابًا فرعيًا
-                      من دليل الحسابات.
-                    </p>
-                  ) : (
-                    <p className="text-[10px] text-gray-400 mt-1">
-                      تظهر الحسابات الفرعية فقط.
-                    </p>
-                  )}
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    يتم تحديد الحساب حسب طريقة الدفع والعميل.
+                  </p>
                 </div>
 
                 {/* طريقة الدفع */}
@@ -670,23 +839,115 @@ export default function NewSalesPage() {
 
                     <select
                       value={paymentMethod}
-                      onChange={(event) => {
-                        setPaymentMethod(event.target.value as PaymentMethod);
-                        setIsSaved(false);
-                      }}
+                      onChange={(event) =>
+                        handlePaymentMethodChange(
+                          event.target.value as PaymentMethod,
+                        )
+                      }
                       className="w-full h-12 bg-gray-50 border-2 border-gray-300 rounded-lg pr-10 pl-3 text-sm text-gray-900 font-medium outline-none hover:border-gray-400 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-100 transition"
                     >
                       <option value="cash">نقدي</option>
+
                       <option value="bank">تحويل بنكي</option>
+
                       <option value="credit">آجل</option>
                     </select>
                   </div>
                 </div>
               </div>
 
-              {/* الحساب المختار */}
+              {/* ==================================================
+                  شرح الربط المحاسبي
+              ================================================== */}
 
-              {selectedAccount && (
+              <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div
+                  className={`rounded-xl border-2 p-4 ${
+                    paymentMethod === "credit"
+                      ? "bg-blue-50 border-blue-200"
+                      : "bg-gray-50 border-gray-200"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <FiUser
+                      className={
+                        paymentMethod === "credit"
+                          ? "text-blue-600 mt-0.5"
+                          : "text-gray-400 mt-0.5"
+                      }
+                      size={18}
+                    />
+
+                    <div>
+                      <p className="text-xs text-gray-500">البيع الآجل</p>
+
+                      <p className="text-sm font-bold text-gray-800 mt-1">
+                        حساب العميل تحت 1001
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className={`rounded-xl border-2 p-4 ${
+                    paymentMethod === "cash"
+                      ? "bg-green-50 border-green-200"
+                      : "bg-gray-50 border-gray-200"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <FiCreditCard
+                      className={
+                        paymentMethod === "cash"
+                          ? "text-green-600 mt-0.5"
+                          : "text-gray-400 mt-0.5"
+                      }
+                      size={18}
+                    />
+
+                    <div>
+                      <p className="text-xs text-gray-500">البيع النقدي</p>
+
+                      <p className="text-sm font-bold text-gray-800 mt-1">
+                        1002 - الصندوق
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className={`rounded-xl border-2 p-4 ${
+                    paymentMethod === "bank"
+                      ? "bg-purple-50 border-purple-200"
+                      : "bg-gray-50 border-gray-200"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <FiBookOpen
+                      className={
+                        paymentMethod === "bank"
+                          ? "text-purple-600 mt-0.5"
+                          : "text-gray-400 mt-0.5"
+                      }
+                      size={18}
+                    />
+
+                    <div>
+                      <p className="text-xs text-gray-500">البيع البنكي</p>
+
+                      <p className="text-sm font-bold text-gray-800 mt-1">
+                        1003 - البنك
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ==================================================
+                  حالة الحساب
+              ================================================== */}
+
+              {selectedAccount ? (
                 <div className="mt-5 p-4 rounded-xl bg-green-50 border-2 border-green-200">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-lg bg-white text-green-600 flex items-center justify-center border border-green-200">
@@ -695,11 +956,34 @@ export default function NewSalesPage() {
 
                     <div>
                       <p className="text-xs text-gray-500">
-                        الحساب المحاسبي المختار
+                        الحساب المحاسبي المرتبط بالفاتورة
                       </p>
 
                       <p className="text-sm font-bold text-green-700 mt-1">
                         {selectedAccount.code} - {selectedAccount.name}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-5 p-4 rounded-xl bg-yellow-50 border-2 border-yellow-200">
+                  <div className="flex items-start gap-3">
+                    <FiAlertCircle
+                      className="text-yellow-600 mt-0.5"
+                      size={20}
+                    />
+
+                    <div>
+                      <p className="text-sm font-bold text-yellow-800">
+                        لم يتم العثور على الحساب المحاسبي
+                      </p>
+
+                      <p className="text-xs text-yellow-700 mt-1 leading-6">
+                        {paymentMethod === "credit"
+                          ? "يجب أن يكون للعميل حساب فرعي تحت 1001 العملاء."
+                          : paymentMethod === "cash"
+                            ? "يجب إضافة الحساب 1002 الصندوق إلى دليل الحسابات."
+                            : "يجب إضافة الحساب 1003 البنك إلى دليل الحسابات."}
                       </p>
                     </div>
                   </div>
@@ -1121,6 +1405,7 @@ export default function NewSalesPage() {
               }).map((_, index) => (
                 <tr key={`empty-${index}`} className="empty-row">
                   <td>{items.length + index + 1}</td>
+
                   <td></td>
                   <td></td>
                   <td></td>

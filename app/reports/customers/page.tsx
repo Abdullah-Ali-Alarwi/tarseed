@@ -9,6 +9,7 @@ import {
   FiSearch,
   FiRefreshCw,
   FiAlertCircle,
+  FiBookOpen,
 } from "react-icons/fi";
 
 import { useERPStore } from "@/Store/erpStore";
@@ -20,6 +21,8 @@ export default function CustomersReportPage() {
 
   const customers = useERPStore((state) => state.customers);
   const sales = useERPStore((state) => state.sales);
+  const accounts = useERPStore((state) => state.accounts);
+  const journalEntries = useERPStore((state) => state.journalEntries);
 
   const formatMoney = (value: number) => {
     return Number(value || 0).toLocaleString("ar-SA", {
@@ -28,6 +31,104 @@ export default function CustomersReportPage() {
     });
   };
 
+  /*
+   * =========================================================
+   * حساب أرصدة الحسابات من القيود اليومية المرحلة
+   * =========================================================
+   *
+   * الأصول:
+   * الرصيد = المدين - الدائن
+   *
+   * الالتزامات وحقوق الملكية والإيرادات:
+   * الرصيد = الدائن - المدين
+   */
+  const accountBalances = useMemo(() => {
+    const balances: Record<
+      string,
+      {
+        debit: number;
+        credit: number;
+        balance: number;
+      }
+    > = {};
+
+    accounts.forEach((account) => {
+      balances[account.code] = {
+        debit: 0,
+        credit: 0,
+        balance: 0,
+      };
+    });
+
+    journalEntries
+      .filter((entry) => entry.status === "posted")
+      .forEach((entry) => {
+        entry.lines.forEach((line) => {
+          if (!balances[line.accountCode]) {
+            balances[line.accountCode] = {
+              debit: 0,
+              credit: 0,
+              balance: 0,
+            };
+          }
+
+          balances[line.accountCode].debit += Number(line.debit) || 0;
+          balances[line.accountCode].credit += Number(line.credit) || 0;
+        });
+      });
+
+    accounts.forEach((account) => {
+      const data = balances[account.code];
+
+      if (!data) return;
+
+      if (account.type === "asset" || account.type === "expense") {
+        data.balance = data.debit - data.credit;
+      } else {
+        data.balance = data.credit - data.debit;
+      }
+    });
+
+    return balances;
+  }, [accounts, journalEntries]);
+
+  /*
+   * =========================================================
+   * العثور على حساب العميل
+   * =========================================================
+   *
+   * الأولوية:
+   * 1. accountCode الموجود داخل العميل.
+   * 2. حساب باسم العميل تحت 1001 العملاء.
+   */
+  const getCustomerAccount = (customer: {
+    id: string;
+    name: string;
+    accountCode?: string;
+    accountName?: string;
+  }) => {
+    if (customer.accountCode) {
+      const directAccount = accounts.find(
+        (account) => account.code === customer.accountCode,
+      );
+
+      if (directAccount) {
+        return directAccount;
+      }
+    }
+
+    return accounts.find(
+      (account) =>
+        account.parent === "1001" &&
+        account.name.trim() === customer.name.trim(),
+    );
+  };
+
+  /*
+   * =========================================================
+   * تقرير العملاء
+   * =========================================================
+   */
   const customerReport = useMemo(() => {
     return customers.map((customer) => {
       const customerSales = sales.filter(
@@ -52,9 +153,25 @@ export default function CustomersReportPage() {
         .filter((sale) => sale.paymentMethod === "credit")
         .reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
 
+      const customerAccount = getCustomerAccount(customer);
+
+      const accountingBalance = customerAccount
+        ? Number(accountBalances[customerAccount.code]?.balance || 0)
+        : 0;
+
+      /*
+       * إذا كان الحساب المحاسبي موجودًا، نعتمد عليه.
+       *
+       * وإذا لم يكن الحساب موجودًا بعد، نستخدم الرصيد الموجود
+       * في بيانات العميل، ثم نستخدم مبيعات الآجل كحل احتياطي.
+       */
       const storeBalance = Number(customer.balance) || 0;
 
-      const balance = storeBalance > 0 ? storeBalance : creditSales;
+      const balance = customerAccount
+        ? Math.max(accountingBalance, 0)
+        : storeBalance > 0
+          ? storeBalance
+          : creditSales;
 
       let customerStatus = "مسدد";
 
@@ -71,15 +188,29 @@ export default function CustomersReportPage() {
         code: customer.id,
         name: customer.name,
         phone: customer.phone || "-",
+
+        accountCode: customerAccount?.code || customer.accountCode || "-",
+
+        accountName:
+          customerAccount?.name || customer.accountName || "غير مرتبط",
+
         invoices,
         sales: totalSales,
         paid,
+        creditSales,
         balance,
         status: customerStatus,
+
+        hasAccount: Boolean(customerAccount),
       };
     });
-  }, [customers, sales, refreshKey]);
+  }, [customers, sales, accounts, accountBalances, refreshKey]);
 
+  /*
+   * =========================================================
+   * التصفية
+   * =========================================================
+   */
   const filteredCustomers = useMemo(() => {
     return customerReport.filter((customer) => {
       const searchValue = search.trim().toLowerCase();
@@ -88,7 +219,9 @@ export default function CustomersReportPage() {
         !searchValue ||
         customer.name.toLowerCase().includes(searchValue) ||
         customer.code.toLowerCase().includes(searchValue) ||
-        customer.phone.toLowerCase().includes(searchValue);
+        customer.phone.toLowerCase().includes(searchValue) ||
+        customer.accountCode.toLowerCase().includes(searchValue) ||
+        customer.accountName.toLowerCase().includes(searchValue);
 
       const statusMatch = !status || customer.status === status;
 
@@ -96,6 +229,11 @@ export default function CustomersReportPage() {
     });
   }, [customerReport, search, status]);
 
+  /*
+   * =========================================================
+   * الإحصائيات
+   * =========================================================
+   */
   const totalCustomers = filteredCustomers.length;
 
   const totalInvoices = filteredCustomers.reduce(
@@ -122,6 +260,19 @@ export default function CustomersReportPage() {
     (customer) => customer.status === "متأخر",
   ).length;
 
+  const linkedCustomers = filteredCustomers.filter(
+    (customer) => customer.hasAccount,
+  ).length;
+
+  const unlinkedCustomers = filteredCustomers.filter(
+    (customer) => !customer.hasAccount,
+  ).length;
+
+  /*
+   * =========================================================
+   * الإجراءات
+   * =========================================================
+   */
   const resetFilters = () => {
     setSearch("");
     setStatus("");
@@ -170,7 +321,7 @@ export default function CustomersReportPage() {
           </div>
 
           <p className="text-sm text-gray-500 mt-2">
-            عرض مبيعات العملاء والمدفوعات والأرصدة المستحقة
+            عرض مبيعات العملاء والمدفوعات والأرصدة المحاسبية
           </p>
         </div>
 
@@ -230,7 +381,7 @@ export default function CustomersReportPage() {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="اسم العميل أو الكود أو رقم الهاتف..."
+                  placeholder="اسم العميل أو الكود أو الحساب أو رقم الهاتف..."
                   className="w-full h-12 bg-white border-2 border-gray-400 rounded-lg pr-10 pl-3 text-sm text-gray-900 font-medium placeholder:text-gray-500 outline-none hover:border-gray-500 focus:border-amber-500 focus:ring-4 focus:ring-amber-100 transition"
                 />
               </div>
@@ -320,7 +471,11 @@ export default function CustomersReportPage() {
               </h2>
 
               <p className="text-sm text-gray-600 mt-2">
-                تقرير المبيعات والمدفوعات والأرصدة
+                تقرير المبيعات والمدفوعات والأرصدة المحاسبية
+              </p>
+
+              <p className="text-xs text-gray-500 mt-2">
+                مصدر الأرصدة: القيود اليومية المرحلة
               </p>
             </div>
           </div>
@@ -335,7 +490,7 @@ export default function CustomersReportPage() {
               SUMMARY
           ================================================== */}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 mb-6">
             <div className="border-2 border-gray-200 rounded-xl p-5">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-gray-500">عدد العملاء</p>
@@ -393,7 +548,58 @@ export default function CustomersReportPage() {
 
               <p className="text-xs text-gray-500 mt-1">ريال</p>
             </div>
+
+            <div className="border-2 border-emerald-200 bg-emerald-50 rounded-xl p-5">
+              <p className="text-sm text-gray-600">حسابات مرتبطة</p>
+
+              <p className="text-2xl font-bold text-emerald-700 mt-3">
+                {linkedCustomers.toLocaleString("ar-SA")}
+              </p>
+
+              <p className="text-xs text-gray-500 mt-1">عميل</p>
+            </div>
+
+            <div className="border-2 border-orange-200 bg-orange-50 rounded-xl p-5">
+              <p className="text-sm text-gray-600">غير مرتبطة</p>
+
+              <p className="text-2xl font-bold text-orange-700 mt-3">
+                {unlinkedCustomers.toLocaleString("ar-SA")}
+              </p>
+
+              <p className="text-xs text-gray-500 mt-1">عميل</p>
+            </div>
           </div>
+
+          {/* =================================================
+              ACCOUNTING NOTICE
+          ================================================== */}
+
+          {unlinkedCustomers > 0 && (
+            <div className="mb-6 p-4 rounded-xl border-2 border-orange-200 bg-orange-50">
+              <div className="flex items-start gap-3">
+                <FiAlertCircle
+                  size={21}
+                  className="text-orange-600 mt-0.5 shrink-0"
+                />
+
+                <div>
+                  <h3 className="font-bold text-orange-800">تنبيه محاسبي</h3>
+
+                  <p className="text-sm text-orange-700 mt-1">
+                    يوجد{" "}
+                    <strong>{unlinkedCustomers.toLocaleString("ar-SA")}</strong>{" "}
+                    عميل غير مرتبط بحساب محاسبي في دليل الحسابات تحت الحساب 1001
+                    العملاء.
+                  </p>
+
+                  <p className="text-xs text-orange-600 mt-1">
+                    سيتم استخدام الرصيد المخزن للعميل كحل احتياطي إلى أن يتم
+                    إنشاء وربط حسابه المحاسبي.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* =================================================
               CUSTOMERS TABLE
@@ -401,7 +607,7 @@ export default function CustomersReportPage() {
 
           <div className="border-2 border-gray-300 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1050px] border-collapse">
+              <table className="w-full min-w-[1250px] border-collapse">
                 <thead>
                   <tr className="bg-gray-900 text-white">
                     <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
@@ -414,6 +620,10 @@ export default function CustomersReportPage() {
 
                     <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
                       اسم العميل
+                    </th>
+
+                    <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
+                      الحساب المحاسبي
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
@@ -433,11 +643,15 @@ export default function CustomersReportPage() {
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-left text-sm font-bold">
-                      الرصيد المستحق
+                      الرصيد المحاسبي
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
                       الحالة
+                    </th>
+
+                    <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold print:hidden">
+                      الأستاذ
                     </th>
                   </tr>
                 </thead>
@@ -459,6 +673,24 @@ export default function CustomersReportPage() {
 
                         <td className="border border-gray-300 px-4 py-3 text-sm font-bold text-gray-900">
                           {customer.name}
+                        </td>
+
+                        <td className="border border-gray-300 px-4 py-3 text-sm">
+                          {customer.hasAccount ? (
+                            <div>
+                              <p className="font-bold text-gray-900">
+                                {customer.accountCode}
+                              </p>
+
+                              <p className="text-xs text-gray-500 mt-1">
+                                {customer.accountName}
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-orange-600 font-semibold">
+                              غير مرتبط
+                            </span>
+                          )}
                         </td>
 
                         <td
@@ -497,12 +729,30 @@ export default function CustomersReportPage() {
                             {customer.status}
                           </span>
                         </td>
+
+                        <td className="border border-gray-300 px-4 py-3 text-center print:hidden">
+                          {customer.hasAccount ? (
+                            <Link
+                              href={`/accounting/ledger?account=${encodeURIComponent(
+                                customer.accountCode,
+                              )}`}
+                              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-bold transition"
+                            >
+                              <FiBookOpen size={15} />
+                              دفتر الأستاذ
+                            </Link>
+                          ) : (
+                            <span className="text-gray-400 text-xs">
+                              لا يوجد حساب
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={11}
                         className="border border-gray-300 px-4 py-12 text-center text-gray-500"
                       >
                         لا توجد بيانات مطابقة للبحث
@@ -514,7 +764,7 @@ export default function CustomersReportPage() {
                 <tfoot>
                   <tr className="bg-gray-100">
                     <td
-                      colSpan={4}
+                      colSpan={5}
                       className="border-2 border-gray-400 px-4 py-4 text-right font-bold text-gray-900"
                     >
                       إجمالي التقرير
@@ -537,6 +787,8 @@ export default function CustomersReportPage() {
                     </td>
 
                     <td className="border-2 border-gray-400"></td>
+
+                    <td className="border-2 border-gray-400 print:hidden"></td>
                   </tr>
                 </tfoot>
               </table>
@@ -564,6 +816,34 @@ export default function CustomersReportPage() {
                 </p>
 
                 <p className="text-xs text-gray-500">إجمالي الذمم المستحقة</p>
+              </div>
+            </div>
+          </div>
+
+          {/* =================================================
+              ACCOUNTING SOURCE
+          ================================================== */}
+
+          <div className="mt-6 p-5 rounded-xl border-2 border-blue-200 bg-blue-50">
+            <div className="flex items-start gap-3">
+              <FiBookOpen size={21} className="text-blue-600 mt-0.5 shrink-0" />
+
+              <div>
+                <h3 className="font-bold text-gray-900">الربط المحاسبي</h3>
+
+                <p className="text-sm text-gray-600 mt-1">
+                  أرصدة العملاء المرتبطين بحسابات محاسبية يتم احتسابها من القيود
+                  اليومية المرحلة في دليل الحسابات، وليس من قيمة الرصيد المخزنة
+                  في بطاقة العميل.
+                </p>
+
+                <p className="text-xs text-gray-500 mt-2">
+                  المسار المحاسبي: <strong>1000 الأصول</strong>
+                  {" → "}
+                  <strong>1001 العملاء</strong>
+                  {" → "}
+                  <strong>حساب العميل</strong>
+                </p>
               </div>
             </div>
           </div>

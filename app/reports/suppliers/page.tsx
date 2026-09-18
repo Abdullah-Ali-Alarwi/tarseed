@@ -10,6 +10,7 @@ import {
   FiRefreshCw,
   FiAlertCircle,
   FiTruck,
+  FiBookOpen,
 } from "react-icons/fi";
 
 import { useERPStore } from "@/Store/erpStore";
@@ -17,10 +18,8 @@ import { useERPStore } from "@/Store/erpStore";
 export default function SuppliersReportPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
-  const [refreshKey, setRefreshKey] = useState(0);
 
   const suppliers = useERPStore((state) => state.suppliers);
-
   const purchases = useERPStore((state) => state.purchases);
 
   const formatMoney = (value: number) => {
@@ -43,21 +42,38 @@ export default function SuppliersReportPage() {
         0,
       );
 
-      const paid = supplierPurchases
-        .filter(
-          (purchase) =>
-            purchase.paymentMethod === "cash" ||
-            purchase.paymentMethod === "bank",
-        )
+      const cashPurchases = supplierPurchases
+        .filter((purchase) => purchase.paymentMethod === "cash")
         .reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0);
+
+      const bankPurchases = supplierPurchases
+        .filter((purchase) => purchase.paymentMethod === "bank")
+        .reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0);
+
+      const paid = cashPurchases + bankPurchases;
 
       const creditPurchases = supplierPurchases
         .filter((purchase) => purchase.paymentMethod === "credit")
         .reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0);
 
-      const storeBalance = Number(supplier.balance) || 0;
+      /*
+       * الرصيد الموجود في المورد يمثل الرصيد الافتتاحي.
+       *
+       * في المرحلة الحالية من النظام لا توجد بعد
+       * حركات سداد مستقلة للموردين، لذلك:
+       *
+       * الرصيد المستحق =
+       * الرصيد الافتتاحي
+       * + المشتريات الآجلة
+       * - المدفوعات النقدية والبنكية
+       *
+       * لاحقًا عند إضافة سندات الصرف/السداد
+       * سيتم استخراج الرصيد من القيود المحاسبية.
+       */
 
-      const balance = storeBalance > 0 ? storeBalance : creditPurchases;
+      const openingBalance = Number(supplier.balance) || 0;
+
+      const balance = openingBalance + creditPurchases - paid;
 
       let supplierStatus = "مسدد";
 
@@ -74,29 +90,38 @@ export default function SuppliersReportPage() {
         code: supplier.id,
         name: supplier.name,
         phone: supplier.phone || "-",
+        accountCode: supplier.accountCode || "",
+        accountName: supplier.accountName || "",
         invoices,
         purchases: totalPurchases,
         paid,
+        cashPurchases,
+        bankPurchases,
+        creditPurchases,
+        openingBalance,
         balance,
         status: supplierStatus,
       };
     });
-  }, [suppliers, purchases, refreshKey]);
+  }, [suppliers, purchases]);
 
   const filteredSuppliers = useMemo(() => {
     const searchValue = search.trim().toLowerCase();
 
-    return supplierReport.filter((supplier) => {
-      const searchMatch =
-        !searchValue ||
-        supplier.name.toLowerCase().includes(searchValue) ||
-        supplier.code.toLowerCase().includes(searchValue) ||
-        supplier.phone.includes(searchValue);
+    return supplierReport
+      .filter((supplier) => {
+        const searchMatch =
+          !searchValue ||
+          supplier.name.toLowerCase().includes(searchValue) ||
+          supplier.code.toLowerCase().includes(searchValue) ||
+          supplier.phone.toLowerCase().includes(searchValue) ||
+          supplier.accountCode.toLowerCase().includes(searchValue);
 
-      const statusMatch = !status || supplier.status === status;
+        const statusMatch = !status || supplier.status === status;
 
-      return searchMatch && statusMatch;
-    });
+        return searchMatch && statusMatch;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
   }, [supplierReport, search, status]);
 
   const totalSuppliers = filteredSuppliers.length;
@@ -116,6 +141,11 @@ export default function SuppliersReportPage() {
     0,
   );
 
+  const totalCreditPurchases = filteredSuppliers.reduce(
+    (sum, supplier) => sum + supplier.creditPurchases,
+    0,
+  );
+
   const totalBalance = filteredSuppliers.reduce(
     (sum, supplier) => sum + supplier.balance,
     0,
@@ -125,13 +155,17 @@ export default function SuppliersReportPage() {
     (supplier) => supplier.status === "متأخر",
   ).length;
 
+  const activeSuppliers = filteredSuppliers.filter(
+    (supplier) => supplier.status === "نشط",
+  ).length;
+
+  const settledSuppliers = filteredSuppliers.filter(
+    (supplier) => supplier.status === "مسدد",
+  ).length;
+
   const resetFilters = () => {
     setSearch("");
     setStatus("");
-  };
-
-  const handleRefresh = () => {
-    setRefreshKey((value) => value + 1);
   };
 
   const handlePrint = () => {
@@ -235,7 +269,7 @@ export default function SuppliersReportPage() {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="اسم المورد أو الكود أو رقم الهاتف..."
+                  placeholder="اسم المورد أو الكود أو الحساب أو رقم الهاتف..."
                   className="w-full h-12 bg-white border-2 border-gray-400 rounded-lg pr-10 pl-3 text-sm text-gray-900 font-medium placeholder:text-gray-500 outline-none hover:border-gray-500 focus:border-amber-500 focus:ring-4 focus:ring-amber-100 transition"
                 />
               </div>
@@ -273,15 +307,6 @@ export default function SuppliersReportPage() {
               <FiRefreshCw size={18} />
               إعادة ضبط
             </button>
-
-            <button
-              type="button"
-              onClick={handleRefresh}
-              className="inline-flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-6 py-3 rounded-lg text-sm font-semibold transition"
-            >
-              <FiRefreshCw size={18} />
-              تحديث التقرير
-            </button>
           </div>
         </div>
       </section>
@@ -291,14 +316,10 @@ export default function SuppliersReportPage() {
       ====================================================== */}
 
       <section className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden print:border-0 print:shadow-none">
-        {/* ===================================================
-            REPORT HEADER
-        ==================================================== */}
+        {/* COMPANY HEADER */}
 
         <div className="p-6 md:p-8 border-b-2 border-gray-300">
           <div className="flex flex-col md:flex-row justify-between gap-6">
-            {/* COMPANY */}
-
             <div>
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-xl bg-amber-600 text-white flex items-center justify-center font-bold text-lg">
@@ -323,8 +344,6 @@ export default function SuppliersReportPage() {
               </p>
             </div>
 
-            {/* REPORT TITLE */}
-
             <div className="text-center md:text-left">
               <h2 className="text-2xl md:text-3xl font-bold text-gray-900">
                 تقرير الموردين
@@ -337,14 +356,10 @@ export default function SuppliersReportPage() {
           </div>
         </div>
 
-        {/* ===================================================
-            REPORT CONTENT
-        ==================================================== */}
+        {/* REPORT CONTENT */}
 
         <div className="p-5 md:p-8">
-          {/* =================================================
-              SUMMARY
-          ================================================== */}
+          {/* SUMMARY */}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
             {/* SUPPLIERS */}
@@ -416,13 +431,58 @@ export default function SuppliersReportPage() {
             </div>
           </div>
 
-          {/* =================================================
-              SUPPLIERS TABLE
-          ================================================== */}
+          {/* STATUS SUMMARY */}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="border-2 border-green-200 bg-green-50 rounded-xl p-4">
+              <p className="text-sm text-gray-600">موردون نشطون</p>
+
+              <p className="text-2xl font-bold text-green-700 mt-2">
+                {activeSuppliers.toLocaleString("ar-SA")}
+              </p>
+            </div>
+
+            <div className="border-2 border-blue-200 bg-blue-50 rounded-xl p-4">
+              <p className="text-sm text-gray-600">موردون مسددون</p>
+
+              <p className="text-2xl font-bold text-blue-700 mt-2">
+                {settledSuppliers.toLocaleString("ar-SA")}
+              </p>
+            </div>
+
+            <div className="border-2 border-red-200 bg-red-50 rounded-xl p-4">
+              <p className="text-sm text-gray-600">موردون متأخرون</p>
+
+              <p className="text-2xl font-bold text-red-700 mt-2">
+                {overdueSuppliers.toLocaleString("ar-SA")}
+              </p>
+            </div>
+          </div>
+
+          {/* ACCOUNTING NOTE */}
+
+          <div className="mb-6 border-2 border-blue-200 bg-blue-50 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <FiBookOpen size={22} className="text-blue-600 mt-0.5 shrink-0" />
+
+              <div>
+                <p className="font-bold text-blue-900">الربط المحاسبي</p>
+
+                <p className="text-sm text-blue-800 mt-1 leading-6">
+                  كل مورد في النظام مرتبط بحساب فرعي تحت حساب الموردين 2001.
+                  الرصيد الظاهر هنا يعتمد حاليًا على الرصيد الافتتاحي وحركات
+                  فواتير المشتريات. بعد إضافة سندات السداد ستصبح الذمم مستخرجة
+                  مباشرة من القيود المحاسبية.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* SUPPLIERS TABLE */}
 
           <div className="border-2 border-gray-300 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1050px] border-collapse">
+              <table className="w-full min-w-[1250px] border-collapse">
                 <thead>
                   <tr className="bg-gray-900 text-white">
                     <th className="border border-gray-700 px-4 py-4 text-center text-sm font-bold">
@@ -435,6 +495,10 @@ export default function SuppliersReportPage() {
 
                     <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
                       اسم المورد
+                    </th>
+
+                    <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
+                      الحساب
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-right text-sm font-bold">
@@ -451,6 +515,10 @@ export default function SuppliersReportPage() {
 
                     <th className="border border-gray-700 px-4 py-4 text-left text-sm font-bold">
                       المدفوع
+                    </th>
+
+                    <th className="border border-gray-700 px-4 py-4 text-left text-sm font-bold">
+                      المشتريات الآجلة
                     </th>
 
                     <th className="border border-gray-700 px-4 py-4 text-left text-sm font-bold">
@@ -482,6 +550,24 @@ export default function SuppliersReportPage() {
                           {supplier.name}
                         </td>
 
+                        <td className="border border-gray-300 px-4 py-3 text-sm">
+                          {supplier.accountCode ? (
+                            <div>
+                              <p className="font-bold text-gray-900">
+                                {supplier.accountCode}
+                              </p>
+
+                              <p className="text-xs text-gray-500 mt-1">
+                                {supplier.accountName}
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-red-600 font-semibold">
+                              غير مرتبط
+                            </span>
+                          )}
+                        </td>
+
                         <td
                           dir="ltr"
                           className="border border-gray-300 px-4 py-3 text-sm text-gray-700 text-right"
@@ -499,6 +585,10 @@ export default function SuppliersReportPage() {
 
                         <td className="border border-gray-300 px-4 py-3 text-left text-sm font-bold text-green-700">
                           {formatMoney(supplier.paid)}
+                        </td>
+
+                        <td className="border border-gray-300 px-4 py-3 text-left text-sm font-bold text-amber-700">
+                          {formatMoney(supplier.creditPurchases)}
                         </td>
 
                         <td className="border border-gray-300 px-4 py-3 text-left text-sm font-bold text-red-700">
@@ -523,7 +613,7 @@ export default function SuppliersReportPage() {
                   ) : (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={11}
                         className="border border-gray-300 px-4 py-12 text-center text-gray-500"
                       >
                         لا توجد بيانات مطابقة للبحث
@@ -537,7 +627,7 @@ export default function SuppliersReportPage() {
                 <tfoot>
                   <tr className="bg-gray-100">
                     <td
-                      colSpan={4}
+                      colSpan={5}
                       className="border-2 border-gray-400 px-4 py-4 text-right font-bold text-gray-900"
                     >
                       إجمالي التقرير
@@ -555,6 +645,10 @@ export default function SuppliersReportPage() {
                       {formatMoney(totalPaid)}
                     </td>
 
+                    <td className="border-2 border-gray-400 px-4 py-4 text-left font-bold text-amber-700">
+                      {formatMoney(totalCreditPurchases)}
+                    </td>
+
                     <td className="border-2 border-gray-400 px-4 py-4 text-left font-bold text-red-700">
                       {formatMoney(totalBalance)}
                     </td>
@@ -566,9 +660,7 @@ export default function SuppliersReportPage() {
             </div>
           </div>
 
-          {/* =================================================
-              PAYABLES SUMMARY
-          ================================================== */}
+          {/* PAYABLES SUMMARY */}
 
           <div className="mt-6 p-5 rounded-xl border-2 border-red-200 bg-red-50">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -576,13 +668,11 @@ export default function SuppliersReportPage() {
                 <FiTruck size={24} className="text-red-600" />
 
                 <div>
-                  <h3 className="font-bold text-gray-900">
-                    تنبيه الذمم الدائنة
-                  </h3>
+                  <h3 className="font-bold text-gray-900">الذمم الدائنة</h3>
 
                   <p className="text-sm text-gray-600 mt-1">
-                    يوجد {overdueSuppliers.toLocaleString("ar-SA")} مورد لديه
-                    مبالغ مستحقة ومتأخرة
+                    يوجد {overdueSuppliers.toLocaleString("ar-SA")} مورد مصنف
+                    ضمن الموردين المتأخرين.
                   </p>
                 </div>
               </div>
@@ -599,9 +689,7 @@ export default function SuppliersReportPage() {
             </div>
           </div>
 
-          {/* =================================================
-              FOOTER
-          ================================================== */}
+          {/* FOOTER */}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-16 text-center">
             <div>
@@ -625,9 +713,7 @@ export default function SuppliersReportPage() {
         </div>
       </section>
 
-      {/* =====================================================
-          PRINT CSS
-      ====================================================== */}
+      {/* PRINT CSS */}
 
       <style jsx global>{`
         @media print {

@@ -69,12 +69,18 @@ export default function InventoryPage() {
   /* =====================================================
      INVENTORY DATA
      
-     المخزون =
+     الكمية الحالية =
      إجمالي المشتريات - إجمالي المبيعات
 
-     سعر الوحدة =
-     متوسط سعر الشراء
-  ===================================================== */
+     متوسط سعر الشراء =
+     إجمالي قيمة المشتريات ÷ إجمالي كمية المشتريات
+
+     قيمة المخزون =
+     الكمية الحالية × متوسط سعر الشراء
+
+     ملاحظة:
+     لا نضيف price أو stock إلى Product.
+     ===================================================== */
 
   const inventoryProducts = useMemo(() => {
     return products.map((product) => {
@@ -85,53 +91,57 @@ export default function InventoryPage() {
       let purchaseQuantity = 0;
 
       /* ------------------------------------------
-             المشتريات
-          ------------------------------------------ */
+         المشتريات
+      ------------------------------------------ */
 
       purchases.forEach((purchase) => {
         purchase.items.forEach((item) => {
-          if (item.productId === product.id) {
-            const quantity = getNumericAmount(item.quantity);
-
-            const price = getNumericAmount(item.price);
-
-            purchasedQuantity += quantity;
-
-            purchaseQuantity += quantity;
-
-            purchaseValue += quantity * price;
+          if (item.productId !== product.id) {
+            return;
           }
+
+          const quantity = getNumericAmount(item.quantity);
+
+          const price = getNumericAmount(item.price);
+
+          purchasedQuantity += quantity;
+
+          purchaseQuantity += quantity;
+
+          purchaseValue += quantity * price;
         });
       });
 
       /* ------------------------------------------
-             المبيعات
-          ------------------------------------------ */
+         المبيعات
+      ------------------------------------------ */
 
       sales.forEach((sale) => {
         sale.items.forEach((item) => {
-          if (item.productId === product.id) {
-            soldQuantity += getNumericAmount(item.quantity);
+          if (item.productId !== product.id) {
+            return;
           }
+
+          soldQuantity += getNumericAmount(item.quantity);
         });
       });
 
       /* ------------------------------------------
-             الكمية الحالية
-          ------------------------------------------ */
+         الكمية الحالية
+      ------------------------------------------ */
 
       const quantity = Math.max(purchasedQuantity - soldQuantity, 0);
 
       /* ------------------------------------------
-             متوسط سعر الشراء
-          ------------------------------------------ */
+         متوسط سعر الشراء
+      ------------------------------------------ */
 
       const averagePurchasePrice =
         purchaseQuantity > 0 ? purchaseValue / purchaseQuantity : 0;
 
       /* ------------------------------------------
-             قيمة المخزون
-          ------------------------------------------ */
+         قيمة المخزون
+      ------------------------------------------ */
 
       const total = quantity * averagePurchasePrice;
 
@@ -140,13 +150,17 @@ export default function InventoryPage() {
 
         quantity,
 
-        price: averagePurchasePrice,
+        averagePurchasePrice,
 
         total,
 
         category: getCategory(product.code),
 
         status: getStatus(quantity),
+
+        purchasedQuantity,
+
+        soldQuantity,
       };
     });
   }, [products, purchases, sales]);
@@ -291,7 +305,9 @@ export default function InventoryPage() {
       ===================================================== */}
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        {/* TOOLBAR */}
+        {/* =====================================================
+            TOOLBAR
+        ===================================================== */}
 
         <div className="p-5 border-b border-gray-100">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -304,7 +320,9 @@ export default function InventoryPage() {
             </div>
 
             <div className="flex flex-col md:flex-row gap-3">
-              {/* SEARCH */}
+              {/* =================================================
+                  SEARCH
+              ================================================= */}
 
               <div className="relative w-full md:w-72">
                 <FiSearch
@@ -315,17 +333,19 @@ export default function InventoryPage() {
                 <input
                   type="text"
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(event) => setSearch(event.target.value)}
                   placeholder="البحث عن صنف..."
                   className="w-full pr-10 pl-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-100 placeholder:text-gray-400"
                 />
               </div>
 
-              {/* CATEGORY */}
+              {/* =================================================
+                  CATEGORY
+              ================================================= */}
 
               <select
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(event) => setCategory(event.target.value)}
                 className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-amber-500"
               >
                 {categories.map((item) => (
@@ -343,7 +363,7 @@ export default function InventoryPage() {
         ===================================================== */}
 
         <div className="overflow-x-auto">
-          <table className="w-full text-right min-w-[1000px]">
+          <table className="w-full text-right min-w-[1100px]">
             <thead className="bg-gray-50">
               <tr className="text-sm text-gray-500">
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
@@ -359,7 +379,7 @@ export default function InventoryPage() {
                 </th>
 
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  الكمية
+                  الكمية الحالية
                 </th>
 
                 <th className="px-6 py-4 font-medium whitespace-nowrap">
@@ -415,7 +435,13 @@ export default function InventoryPage() {
                     {/* QUANTITY */}
 
                     <td className="px-6 py-4">
-                      <span className="font-semibold text-gray-700">
+                      <span
+                        className={`font-semibold ${
+                          product.quantity <= 10
+                            ? "text-red-600"
+                            : "text-gray-700"
+                        }`}
+                      >
                         {product.quantity.toLocaleString("ar-SA")}
                       </span>
 
@@ -427,7 +453,7 @@ export default function InventoryPage() {
                     {/* AVERAGE PURCHASE PRICE */}
 
                     <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
-                      {formatMoney(product.price)} ريال
+                      {formatMoney(product.averagePurchasePrice)} ريال
                     </td>
 
                     {/* INVENTORY VALUE */}
@@ -445,13 +471,23 @@ export default function InventoryPage() {
                     {/* ACTIONS */}
 
                     <td className="px-6 py-4">
-                      <button
-                        type="button"
-                        className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition"
-                        title="المزيد"
-                      >
-                        <FiMoreVertical size={18} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <Link
+                          href={`/inventory/${product.id}`}
+                          className="p-2 rounded-lg hover:bg-amber-50 text-gray-500 hover:text-amber-600 transition"
+                          title="تفاصيل المخزون"
+                        >
+                          <FiPackage size={18} />
+                        </Link>
+
+                        <button
+                          type="button"
+                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition"
+                          title="المزيد"
+                        >
+                          <FiMoreVertical size={18} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

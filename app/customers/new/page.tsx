@@ -8,11 +8,11 @@ import {
   FiSave,
   FiUser,
   FiPhone,
-  FiMail,
   FiMapPin,
   FiFileText,
   FiDollarSign,
   FiCheckCircle,
+  FiBookOpen,
 } from "react-icons/fi";
 import { useERPStore } from "@/Store/erpStore";
 
@@ -21,13 +21,13 @@ export default function NewCustomerPage() {
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
   const [balance, setBalance] = useState("0");
 
   const [isSaved, setIsSaved] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [savedCustomerId, setSavedCustomerId] = useState("");
+  const [savedAccountCode, setSavedAccountCode] = useState("");
 
   /* =====================================================
      حفظ العميل
@@ -36,47 +36,68 @@ export default function NewCustomerPage() {
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!name.trim()) {
+    const cleanName = name.trim();
+    const cleanPhone = phone.trim();
+    const cleanAddress = address.trim();
+    const openingBalance = Number(balance) || 0;
+
+    /* -----------------------------------------------------
+       التحقق من البيانات
+    ----------------------------------------------------- */
+
+    if (!cleanName) {
       alert("يرجى إدخال اسم العميل");
       return;
     }
 
-    if (!phone.trim()) {
+    if (!cleanPhone) {
       alert("يرجى إدخال رقم الهاتف");
       return;
     }
 
-    /*
-      مهم:
-      لا نرسل id هنا لأن Zustand يقوم
-      بإنشائه تلقائيًا.
-    */
+    if (openingBalance < 0) {
+      alert("الرصيد الافتتاحي لا يمكن أن يكون سالبًا في هذه الشاشة");
+      return;
+    }
 
-    addCustomer({
-      name: name.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
-      balance: Number(balance) || 0,
+    /* -----------------------------------------------------
+       إضافة العميل
+
+       الـStore مسؤول عن:
+
+       1. إنشاء كود العميل.
+       2. إنشاء الحساب المحاسبي للعميل.
+       3. وضع الحساب تحت 1001 العملاء.
+       4. ربط accountCode و accountName بالعميل.
+       5. إنشاء قيد الرصيد الافتتاحي إذا كان موجودًا.
+    ----------------------------------------------------- */
+
+    const result = addCustomer({
+      name: cleanName,
+      phone: cleanPhone,
+      address: cleanAddress,
+      balance: openingBalance,
     });
 
     /*
-      الـStore الحالي ينشئ ID تلقائيًا،
-      لذلك نعرض رسالة نجاح بدون محاولة
-      تخمين الـID.
-    */
+     * إذا كان addCustomer في الـStore يعيد العميل
+     * يمكننا عرض بياناته مباشرة.
+     *
+     * وإذا كانت النسخة الحالية من الـStore لا تعيد قيمة،
+     * سيظل الحفظ يعمل بشكل طبيعي.
+     */
+
+    if (result) {
+      setSavedCustomerId(result.id || "");
+      setSavedAccountCode(result.accountCode || "");
+    }
 
     setIsSaved(true);
     setShowSuccess(true);
 
-    /*
-      البريد الإلكتروني موجود في الواجهة،
-      لكنه لا يدخل إلى Customer في الـStore
-      الحالي لأنه لا يحتوي على email.
-    */
-
     setTimeout(() => {
       setShowSuccess(false);
-    }, 3000);
+    }, 4000);
   };
 
   /* =====================================================
@@ -86,12 +107,14 @@ export default function NewCustomerPage() {
   const handleNewCustomer = () => {
     setName("");
     setPhone("");
-    setEmail("");
     setAddress("");
     setBalance("0");
+
     setIsSaved(false);
     setShowSuccess(false);
+
     setSavedCustomerId("");
+    setSavedAccountCode("");
   };
 
   return (
@@ -101,9 +124,11 @@ export default function NewCustomerPage() {
             HEADER
         ================================================= */}
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <div>
-            <div className="flex items-center gap-2 mb-2 text-sm">
+            {/* Breadcrumb */}
+
+            <div className="flex items-center gap-2 mb-3 text-sm">
               <Link
                 href="/"
                 className="text-gray-400 hover:text-green-600 transition"
@@ -125,6 +150,8 @@ export default function NewCustomerPage() {
               <span className="text-gray-600">إضافة عميل</span>
             </div>
 
+            {/* Title */}
+
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-xl bg-green-50 text-green-600 flex items-center justify-center">
                 <FiUser size={23} />
@@ -136,11 +163,13 @@ export default function NewCustomerPage() {
                 </h1>
 
                 <p className="text-sm text-gray-500 mt-1">
-                  تسجيل بيانات العميل وحسابه في النظام
+                  تسجيل بيانات العميل وإنشاء حسابه المحاسبي
                 </p>
               </div>
             </div>
           </div>
+
+          {/* Back */}
 
           <Link
             href="/customers"
@@ -163,13 +192,20 @@ export default function NewCustomerPage() {
               <p className="font-semibold">تم حفظ العميل بنجاح</p>
 
               <p className="text-sm mt-1">
-                تمت إضافة العميل إلى النظام ويمكنك الآن استخدامه في فواتير
-                المبيعات.
+                تم إنشاء العميل وربطه بالحساب المحاسبي تلقائيًا.
               </p>
 
               {savedCustomerId && (
+                <p className="text-xs mt-2 text-green-600">
+                  كود العميل:{" "}
+                  <span className="font-bold">{savedCustomerId}</span>
+                </p>
+              )}
+
+              {savedAccountCode && (
                 <p className="text-xs mt-1 text-green-600">
-                  كود العميل: {savedCustomerId}
+                  الحساب المحاسبي:{" "}
+                  <span className="font-bold">{savedAccountCode}</span>
                 </p>
               )}
             </div>
@@ -229,6 +265,7 @@ export default function NewCustomerPage() {
                         setIsSaved(false);
                       }}
                       placeholder="أدخل اسم العميل"
+                      autoFocus
                       className="w-full h-12 pr-10 pl-4 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none placeholder:text-gray-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
                     />
                   </div>
@@ -261,37 +298,6 @@ export default function NewCustomerPage() {
                   </div>
                 </div>
 
-                {/* البريد الإلكتروني */}
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    البريد الإلكتروني
-                  </label>
-
-                  <div className="relative">
-                    <FiMail
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                      size={18}
-                    />
-
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(event) => {
-                        setEmail(event.target.value);
-                        setIsSaved(false);
-                      }}
-                      placeholder="example@email.com"
-                      dir="ltr"
-                      className="w-full h-12 pr-10 pl-4 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none placeholder:text-gray-400 focus:border-green-500 focus:ring-2 focus:ring-green-100"
-                    />
-                  </div>
-
-                  <p className="text-[11px] text-gray-400 mt-2">
-                    البريد الإلكتروني غير إلزامي.
-                  </p>
-                </div>
-
                 {/* العنوان */}
 
                 <div>
@@ -320,7 +326,7 @@ export default function NewCustomerPage() {
 
                 {/* الرصيد الافتتاحي */}
 
-                <div>
+                <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     الرصيد الافتتاحي
                   </label>
@@ -334,6 +340,7 @@ export default function NewCustomerPage() {
                     <input
                       type="number"
                       min="0"
+                      step="0.01"
                       value={balance}
                       onChange={(event) => {
                         setBalance(event.target.value);
@@ -344,10 +351,80 @@ export default function NewCustomerPage() {
                   </div>
 
                   <p className="text-xs text-gray-400 mt-2">
-                    المبلغ المستحق على العميل عند بداية التعامل
+                    المبلغ المستحق على العميل عند بداية التعامل. سيتم تسجيله
+                    محاسبيًا على حساب العميل.
                   </p>
                 </div>
               </div>
+
+              {/* =================================================
+                  ACCOUNTING INFORMATION
+              ================================================= */}
+
+              <div className="mt-6 bg-blue-50 border border-blue-100 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 shrink-0 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                    <FiBookOpen size={18} />
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-bold text-blue-800">
+                      الربط المحاسبي
+                    </h3>
+
+                    <p className="text-xs text-blue-700 leading-6 mt-1">
+                      عند حفظ العميل، يقوم النظام تلقائيًا بإنشاء حساب مستقل له
+                      تحت حساب العملاء.
+                    </p>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-lg bg-white text-blue-700 font-semibold">
+                        1000 الأصول
+                      </span>
+
+                      <span className="text-blue-400">←</span>
+
+                      <span className="px-2.5 py-1 rounded-lg bg-white text-blue-700 font-semibold">
+                        1001 العملاء
+                      </span>
+
+                      <span className="text-blue-400">←</span>
+
+                      <span className="px-2.5 py-1 rounded-lg bg-white text-blue-700 font-semibold">
+                        حساب العميل
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* =================================================
+                  OPENING BALANCE INFORMATION
+              ================================================= */}
+
+              {Number(balance) > 0 && (
+                <div className="mt-4 bg-amber-50 border border-amber-100 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 shrink-0 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
+                      <FiDollarSign size={18} />
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-bold text-amber-800">
+                        الرصيد الافتتاحي
+                      </h3>
+
+                      <p className="text-xs text-amber-700 leading-6 mt-1">
+                        سيتم تسجيل مبلغ{" "}
+                        <span className="font-bold">
+                          {Number(balance || 0).toLocaleString("ar-SA")}
+                        </span>{" "}
+                        ريال كرصيد مدين على حساب العميل.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* =================================================

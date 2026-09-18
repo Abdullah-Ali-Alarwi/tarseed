@@ -11,10 +11,16 @@ import {
   FiMapPin,
   FiFileText,
   FiCheckCircle,
+  FiCreditCard,
+  FiBookOpen,
 } from "react-icons/fi";
 import { useERPStore } from "@/Store/erpStore";
 
 export default function NewSupplierPage() {
+  // ======================================================
+  // Zustand
+  // ======================================================
+
   const addSupplier = useERPStore((state) => state.addSupplier);
 
   // ======================================================
@@ -27,13 +33,14 @@ export default function NewSupplierPage() {
   const [balance, setBalance] = useState("0");
 
   // ======================================================
-  // حالة الحفظ
+  // حالة الصفحة
   // ======================================================
 
   const [isSaved, setIsSaved] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  const [savedSupplierId, setSavedSupplierId] = useState("");
+  const [savedSupplierName, setSavedSupplierName] = useState("");
+  const [savedAccountCode, setSavedAccountCode] = useState("");
 
   // ======================================================
   // تفريغ الحقول
@@ -53,6 +60,10 @@ export default function NewSupplierPage() {
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    // ==================================================
+    // تنظيف البيانات
+    // ==================================================
+
     const cleanName = name.trim();
     const cleanPhone = phone.trim();
     const cleanAddress = address.trim();
@@ -60,7 +71,7 @@ export default function NewSupplierPage() {
     const numericBalance = Number(balance) || 0;
 
     // ==================================================
-    // التحقق من البيانات
+    // التحقق
     // ==================================================
 
     if (!cleanName) {
@@ -79,13 +90,33 @@ export default function NewSupplierPage() {
     }
 
     // ==================================================
-    // إضافة المورد
-    //
-    // ملاحظة:
-    // لا نرسل id لأن Zustand يقوم بإنشائه تلقائيًا.
+    // التحقق من التكرار
     // ==================================================
 
-    addSupplier({
+    const currentSuppliers = useERPStore.getState().suppliers;
+
+    const supplierExists = currentSuppliers.some(
+      (supplier) =>
+        supplier.name.trim().toLowerCase() === cleanName.toLowerCase(),
+    );
+
+    if (supplierExists) {
+      alert("هذا المورد موجود مسبقًا في النظام.");
+      return;
+    }
+
+    // ==================================================
+    // إضافة المورد
+    //
+    // الـStore هو المسؤول عن:
+    //
+    // 1. إنشاء المورد
+    // 2. إنشاء الحساب المحاسبي تحت 2001
+    // 3. ربط accountCode/accountName بالمورد
+    // 4. إنشاء قيد الرصيد الافتتاحي إذا كان موجودًا
+    // ==================================================
+
+    const createdSupplier = addSupplier({
       name: cleanName,
       phone: cleanPhone,
       address: cleanAddress,
@@ -93,15 +124,21 @@ export default function NewSupplierPage() {
     });
 
     // ==================================================
-    // إنشاء معرف للعرض فقط
-    //
-    // هذا ليس معرف المورد المخزن.
-    // نستخدمه فقط كمرجع بصري بعد الحفظ.
+    // التأكد من نجاح الإضافة
     // ==================================================
 
-    const displayId = `S${Date.now().toString().slice(-6)}`;
+    if (!createdSupplier) {
+      alert("تعذر إضافة المورد. يرجى المحاولة مرة أخرى.");
+      return;
+    }
 
-    setSavedSupplierId(displayId);
+    // ==================================================
+    // حفظ البيانات التي ستظهر في رسالة النجاح
+    // ==================================================
+
+    setSavedSupplierName(createdSupplier.name);
+
+    setSavedAccountCode(createdSupplier.accountCode || "");
 
     setIsSaved(true);
     setShowSuccess(true);
@@ -118,7 +155,7 @@ export default function NewSupplierPage() {
 
     window.setTimeout(() => {
       setShowSuccess(false);
-    }, 3000);
+    }, 5000);
   };
 
   // ======================================================
@@ -130,8 +167,14 @@ export default function NewSupplierPage() {
 
     setIsSaved(false);
     setShowSuccess(false);
-    setSavedSupplierId("");
+
+    setSavedSupplierName("");
+    setSavedAccountCode("");
   };
+
+  // ======================================================
+  // العرض
+  // ======================================================
 
   return (
     <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
@@ -179,7 +222,7 @@ export default function NewSupplierPage() {
                 </h1>
 
                 <p className="text-sm text-gray-500 mt-1">
-                  تسجيل بيانات المورد في النظام
+                  تسجيل المورد وإنشاء حسابه المحاسبي تلقائيًا
                 </p>
               </div>
             </div>
@@ -201,21 +244,89 @@ export default function NewSupplierPage() {
         ================================================== */}
 
         {showSuccess && (
-          <div className="mb-6 flex items-center gap-3 bg-green-50 border border-green-200 text-green-700 px-4 py-4 rounded-xl">
-            <FiCheckCircle size={21} />
+          <div className="mb-6 bg-green-50 border border-green-200 rounded-xl p-5">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 shrink-0 rounded-lg bg-green-100 text-green-600 flex items-center justify-center">
+                <FiCheckCircle size={20} />
+              </div>
 
-            <div>
-              <p className="font-semibold">تم حفظ المورد بنجاح</p>
+              <div className="flex-1">
+                <p className="font-bold text-green-800">تم حفظ المورد بنجاح</p>
 
-              <p className="text-sm mt-1">
-                تم حفظ بيانات المورد وتفريغ الحقول لإضافة مورد جديد.
-              </p>
-
-              {savedSupplierId && (
-                <p className="text-xs mt-1 text-green-600">
-                  رقم العملية: {savedSupplierId}
+                <p className="text-sm text-green-700 mt-1">
+                  تم إنشاء المورد والحساب المحاسبي الخاص به تلقائيًا.
                 </p>
-              )}
+
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* اسم المورد */}
+
+                  <div className="bg-white border border-green-100 rounded-lg px-4 py-3">
+                    <p className="text-xs text-gray-400 mb-1">اسم المورد</p>
+
+                    <p className="font-semibold text-gray-800">
+                      {savedSupplierName}
+                    </p>
+                  </div>
+
+                  {/* الحساب */}
+
+                  <div className="bg-white border border-green-100 rounded-lg px-4 py-3">
+                    <p className="text-xs text-gray-400 mb-1">
+                      الحساب المحاسبي
+                    </p>
+
+                    {savedAccountCode ? (
+                      <p className="font-semibold text-gray-800">
+                        {savedAccountCode} - {savedSupplierName}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-red-500">
+                        لم يتم العثور على الحساب
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* رابط دفتر الأستاذ */}
+
+                {savedAccountCode && (
+                  <div className="mt-3">
+                    <Link
+                      href={`/accounting/ledger?account=${savedAccountCode}`}
+                      className="inline-flex items-center gap-2 text-sm text-green-700 hover:text-green-800 font-medium"
+                    >
+                      <FiBookOpen size={16} />
+                      فتح دفتر أستاذ المورد
+                    </Link>
+                  </div>
+                )}
+
+                {/* شجرة الحساب */}
+
+                <div className="mt-3 bg-green-100/60 rounded-lg p-3">
+                  <p className="text-xs font-semibold text-green-800 mb-2">
+                    موقع الحساب في شجرة الحسابات
+                  </p>
+
+                  <div className="text-sm text-gray-700 space-y-1">
+                    <p>
+                      <span className="font-semibold">2000</span> الالتزامات
+                    </p>
+
+                    <p className="mr-5">
+                      └── <span className="font-semibold">2001</span> الموردين
+                    </p>
+
+                    <p className="mr-10">
+                      └──{" "}
+                      <span className="font-semibold">
+                        {savedAccountCode || "----"}
+                      </span>{" "}
+                      {savedSupplierName}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -276,6 +387,7 @@ export default function NewSupplierPage() {
                       }}
                       placeholder="أدخل اسم المورد"
                       required
+                      autoFocus
                       className="w-full h-12 pr-10 pl-4 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none placeholder:text-gray-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
                     />
                   </div>
@@ -348,17 +460,24 @@ export default function NewSupplierPage() {
                     الرصيد الافتتاحي
                   </label>
 
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={balance}
-                    onChange={(event) => {
-                      setBalance(event.target.value);
-                      setIsSaved(false);
-                    }}
-                    className="w-full h-12 px-4 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                  />
+                  <div className="relative">
+                    <FiCreditCard
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                      size={18}
+                    />
+
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={balance}
+                      onChange={(event) => {
+                        setBalance(event.target.value);
+                        setIsSaved(false);
+                      }}
+                      className="w-full h-12 pr-10 pl-4 bg-white text-gray-900 border border-gray-300 rounded-lg outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                    />
+                  </div>
 
                   <p className="text-xs text-gray-400 mt-2">
                     المبلغ المستحق للمورد عند بداية التعامل.
@@ -367,10 +486,71 @@ export default function NewSupplierPage() {
               </div>
 
               {/* ==================================================
+                  الحساب المحاسبي
+              ================================================== */}
+
+              <div className="mt-6 bg-gray-50 border border-gray-200 rounded-xl p-5">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 shrink-0 rounded-lg bg-gray-200 text-gray-600 flex items-center justify-center">
+                    <FiFileText size={17} />
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-800">
+                      الحساب المحاسبي
+                    </h3>
+
+                    <p className="text-xs text-gray-500 mt-1 leading-6">
+                      سيتم إنشاء حساب مستقل للمورد تلقائيًا داخل شجرة الحسابات
+                      تحت حساب الموردين.
+                    </p>
+
+                    <div className="mt-3 text-sm text-gray-700 space-y-1">
+                      <p>
+                        <span className="font-semibold">2000</span> الالتزامات
+                      </p>
+
+                      <p className="mr-5">
+                        └── <span className="font-semibold">2001</span> الموردين
+                      </p>
+
+                      <p className="mr-10 text-amber-700">
+                        └── حساب المورد سيتم إنشاؤه تلقائيًا
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ==================================================
+                  الرصيد الافتتاحي محاسبيًا
+              ================================================== */}
+
+              <div className="mt-4 bg-blue-50 border border-blue-100 rounded-xl p-4">
+                <div className="flex gap-3">
+                  <div className="w-8 h-8 shrink-0 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                    <FiCreditCard size={16} />
+                  </div>
+
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-800">
+                      معالجة الرصيد الافتتاحي
+                    </h3>
+
+                    <p className="text-[11px] sm:text-xs text-gray-600 leading-6 mt-1">
+                      إذا أدخلت رصيدًا افتتاحيًا، فسيتم تسجيله محاسبيًا على حساب
+                      المورد باعتباره التزامًا مستحقًا، بحيث يظهر لاحقًا في دفتر
+                      الأستاذ والتقارير المحاسبية.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* ==================================================
                   ملاحظة
               ================================================== */}
 
-              <div className="mt-6 bg-amber-50 border border-amber-100 rounded-xl p-4">
+              <div className="mt-4 bg-amber-50 border border-amber-100 rounded-xl p-4">
                 <div className="flex gap-3">
                   <div className="w-8 h-8 shrink-0 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
                     <FiTruck size={16} />
@@ -380,8 +560,9 @@ export default function NewSupplierPage() {
                     <h3 className="text-xs font-bold text-gray-800">تنبيه</h3>
 
                     <p className="text-[11px] sm:text-xs text-gray-600 leading-6 mt-1">
-                      بعد الضغط على حفظ المورد سيتم حفظ البيانات وتفريغ جميع
-                      الحقول تلقائيًا لتتمكن من إضافة مورد آخر.
+                      عند الضغط على حفظ المورد سيتم حفظ بياناته في Zustand
+                      وLocalStorage، وسيتم إنشاء حساب محاسبي مستقل له تلقائيًا
+                      تحت حساب الموردين.
                     </p>
                   </div>
                 </div>
@@ -394,12 +575,16 @@ export default function NewSupplierPage() {
 
             <div className="p-6 bg-gray-50 border-t border-gray-200">
               <div className="flex flex-col sm:flex-row justify-end gap-3">
+                {/* إلغاء */}
+
                 <Link
                   href="/suppliers"
                   className="inline-flex items-center justify-center px-6 py-3 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition"
                 >
                   إلغاء
                 </Link>
+
+                {/* إضافة مورد آخر */}
 
                 {isSaved && (
                   <button
@@ -411,6 +596,8 @@ export default function NewSupplierPage() {
                     إضافة مورد آخر
                   </button>
                 )}
+
+                {/* حفظ */}
 
                 <button
                   type="submit"
