@@ -4,11 +4,13 @@ import icon from "@/public/navicon2.png";
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { FiTrash2, FiBell } from "react-icons/fi";
 import { useERPStore } from "@/Store/erpStore";
 
 export default function TopNave() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const pathname = usePathname();
 
   const clearStore = useERPStore((state) => state.clearStore);
 
@@ -20,9 +22,15 @@ export default function TopNave() {
     { name: "المخزون", path: "/inventory" },
     { name: "العملاء", path: "/customers" },
     { name: "الموردين", path: "/suppliers" },
-    { name: "القيود", path: "/accounting" },
-    { name: "التقارير", path: "/reports" },
   ];
+
+  const isActive = (path: string) => {
+    if (path === "/") {
+      return pathname === "/";
+    }
+
+    return pathname === path || pathname.startsWith(`${path}/`);
+  };
 
   const handleClearStorage = () => {
     const confirmed = window.confirm(
@@ -32,7 +40,6 @@ export default function TopNave() {
     if (!confirmed) return;
 
     clearStore();
-
     setMenuOpen(false);
 
     alert("تم مسح جميع بيانات النظام بنجاح");
@@ -45,7 +52,6 @@ export default function TopNave() {
       ===================================================== */}
       <div className="lg:hidden fixed top-0 right-0 left-0 z-50 h-14 bg-[#0E1F33] border-b border-gray-700 shadow-md">
         <div className="h-full px-3 flex items-center justify-between">
-          {/* Logo */}
           <Link href="/" onClick={() => setMenuOpen(false)}>
             <Image
               src={icon}
@@ -57,7 +63,6 @@ export default function TopNave() {
             />
           </Link>
 
-          {/* Mobile Menu Button */}
           <button
             type="button"
             onClick={() => setMenuOpen(!menuOpen)}
@@ -123,9 +128,7 @@ export default function TopNave() {
           shadow-xl
           flex flex-col
           transition-transform duration-300 ease-in-out
-
           lg:translate-x-0
-
           ${menuOpen ? "translate-x-0" : "translate-x-full"}
         `}
       >
@@ -154,46 +157,72 @@ export default function TopNave() {
           </p>
 
           <div className="space-y-0.5">
-            {links.map((link) => (
-              <Link
-                key={link.path}
-                href={link.path}
-                onClick={() => setMenuOpen(false)}
-                className="
-                  flex items-center
-                  gap-2.5
-                  px-3 py-2
-                  rounded-lg
-                  text-[12px]
-                  font-medium
-                  text-gray-300
-                  hover:bg-blue-950
-                  hover:text-white
-                  transition-all
-                  duration-200
-                  group
-                "
-              >
-                {/* Icon */}
-                <span
-                  className="
-                    w-8 h-8
-                    shrink-0
-                    rounded-lg
-                    bg-gray-700/50
-                    group-hover:bg-white/20
-                    flex items-center
-                    justify-center
-                    transition
-                  "
-                >
-                  {getIcon(link.path)}
-                </span>
+            {links.map((link) => {
+              const active = isActive(link.path);
 
-                {/* Link Name */}
-                <span className="truncate">{link.name}</span>
-              </Link>
-            ))}
+              return (
+                <Link
+                  key={link.path}
+                  href={link.path}
+                  onClick={() => setMenuOpen(false)}
+                  className={`
+                    relative
+                    flex items-center
+                    gap-2.5
+                    px-3 py-2
+                    rounded-lg
+                    text-[12px]
+                    font-medium
+                    transition-all
+                    duration-200
+                    group
+                    ${
+                      active
+                        ? "bg-blue-600 text-white shadow-md"
+                        : "text-gray-300 hover:bg-blue-950 hover:text-white"
+                    }
+                  `}
+                >
+                  {/* Active Indicator */}
+                  {active && (
+                    <span
+                      className="
+                        absolute
+                        right-0
+                        top-1/2
+                        -translate-y-1/2
+                        w-1
+                        h-7
+                        rounded-l-full
+                        bg-white
+                      "
+                    />
+                  )}
+
+                  {/* Icon */}
+                  <span
+                    className={`
+                      w-8 h-8
+                      shrink-0
+                      rounded-lg
+                      flex items-center
+                      justify-center
+                      transition
+                      ${
+                        active
+                          ? "bg-white/20 text-white"
+                          : "bg-gray-700/50 group-hover:bg-white/20"
+                      }
+                    `}
+                  >
+                    {getIcon(link.path)}
+                  </span>
+
+                  {/* Name */}
+                  <span className="truncate">{link.name}</span>
+                </Link>
+              );
+            })}
           </div>
         </nav>
 
@@ -247,7 +276,7 @@ export default function TopNave() {
             <span className="text-[12px]">الإشعارات</span>
           </button>
 
-          {/* Clear LocalStorage */}
+          {/* Clear Store */}
           <button
             type="button"
             onClick={handleClearStorage}
@@ -326,7 +355,6 @@ function getIcon(path: string) {
   const iconClass = "w-4 h-4";
 
   switch (path) {
-    /* ================= HOME ================= */
     case "/":
       return (
         <svg
@@ -344,7 +372,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= DASHBOARD ================= */
     case "/dashboard":
       return (
         <svg
@@ -362,7 +389,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= SALES ================= */
     case "/sales":
       return (
         <svg
@@ -380,7 +406,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= PURCHASES ================= */
     case "/purchases":
       return (
         <svg
@@ -398,7 +423,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= INVENTORY ================= */
     case "/inventory":
       return (
         <svg
@@ -416,7 +440,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= CUSTOMERS ================= */
     case "/customers":
       return (
         <svg
@@ -434,7 +457,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= SUPPLIERS ================= */
     case "/suppliers":
       return (
         <svg
@@ -452,7 +474,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= ACCOUNTING ================= */
     case "/accounting":
       return (
         <svg
@@ -470,7 +491,6 @@ function getIcon(path: string) {
         </svg>
       );
 
-    /* ================= REPORTS ================= */
     case "/reports":
       return (
         <svg

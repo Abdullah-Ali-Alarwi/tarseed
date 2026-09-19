@@ -13,15 +13,13 @@ import {
   FiTrash2,
   FiEye,
 } from "react-icons/fi";
+import { toast } from "sonner";
 import { useERPStore } from "@/Store/erpStore";
 
 export default function ProductsPage() {
   const products = useERPStore((state) => state.products);
-
   const purchases = useERPStore((state) => state.purchases);
-
   const sales = useERPStore((state) => state.sales);
-
   const deleteProduct = useERPStore((state) => state.deleteProduct);
 
   const [search, setSearch] = useState("");
@@ -39,12 +37,12 @@ export default function ProductsPage() {
 
   /* =====================================================
      INVENTORY DATA
-     
+
      الكمية الحالية =
      إجمالي المشتريات - إجمالي المبيعات
 
-     سعر الوحدة =
-     متوسط سعر الشراء
+     متوسط سعر الشراء =
+     إجمالي قيمة المشتريات ÷ إجمالي كمية المشتريات
   ===================================================== */
 
   const inventoryProducts = useMemo(() => {
@@ -55,64 +53,67 @@ export default function ProductsPage() {
       let totalPurchaseValue = 0;
       let totalPurchaseQuantity = 0;
 
-      /* -----------------------------------------------
-         المشتريات
-      ----------------------------------------------- */
+      /* =================================================
+         PURCHASES
+      ================================================= */
 
       purchases.forEach((purchase) => {
         purchase.items.forEach((item) => {
-          if (item.productId === product.id) {
-            const quantity = getNumericAmount(item.quantity);
-
-            const price = getNumericAmount(item.price);
-
-            purchasedQuantity += quantity;
-
-            totalPurchaseQuantity += quantity;
-
-            totalPurchaseValue += quantity * price;
+          if (item.productId !== product.id) {
+            return;
           }
+
+          const quantity = getNumericAmount(item.quantity);
+          const price = getNumericAmount(item.price);
+
+          purchasedQuantity += quantity;
+          totalPurchaseQuantity += quantity;
+          totalPurchaseValue += quantity * price;
         });
       });
 
-      /* -----------------------------------------------
-         المبيعات
-      ----------------------------------------------- */
+      /* =================================================
+         SALES
+      ================================================= */
 
       sales.forEach((sale) => {
         sale.items.forEach((item) => {
-          if (item.productId === product.id) {
-            soldQuantity += getNumericAmount(item.quantity);
+          if (item.productId !== product.id) {
+            return;
           }
+
+          soldQuantity += getNumericAmount(item.quantity);
         });
       });
 
-      /* -----------------------------------------------
-         الكمية الحالية
-      ----------------------------------------------- */
+      /* =================================================
+         CURRENT STOCK
+      ================================================= */
 
       const stock = Math.max(purchasedQuantity - soldQuantity, 0);
 
-      /* -----------------------------------------------
-         متوسط سعر الشراء
-      ----------------------------------------------- */
+      /* =================================================
+         AVERAGE PURCHASE PRICE
+      ================================================= */
 
       const averagePurchasePrice =
         totalPurchaseQuantity > 0
           ? totalPurchaseValue / totalPurchaseQuantity
           : 0;
 
-      /* -----------------------------------------------
-         قيمة المخزون
-      ----------------------------------------------- */
+      /* =================================================
+         INVENTORY VALUE
+      ================================================= */
 
       const inventoryValue = stock * averagePurchasePrice;
 
       return {
         ...product,
         stock,
-        price: averagePurchasePrice,
+        averagePurchasePrice,
         inventoryValue,
+        purchasedQuantity,
+        soldQuantity,
       };
     });
   }, [products, purchases, sales]);
@@ -188,7 +189,7 @@ export default function ProductsPage() {
   };
 
   /* =====================================================
-     DELETE
+     DELETE PRODUCT
   ===================================================== */
 
   const handleDelete = (id: string, name: string) => {
@@ -198,7 +199,15 @@ export default function ProductsPage() {
       return;
     }
 
-    deleteProduct(id);
+    try {
+      deleteProduct(id);
+
+      toast.success(`تم حذف الصنف "${name}" بنجاح`);
+    } catch (error) {
+      console.error(error);
+
+      toast.error("حدث خطأ أثناء حذف الصنف");
+    }
   };
 
   return (
@@ -265,7 +274,9 @@ export default function ProductsPage() {
         ================================================= */}
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          {/* TOOLBAR */}
+          {/* =================================================
+              TOOLBAR
+          ================================================= */}
 
           <div className="p-5 border-b border-gray-100">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -294,7 +305,9 @@ export default function ProductsPage() {
             </div>
           </div>
 
-          {/* TABLE */}
+          {/* =================================================
+              TABLE
+          ================================================= */}
 
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1000px] text-right">
@@ -372,10 +385,10 @@ export default function ProductsPage() {
                           {product.unit}
                         </td>
 
-                        {/* PURCHASE PRICE */}
+                        {/* AVERAGE PURCHASE PRICE */}
 
                         <td className="px-6 py-4 text-sm font-semibold text-gray-700 whitespace-nowrap">
-                          {formatMoney(product.price)} ريال
+                          {formatMoney(product.averagePurchasePrice)} ريال
                         </td>
 
                         {/* STOCK */}

@@ -22,9 +22,7 @@ export default function InventoryPage() {
   ===================================================== */
 
   const products = useERPStore((state) => state.products);
-
   const purchases = useERPStore((state) => state.purchases);
-
   const sales = useERPStore((state) => state.sales);
 
   /* =====================================================
@@ -42,16 +40,18 @@ export default function InventoryPage() {
      CATEGORY
   ===================================================== */
 
-  const getCategory = (code: string) => {
-    if (code.startsWith("100")) {
+  const getCategory = (code: number | string) => {
+    const codeString = String(code);
+
+    if (codeString.startsWith("100")) {
       return "العسل";
     }
 
-    if (code.startsWith("200")) {
+    if (codeString.startsWith("200")) {
       return "الزيوت";
     }
 
-    if (code.startsWith("300")) {
+    if (codeString.startsWith("300")) {
       return "خدمات العمرة";
     }
 
@@ -68,19 +68,7 @@ export default function InventoryPage() {
 
   /* =====================================================
      INVENTORY DATA
-     
-     الكمية الحالية =
-     إجمالي المشتريات - إجمالي المبيعات
-
-     متوسط سعر الشراء =
-     إجمالي قيمة المشتريات ÷ إجمالي كمية المشتريات
-
-     قيمة المخزون =
-     الكمية الحالية × متوسط سعر الشراء
-
-     ملاحظة:
-     لا نضيف price أو stock إلى Product.
-     ===================================================== */
+  ===================================================== */
 
   const inventoryProducts = useMemo(() => {
     return products.map((product) => {
@@ -101,13 +89,10 @@ export default function InventoryPage() {
           }
 
           const quantity = getNumericAmount(item.quantity);
-
           const price = getNumericAmount(item.price);
 
           purchasedQuantity += quantity;
-
           purchaseQuantity += quantity;
-
           purchaseValue += quantity * price;
         });
       });
@@ -147,19 +132,12 @@ export default function InventoryPage() {
 
       return {
         ...product,
-
         quantity,
-
         averagePurchasePrice,
-
         total,
-
         category: getCategory(product.code),
-
         status: getStatus(quantity),
-
         purchasedQuantity,
-
         soldQuantity,
       };
     });
@@ -175,9 +153,9 @@ export default function InventoryPage() {
     return inventoryProducts.filter((product) => {
       const matchesSearch =
         !value ||
-        product.id.toLowerCase().includes(value) ||
-        product.code.toLowerCase().includes(value) ||
-        product.name.toLowerCase().includes(value);
+        String(product.id).toLowerCase().includes(value) ||
+        String(product.code).toLowerCase().includes(value) ||
+        String(product.name).toLowerCase().includes(value);
 
       const matchesCategory =
         category === "جميع التصنيفات" || product.category === category;
@@ -187,14 +165,10 @@ export default function InventoryPage() {
   }, [inventoryProducts, search, category]);
 
   /* =====================================================
-     TOTAL PRODUCTS
+     STATISTICS
   ===================================================== */
 
   const totalProducts = inventoryProducts.length;
-
-  /* =====================================================
-     TOTAL INVENTORY VALUE
-  ===================================================== */
 
   const totalInventoryValue = useMemo(() => {
     return inventoryProducts.reduce(
@@ -203,17 +177,9 @@ export default function InventoryPage() {
     );
   }, [inventoryProducts]);
 
-  /* =====================================================
-     LOW STOCK
-  ===================================================== */
-
   const lowStockProducts = useMemo(() => {
     return inventoryProducts.filter((product) => product.quantity <= 10).length;
   }, [inventoryProducts]);
-
-  /* =====================================================
-     TOTAL CATEGORIES
-  ===================================================== */
 
   const totalCategories = useMemo(() => {
     return new Set(inventoryProducts.map((product) => product.category)).size;
@@ -233,33 +199,33 @@ export default function InventoryPage() {
   }, [inventoryProducts]);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
+    <main className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-5" dir="rtl">
       {/* =====================================================
           HEADER
       ===================================================== */}
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">المخزون</h1>
+          <h1 className="text-xl font-bold text-gray-800">المخزون</h1>
 
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="mt-0.5 text-xs text-gray-500">
             إدارة الأصناف والكميات وحركة المخزون
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex gap-2">
           <Link
             href="/inventory/movements"
-            className="inline-flex items-center justify-center gap-2 border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-5 py-3 rounded-lg font-medium transition"
+            className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
           >
             حركة المخزون
           </Link>
 
           <Link
             href="/products/new"
-            className="inline-flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-lg font-medium transition"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-amber-700"
           >
-            <FiPlus size={20} />
+            <FiPlus size={15} />
             إضافة صنف
           </Link>
         </div>
@@ -269,7 +235,7 @@ export default function InventoryPage() {
           STATISTICS
       ===================================================== */}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+      <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatCard
           title="إجمالي الأصناف"
           value={formatMoney(totalProducts)}
@@ -301,33 +267,31 @@ export default function InventoryPage() {
       </div>
 
       {/* =====================================================
-          TABLE
+          TABLE CONTAINER
       ===================================================== */}
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
         {/* =====================================================
             TOOLBAR
         ===================================================== */}
 
-        <div className="p-5 border-b border-gray-100">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="border-b border-gray-100 p-3">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
             <div>
-              <h2 className="font-bold text-gray-800">الأصناف</h2>
+              <h2 className="text-sm font-bold text-gray-800">الأصناف</h2>
 
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="mt-0.5 text-[11px] text-gray-400">
                 عرض {filteredProducts.length} من {totalProducts} صنف
               </p>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-3">
-              {/* =================================================
-                  SEARCH
-              ================================================= */}
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {/* SEARCH */}
 
-              <div className="relative w-full md:w-72">
+              <div className="relative w-full sm:w-60">
                 <FiSearch
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  size={18}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                  size={15}
                 />
 
                 <input
@@ -335,18 +299,16 @@ export default function InventoryPage() {
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="البحث عن صنف..."
-                  className="w-full pr-10 pl-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-100 placeholder:text-gray-400"
+                  className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-8 text-xs text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-500 focus:ring-1 focus:ring-amber-100"
                 />
               </div>
 
-              {/* =================================================
-                  CATEGORY
-              ================================================= */}
+              {/* CATEGORY */}
 
               <select
                 value={category}
                 onChange={(event) => setCategory(event.target.value)}
-                className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-amber-500"
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 outline-none focus:border-amber-500"
               >
                 {categories.map((item) => (
                   <option key={item} value={item}>
@@ -359,42 +321,42 @@ export default function InventoryPage() {
         </div>
 
         {/* =====================================================
-            TABLE BODY
+            TABLE
         ===================================================== */}
 
         <div className="overflow-x-auto">
-          <table className="w-full text-right min-w-[1100px]">
+          <table className="w-full min-w-[950px] text-right text-xs">
             <thead className="bg-gray-50">
-              <tr className="text-sm text-gray-500">
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+              <tr className="text-[11px] text-gray-500">
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
                   كود الصنف
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
                   الصنف
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
                   التصنيف
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  الكمية الحالية
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
+                  الكمية
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
                   متوسط سعر الشراء
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
                   قيمة المخزون
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
                   الحالة
                 </th>
 
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
                   الإجراءات
                 </th>
               </tr>
@@ -403,10 +365,10 @@ export default function InventoryPage() {
             <tbody className="divide-y divide-gray-100">
               {filteredProducts.length > 0 ? (
                 filteredProducts.map((product) => (
-                  <tr key={product.id} className="hover:bg-gray-50 transition">
+                  <tr key={product.id} className="transition hover:bg-gray-50">
                     {/* CODE */}
 
-                    <td className="px-6 py-4">
+                    <td className="px-3 py-2.5">
                       <Link
                         href={`/inventory/${product.id}`}
                         className="font-semibold text-amber-600 hover:text-amber-700"
@@ -417,7 +379,7 @@ export default function InventoryPage() {
 
                     {/* NAME */}
 
-                    <td className="px-6 py-4">
+                    <td className="px-3 py-2.5">
                       <Link
                         href={`/inventory/${product.id}`}
                         className="font-semibold text-gray-700 hover:text-amber-600"
@@ -428,13 +390,13 @@ export default function InventoryPage() {
 
                     {/* CATEGORY */}
 
-                    <td className="px-6 py-4 text-sm text-gray-500">
+                    <td className="px-3 py-2.5 text-gray-500">
                       {product.category}
                     </td>
 
                     {/* QUANTITY */}
 
-                    <td className="px-6 py-4">
+                    <td className="px-3 py-2.5">
                       <span
                         className={`font-semibold ${
                           product.quantity <= 10
@@ -445,47 +407,49 @@ export default function InventoryPage() {
                         {product.quantity.toLocaleString("ar-SA")}
                       </span>
 
-                      <span className="text-xs text-gray-400 mr-1">
-                        {product.unit}
-                      </span>
+                      {product.unit && (
+                        <span className="mr-1 text-[10px] text-gray-400">
+                          {product.unit}
+                        </span>
+                      )}
                     </td>
 
                     {/* AVERAGE PURCHASE PRICE */}
 
-                    <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+                    <td className="whitespace-nowrap px-3 py-2.5 text-gray-600">
                       {formatMoney(product.averagePurchasePrice)} ريال
                     </td>
 
                     {/* INVENTORY VALUE */}
 
-                    <td className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">
+                    <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-gray-700">
                       {formatMoney(product.total)} ريال
                     </td>
 
                     {/* STATUS */}
 
-                    <td className="px-6 py-4">
+                    <td className="px-3 py-2.5">
                       <Status status={product.status} />
                     </td>
 
                     {/* ACTIONS */}
 
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1">
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-0.5">
                         <Link
                           href={`/inventory/${product.id}`}
-                          className="p-2 rounded-lg hover:bg-amber-50 text-gray-500 hover:text-amber-600 transition"
+                          className="rounded-md p-1.5 text-gray-400 transition hover:bg-amber-50 hover:text-amber-600"
                           title="تفاصيل المخزون"
                         >
-                          <FiPackage size={18} />
+                          <FiPackage size={15} />
                         </Link>
 
                         <button
                           type="button"
-                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition"
+                          className="rounded-md p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
                           title="المزيد"
                         >
-                          <FiMoreVertical size={18} />
+                          <FiMoreVertical size={15} />
                         </button>
                       </div>
                     </td>
@@ -495,7 +459,7 @@ export default function InventoryPage() {
                 <tr>
                   <td
                     colSpan={8}
-                    className="px-6 py-12 text-center text-gray-400"
+                    className="px-3 py-10 text-center text-xs text-gray-400"
                   >
                     لا توجد أصناف مطابقة للبحث أو التصنيف
                   </td>
@@ -509,23 +473,23 @@ export default function InventoryPage() {
             FOOTER
         ===================================================== */}
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 border-t border-gray-100">
-          <p className="text-sm text-gray-400">
+        <div className="flex flex-col justify-between gap-2 border-t border-gray-100 p-3 sm:flex-row sm:items-center">
+          <p className="text-[11px] text-gray-400">
             عرض {filteredProducts.length} من {totalProducts} صنف
           </p>
 
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             <button
               type="button"
               disabled
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-400 cursor-not-allowed"
+              className="rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] text-gray-400"
             >
               السابق
             </button>
 
             <button
               type="button"
-              className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm"
+              className="rounded-md bg-amber-600 px-2.5 py-1.5 text-[11px] text-white"
             >
               1
             </button>
@@ -533,7 +497,7 @@ export default function InventoryPage() {
             <button
               type="button"
               disabled
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-400 cursor-not-allowed"
+              className="rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] text-gray-400"
             >
               التالي
             </button>
@@ -562,24 +526,24 @@ function StatCard({
   warning?: boolean;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-500">{title}</p>
+    <div className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-[11px] text-gray-500">{title}</p>
 
-          <div className="flex items-end gap-2 mt-2">
-            <h2 className="text-2xl font-bold text-gray-800">{value}</h2>
+          <div className="mt-1 flex items-end gap-1.5">
+            <h2 className="text-lg font-bold text-gray-800">{value}</h2>
 
-            <span className="text-xs text-gray-400 mb-1">{subtitle}</span>
+            <span className="mb-0.5 text-[10px] text-gray-400">{subtitle}</span>
           </div>
         </div>
 
         <div
-          className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
             warning ? "bg-red-50 text-red-500" : "bg-amber-50 text-amber-600"
           }`}
         >
-          <Icon size={22} />
+          <Icon size={18} />
         </div>
       </div>
     </div>
@@ -593,13 +557,12 @@ function StatCard({
 function Status({ status }: { status: "متوفر" | "منخفض" }) {
   const styles = {
     متوفر: "bg-green-50 text-green-600",
-
     منخفض: "bg-red-50 text-red-600",
   };
 
   return (
     <span
-      className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${styles[status]}`}
+      className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium ${styles[status]}`}
     >
       {status}
     </span>

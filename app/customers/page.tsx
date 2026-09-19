@@ -10,37 +10,29 @@ import {
   FiCreditCard,
   FiAlertCircle,
   FiMoreVertical,
-  FiBookOpen,
+  FiEye,
+  FiEdit,
+  FiTrash2,
 } from "react-icons/fi";
 
+import { toast } from "sonner";
 import { useERPStore } from "@/Store/erpStore";
 
 export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("جميع العملاء");
 
-  /* =========================================================
-     ZUSTAND
-  ========================================================= */
+  // =========================================================
+  // ZUSTAND
+  // =========================================================
 
   const customers = useERPStore((state) => state.customers);
-  const accounts = useERPStore((state) => state.accounts);
-  const journalEntries = useERPStore((state) => state.journalEntries);
+  const sales = useERPStore((state) => state.sales);
+  const deleteCustomer = useERPStore((state) => state.deleteCustomer);
 
-  /* =========================================================
-     FORMAT MONEY
-  ========================================================= */
-
-  const formatMoney = (amount: number) => {
-    return Number(amount || 0).toLocaleString("ar-SA", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
-  };
-
-  /* =========================================================
-     تحويل أي قيمة إلى رقم
-  ========================================================= */
+  // =========================================================
+  // تحويل أي قيمة إلى رقم
+  // =========================================================
 
   const getNumericAmount = (value: unknown): number => {
     if (typeof value === "number") {
@@ -54,135 +46,86 @@ export default function CustomersPage() {
     return 0;
   };
 
-  /* =========================================================
-     حساب رصيد الحساب من القيود المحاسبية
+  // =========================================================
+  // تنسيق المبلغ
+  // =========================================================
 
-     الأصول:
-       الرصيد = المدين - الدائن
-
-     العملاء من حسابات الأصول
-  ========================================================= */
-
-  const getAccountBalance = (accountCode: string) => {
-    const account = accounts.find((item) => item.code === accountCode);
-
-    if (!account) {
-      return 0;
-    }
-
-    let debit = 0;
-    let credit = 0;
-
-    journalEntries.forEach((entry) => {
-      /*
-       * نعتمد فقط على القيود المرحلة.
-       */
-      if (entry.status !== "posted") {
-        return;
-      }
-
-      entry.lines.forEach((line) => {
-        if (line.accountCode !== accountCode) {
-          return;
-        }
-
-        debit += getNumericAmount(line.debit);
-        credit += getNumericAmount(line.credit);
-      });
+  const formatMoney = (amount: number) => {
+    return Number(amount || 0).toLocaleString("ar-SA", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
     });
-
-    /*
-     * حسابات الأصول:
-     * المدين - الدائن
-     */
-    if (account.type === "asset") {
-      return debit - credit;
-    }
-
-    /*
-     * الحسابات الأخرى:
-     * الدائن - المدين
-     */
-    return credit - debit;
   };
 
-  /* =========================================================
-     ربط العميل بحسابه المحاسبي
+  // =========================================================
+  // إجمالي مبيعات العميل
+  // =========================================================
 
-     في حال وجود accountCode في العميل نستخدمه مباشرة.
-
-     وإذا كانت بيانات قديمة بدون accountCode:
-     نحاول البحث عن حساب باسم العميل تحت حساب العملاء 1001.
-  ========================================================= */
-
-  const getCustomerAccount = (customer: {
-    id: string;
-    name: string;
-    accountCode?: string;
-    accountName?: string;
-  }) => {
-    if (customer.accountCode) {
-      const account = accounts.find(
-        (item) => item.code === customer.accountCode,
-      );
-
-      if (account) {
-        return account;
-      }
-    }
-
-    /*
-     * البحث عن حساب العميل بالاسم
-     * ويجب أن يكون الحساب تحت 1001 العملاء.
-     */
-    const account = accounts.find(
-      (item) =>
-        item.parent === "1001" && item.name.trim() === customer.name.trim(),
-    );
-
-    return account;
+  const getCustomerSales = (customerId: string) => {
+    return sales
+      .filter((sale) => sale.customerId === customerId)
+      .reduce((total, sale) => total + getNumericAmount(sale.total), 0);
   };
 
-  /* =========================================================
-     بيانات العملاء المحاسبية
-  ========================================================= */
+  // =========================================================
+  // إجمالي المبيعات المدفوعة للعميل
+  // =========================================================
 
-  const customerRows = useMemo(() => {
-    return customers.map((customer) => {
-      const account = getCustomerAccount(customer);
+  const getCustomerPaid = (customerId: string) => {
+    return sales
+      .filter(
+        (sale) =>
+          sale.customerId === customerId && sale.paymentMethod !== "credit",
+      )
+      .reduce((total, sale) => total + getNumericAmount(sale.total), 0);
+  };
 
-      /*
-       * إذا كان هناك حساب محاسبي للعميل:
-       * نأخذ الرصيد من دفتر الأستاذ.
-       *
-       * إذا لم يوجد حساب بعد:
-       * نستخدم balance القديم كقيمة احتياطية.
-       */
-      const ledgerBalance = account
-        ? getAccountBalance(account.code)
-        : getNumericAmount(customer.balance);
+  // =========================================================
+  // إجمالي المبيعات الآجلة
+  // =========================================================
 
-      return {
-        ...customer,
-        accountCode: account?.code || customer.accountCode || "-",
+  const getCustomerCreditSales = (customerId: string) => {
+    return sales
+      .filter(
+        (sale) =>
+          sale.customerId === customerId && sale.paymentMethod === "credit",
+      )
+      .reduce((total, sale) => total + getNumericAmount(sale.total), 0);
+  };
 
-        accountName: account?.name || customer.accountName || customer.name,
+  // =========================================================
+  // الرصيد المستحق للعميل
+  //
+  // balance الموجود في العميل
+  // + الفواتير الآجلة
+  // =========================================================
 
-        balance: ledgerBalance,
+  const getCustomerDue = (customer: (typeof customers)[number]) => {
+    const balance = getNumericAmount(customer.balance);
 
-        hasAccount: Boolean(account),
-      };
-    });
-  }, [customers, accounts, journalEntries]);
+    const creditSales = getCustomerCreditSales(customer.id);
 
-  /* =========================================================
-     العملاء بعد البحث والتصفية
-  ========================================================= */
+    return Math.max(0, balance + creditSales);
+  };
+
+  // =========================================================
+  // حالة العميل
+  // =========================================================
+
+  const getCustomerStatus = (customer: (typeof customers)[number]) => {
+    const due = getCustomerDue(customer);
+
+    return due > 0 ? "متأخر" : "نشط";
+  };
+
+  // =========================================================
+  // العملاء بعد البحث والتصفية
+  // =========================================================
 
   const filteredCustomers = useMemo(() => {
     const value = search.trim().toLowerCase();
 
-    return customerRows.filter((customer) => {
+    return customers.filter((customer) => {
       const matchesSearch =
         !value ||
         String(customer.id ?? "")
@@ -196,82 +139,113 @@ export default function CustomersPage() {
           .includes(value) ||
         String(customer.address ?? "")
           .toLowerCase()
-          .includes(value) ||
-        String(customer.accountCode ?? "")
-          .toLowerCase()
-          .includes(value) ||
-        String(customer.accountName ?? "")
-          .toLowerCase()
           .includes(value);
 
-      const status = getCustomerStatus(getNumericAmount(customer.balance));
+      const status = getCustomerStatus(customer);
 
       const matchesStatus =
         statusFilter === "جميع العملاء" || status === statusFilter;
 
       return matchesSearch && matchesStatus;
     });
-  }, [customerRows, search, statusFilter]);
+  }, [customers, sales, search, statusFilter]);
 
-  /* =========================================================
-     الإحصائيات
-  ========================================================= */
+  // =========================================================
+  // الإحصائيات
+  // =========================================================
 
-  const totalCustomers = customerRows.length;
+  const statistics = useMemo(() => {
+    const totalCustomers = customers.length;
 
-  /* =========================================================
-     إجمالي أرصدة العملاء
-  ========================================================= */
-
-  const totalReceivables = useMemo(() => {
-    return customerRows.reduce(
-      (total, customer) =>
-        total + Math.max(getNumericAmount(customer.balance), 0),
+    const totalSales = sales.reduce(
+      (total, sale) => total + getNumericAmount(sale.total),
       0,
     );
-  }, [customerRows]);
 
-  /* =========================================================
-     المبالغ المحصلة
+    const totalCollected = sales
+      .filter((sale) => sale.paymentMethod !== "credit")
+      .reduce((total, sale) => total + getNumericAmount(sale.total), 0);
 
-     لا يوجد حتى الآن نظام سندات قبض مستقل.
-  ========================================================= */
+    const totalDue = customers.reduce(
+      (total, customer) => total + getCustomerDue(customer),
+      0,
+    );
 
-  const totalCollected = 0;
+    const activeCustomers = customers.filter(
+      (customer) => getCustomerStatus(customer) === "نشط",
+    ).length;
 
-  /* =========================================================
-     المبالغ المستحقة
-  ========================================================= */
+    const overdueCustomers = customers.filter(
+      (customer) => getCustomerStatus(customer) === "متأخر",
+    ).length;
 
-  const totalDue = totalReceivables;
+    return {
+      totalCustomers,
+      totalSales,
+      totalCollected,
+      totalDue,
+      activeCustomers,
+      overdueCustomers,
+    };
+  }, [customers, sales]);
 
-  /* =========================================================
-     عدد العملاء المرتبطين بحسابات محاسبية
-  ========================================================= */
+  // =========================================================
+  // حذف العميل
+  // =========================================================
 
-  const linkedCustomers = useMemo(() => {
-    return customerRows.filter((customer) => customer.hasAccount).length;
-  }, [customerRows]);
+  const handleDelete = (customerId: string, customerName: string) => {
+    const customerSales = sales.filter(
+      (sale) => sale.customerId === customerId,
+    );
+
+    // منع حذف العميل إذا كانت له فواتير
+    if (customerSales.length > 0) {
+      toast.error("لا يمكن حذف العميل", {
+        description:
+          "يوجد فواتير مبيعات مرتبطة بهذا العميل. احذف أو عدّل الفواتير المرتبطة أولاً.",
+      });
+
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `هل أنت متأكد من حذف العميل "${customerName}"؟\n\nسيتم حذف العميل نهائياً من النظام.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    deleteCustomer(customerId);
+
+    toast.success("تم حذف العميل بنجاح", {
+      description: `تم حذف العميل ${customerName}`,
+    });
+  };
+
+  // =========================================================
+  // RENDER
+  // =========================================================
 
   return (
     <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
-      <div className="max-w-7xl mx-auto">
+      <div className="mx-auto max-w-7xl">
         {/* =====================================================
             HEADER
         ===================================================== */}
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
             <h1 className="text-2xl font-bold text-gray-800">العملاء</h1>
 
-            <p className="text-sm text-gray-500 mt-1">
-              إدارة بيانات العملاء وحساباتهم وأرصدة المديونية
+            <p className="mt-1 text-sm text-gray-500">
+              إدارة بيانات العملاء والمبيعات والأرصدة المستحقة
             </p>
           </div>
 
           <Link
             href="/customers/new"
-            className="inline-flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-lg font-medium transition"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-5 py-3 font-medium text-white transition hover:bg-amber-700"
           >
             <FiPlus size={20} />
             إضافة عميل
@@ -282,31 +256,31 @@ export default function CustomersPage() {
             STATISTICS
         ===================================================== */}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+        <div className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             title="إجمالي العملاء"
-            value={totalCustomers.toLocaleString("ar-SA")}
+            value={statistics.totalCustomers.toLocaleString("ar-SA")}
             subtitle="عميل"
             icon={FiUsers}
           />
 
           <StatCard
-            title="إجمالي الأرصدة"
-            value={formatMoney(totalReceivables)}
+            title="إجمالي المبيعات"
+            value={formatMoney(statistics.totalSales)}
             subtitle="ريال"
             icon={FiDollarSign}
           />
 
           <StatCard
             title="المبالغ المحصلة"
-            value={formatMoney(totalCollected)}
+            value={formatMoney(statistics.totalCollected)}
             subtitle="ريال"
             icon={FiCreditCard}
           />
 
           <StatCard
             title="المبالغ المستحقة"
-            value={formatMoney(totalDue)}
+            value={formatMoney(statistics.totalDue)}
             subtitle="ريال"
             icon={FiAlertCircle}
             warning
@@ -314,49 +288,61 @@ export default function CustomersPage() {
         </div>
 
         {/* =====================================================
-            ACCOUNTING SUMMARY
+            CUSTOMER STATUS SUMMARY
         ===================================================== */}
 
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-8">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* جميع العملاء */}
+
+          <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                <FiBookOpen size={21} />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                <FiUsers size={20} />
               </div>
 
               <div>
-                <h2 className="font-bold text-gray-800">الربط المحاسبي</h2>
+                <p className="text-xs text-gray-500">إجمالي العملاء</p>
 
-                <p className="text-xs text-gray-400 mt-1">
-                  حسابات العملاء تحت حساب الأصول ← العملاء
+                <p className="mt-1 font-bold text-gray-800">
+                  {statistics.totalCustomers} عميل
                 </p>
               </div>
             </div>
+          </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">الحساب الرئيسي:</span>
+          {/* العملاء النشطين */}
 
-              <span className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-sm font-bold">
-                1001 - العملاء
-              </span>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-600">
+                <FiUsers size={20} />
+              </div>
+
+              <div>
+                <p className="text-xs text-gray-500">العملاء النشطين</p>
+
+                <p className="mt-1 font-bold text-green-600">
+                  {statistics.activeCustomers} عميل
+                </p>
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-xs text-gray-500">العملاء المرتبطون بحسابات</p>
+          {/* العملاء المتأخرين */}
 
-              <p className="text-xl font-bold text-gray-800 mt-1">
-                {linkedCustomers.toLocaleString("ar-SA")}
-              </p>
-            </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 text-red-500">
+                <FiAlertCircle size={20} />
+              </div>
 
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-xs text-gray-500">العملاء بدون حساب محاسبي</p>
+              <div>
+                <p className="text-xs text-gray-500">عملاء لديهم مستحقات</p>
 
-              <p className="text-xl font-bold text-gray-800 mt-1">
-                {(totalCustomers - linkedCustomers).toLocaleString("ar-SA")}
-              </p>
+                <p className="mt-1 font-bold text-red-500">
+                  {statistics.overdueCustomers} عميل
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -365,20 +351,21 @@ export default function CustomersPage() {
             CUSTOMERS TABLE
         ===================================================== */}
 
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
           {/* TOOLBAR */}
 
-          <div className="p-5 border-b border-gray-100">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="border-b border-gray-100 p-5">
+            <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
               <div>
                 <h2 className="font-bold text-gray-800">قائمة العملاء</h2>
 
-                <p className="text-xs text-gray-400 mt-1">
-                  عرض {filteredCustomers.length} من {totalCustomers} عميل
+                <p className="mt-1 text-xs text-gray-400">
+                  عرض {filteredCustomers.length} من {statistics.totalCustomers}{" "}
+                  عميل
                 </p>
               </div>
 
-              <div className="flex flex-col md:flex-row gap-3">
+              <div className="flex flex-col gap-3 md:flex-row">
                 {/* SEARCH */}
 
                 <div className="relative w-full md:w-80">
@@ -391,8 +378,8 @@ export default function CustomersPage() {
                     type="text"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
-                    placeholder="البحث بالاسم أو الكود أو الحساب..."
-                    className="w-full pr-10 pl-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-100 placeholder:text-gray-400"
+                    placeholder="البحث بالاسم أو الكود أو الهاتف..."
+                    className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pr-10 pl-4 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-500 focus:ring-1 focus:ring-amber-100"
                   />
                 </div>
 
@@ -401,7 +388,7 @@ export default function CustomersPage() {
                 <select
                   value={statusFilter}
                   onChange={(event) => setStatusFilter(event.target.value)}
-                  className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-amber-500"
+                  className="rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 outline-none focus:border-amber-500"
                 >
                   <option value="جميع العملاء">جميع العملاء</option>
 
@@ -416,38 +403,42 @@ export default function CustomersPage() {
           {/* TABLE */}
 
           <div className="overflow-x-auto">
-            <table className="w-full text-right min-w-[1050px]">
+            <table className="w-full min-w-[1050px] text-right">
               <thead className="bg-gray-50">
                 <tr className="text-sm text-gray-500">
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
                     كود العميل
                   </th>
 
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
                     اسم العميل
                   </th>
 
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
-                    الحساب المحاسبي
-                  </th>
-
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
                     رقم الهاتف
                   </th>
 
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
                     العنوان
                   </th>
 
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
+                    إجمالي المبيعات
+                  </th>
+
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
+                    المدفوع
+                  </th>
+
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
                     الرصيد المستحق
                   </th>
 
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
                     الحالة
                   </th>
 
-                  <th className="px-6 py-4 font-medium whitespace-nowrap">
+                  <th className="whitespace-nowrap px-6 py-4 font-medium">
                     الإجراءات
                   </th>
                 </tr>
@@ -456,14 +447,18 @@ export default function CustomersPage() {
               <tbody className="divide-y divide-gray-100">
                 {filteredCustomers.length > 0 ? (
                   filteredCustomers.map((customer) => {
-                    const balance = getNumericAmount(customer.balance);
+                    const customerSales = getCustomerSales(customer.id);
 
-                    const status = getCustomerStatus(balance);
+                    const customerPaid = getCustomerPaid(customer.id);
+
+                    const customerDue = getCustomerDue(customer);
+
+                    const status = getCustomerStatus(customer);
 
                     return (
                       <tr
                         key={customer.id}
-                        className="hover:bg-gray-50 transition"
+                        className="transition hover:bg-gray-50"
                       >
                         {/* CUSTOMER CODE */}
 
@@ -487,51 +482,56 @@ export default function CustomersPage() {
                           </Link>
                         </td>
 
-                        {/* ACCOUNT */}
-
-                        <td className="px-6 py-4">
-                          {customer.hasAccount ? (
-                            <Link
-                              href={`/accounting/ledger?account=${encodeURIComponent(
-                                customer.accountCode,
-                              )}`}
-                              className="inline-flex flex-col hover:bg-blue-50 rounded-lg px-2 py-1 transition"
-                            >
-                              <span className="font-bold text-blue-600 text-sm">
-                                {customer.accountCode}
-                              </span>
-
-                              <span className="text-xs text-gray-500">
-                                {customer.accountName}
-                              </span>
-                            </Link>
-                          ) : (
-                            <span className="inline-flex px-2.5 py-1 rounded-lg bg-red-50 text-red-600 text-xs font-medium">
-                              غير مرتبط
-                            </span>
-                          )}
-                        </td>
-
                         {/* PHONE */}
 
-                        <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
+                        <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                           {customer.phone || "-"}
                         </td>
 
                         {/* ADDRESS */}
 
-                        <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-                          {customer.address || "-"}
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                          <span className="block max-w-[220px] truncate">
+                            {customer.address || "-"}
+                          </span>
                         </td>
 
-                        {/* BALANCE */}
+                        {/* SALES */}
 
-                        <td className="px-6 py-4">
+                        <td className="whitespace-nowrap px-6 py-4">
                           <span className="font-semibold text-gray-700">
-                            {formatMoney(balance)}
+                            {formatMoney(customerSales)}
                           </span>
 
-                          <span className="text-xs text-gray-400 mr-1">
+                          <span className="mr-1 text-xs text-gray-400">
+                            ريال
+                          </span>
+                        </td>
+
+                        {/* PAID */}
+
+                        <td className="whitespace-nowrap px-6 py-4">
+                          <span className="font-semibold text-green-600">
+                            {formatMoney(customerPaid)}
+                          </span>
+
+                          <span className="mr-1 text-xs text-gray-400">
+                            ريال
+                          </span>
+                        </td>
+
+                        {/* DUE */}
+
+                        <td className="whitespace-nowrap px-6 py-4">
+                          <span
+                            className={`font-semibold ${
+                              customerDue > 0 ? "text-red-600" : "text-gray-700"
+                            }`}
+                          >
+                            {formatMoney(customerDue)}
+                          </span>
+
+                          <span className="mr-1 text-xs text-gray-400">
                             ريال
                           </span>
                         </td>
@@ -545,24 +545,80 @@ export default function CustomersPage() {
                         {/* ACTIONS */}
 
                         <td className="px-6 py-4">
-                          <button
-                            type="button"
-                            className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition"
-                            title="المزيد"
-                          >
-                            <FiMoreVertical size={18} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            {/* عرض */}
+
+                            <Link
+                              href={`/customers/${customer.id}`}
+                              title="عرض العميل"
+                              className="rounded-lg p-2 text-gray-500 transition hover:bg-green-50 hover:text-green-600"
+                            >
+                              <FiEye size={18} />
+                            </Link>
+
+                            {/* تعديل */}
+
+                            <Link
+                              href={`/customers/${customer.id}/edit`}
+                              title="تعديل العميل"
+                              className="rounded-lg p-2 text-gray-500 transition hover:bg-blue-50 hover:text-blue-600"
+                            >
+                              <FiEdit size={18} />
+                            </Link>
+
+                            {/* حذف */}
+
+                            <button
+                              type="button"
+                              title="حذف العميل"
+                              onClick={() =>
+                                handleDelete(customer.id, customer.name)
+                              }
+                              className="rounded-lg p-2 text-gray-500 transition hover:bg-red-50 hover:text-red-600"
+                            >
+                              <FiTrash2 size={18} />
+                            </button>
+
+                            {/* المزيد */}
+
+                            <Link
+                              href={`/customers/${customer.id}`}
+                              title="المزيد"
+                              className="rounded-lg p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
+                            >
+                              <FiMoreVertical size={18} />
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     );
                   })
                 ) : (
                   <tr>
-                    <td
-                      colSpan={8}
-                      className="px-6 py-12 text-center text-gray-400"
-                    >
-                      لا توجد بيانات عملاء مطابقة للبحث
+                    <td colSpan={9} className="px-6 py-12 text-center">
+                      <div className="flex flex-col items-center justify-center">
+                        <FiUsers size={40} className="mb-3 text-gray-300" />
+
+                        <p className="font-medium text-gray-500">
+                          لا توجد نتائج
+                        </p>
+
+                        <p className="mt-1 text-sm text-gray-400">
+                          {customers.length === 0
+                            ? "لا توجد بيانات عملاء حاليًا"
+                            : "لم يتم العثور على عميل مطابق للبحث"}
+                        </p>
+
+                        {search && (
+                          <button
+                            type="button"
+                            onClick={() => setSearch("")}
+                            className="mt-4 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700"
+                          >
+                            إظهار جميع العملاء
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -570,39 +626,20 @@ export default function CustomersPage() {
             </table>
           </div>
 
-          {/* =====================================================
-              FOOTER
-          ===================================================== */}
+          {/* FOOTER */}
 
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 border-t border-gray-100">
+          <div className="flex flex-col justify-between gap-4 border-t border-gray-100 p-5 md:flex-row md:items-center">
             <p className="text-sm text-gray-400">
-              عرض {filteredCustomers.length} من {totalCustomers} عميل
+              عرض{" "}
+              <span className="font-semibold text-gray-600">
+                {filteredCustomers.length}
+              </span>{" "}
+              من أصل{" "}
+              <span className="font-semibold text-gray-600">
+                {statistics.totalCustomers}
+              </span>{" "}
+              عميل
             </p>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-400 cursor-not-allowed"
-              >
-                السابق
-              </button>
-
-              <button
-                type="button"
-                className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm"
-              >
-                1
-              </button>
-
-              <button
-                type="button"
-                disabled
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-400 cursor-not-allowed"
-              >
-                التالي
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -610,21 +647,19 @@ export default function CustomersPage() {
   );
 }
 
-/* =========================================================
-   CUSTOMER STATUS
-========================================================= */
+// =========================================================
+// CUSTOMER STATUS
+// =========================================================
 
-function getCustomerStatus(balance: number) {
-  if (balance > 0) {
-    return "متأخر";
-  }
+function getCustomerStatus(customer: { balance?: number }) {
+  const balance = Number(customer.balance || 0);
 
-  return "نشط";
+  return balance > 0 ? "متأخر" : "نشط";
 }
 
-/* =========================================================
-   STATISTICS CARD
-========================================================= */
+// =========================================================
+// STATISTICS CARD
+// =========================================================
 
 function StatCard({
   title,
@@ -640,20 +675,20 @@ function StatCard({
   warning?: boolean;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-gray-500">{title}</p>
 
-          <div className="flex items-end gap-2 mt-2">
+          <div className="mt-2 flex items-end gap-2">
             <h2 className="text-2xl font-bold text-gray-800">{value}</h2>
 
-            <span className="text-xs text-gray-400 mb-1">{subtitle}</span>
+            <span className="mb-1 text-xs text-gray-400">{subtitle}</span>
           </div>
         </div>
 
         <div
-          className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+          className={`flex h-11 w-11 items-center justify-center rounded-xl ${
             warning ? "bg-red-50 text-red-500" : "bg-amber-50 text-amber-600"
           }`}
         >
@@ -664,9 +699,9 @@ function StatCard({
   );
 }
 
-/* =========================================================
-   STATUS
-========================================================= */
+// =========================================================
+// STATUS
+// =========================================================
 
 function Status({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -676,7 +711,7 @@ function Status({ status }: { status: string }) {
 
   return (
     <span
-      className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
+      className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${
         styles[status] || "bg-gray-50 text-gray-600"
       }`}
     >

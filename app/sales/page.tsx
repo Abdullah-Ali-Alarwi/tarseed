@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useERPStore } from "@/Store/erpStore";
 import {
   FiPlus,
   FiSearch,
@@ -10,913 +9,467 @@ import {
   FiDollarSign,
   FiClock,
   FiCheckCircle,
-  FiMoreVertical,
-  FiBookOpen,
-  FiActivity,
+  FiTrash2,
+  FiPrinter,
+  FiEye,
 } from "react-icons/fi";
+import { useSalesStore } from "@/Store/salesStore";
 
 export default function SalesPage() {
+  /* =====================================================
+     البحث
+  ===================================================== */
+
   const [search, setSearch] = useState("");
 
-  const sales = useERPStore((state) => state.sales);
-  const accounts = useERPStore((state) => state.accounts);
-  const journalEntries = useERPStore((state) => state.journalEntries);
+  /* =====================================================
+     Store
+  ===================================================== */
 
-  // ======================================================
-  // الحسابات الفرعية فقط
-  // ======================================================
+  const sales = useSalesStore((state) => state.sales);
 
-  const subAccounts = useMemo(() => {
-    return accounts
-      .filter((account) => account.level > 0)
-      .sort((a, b) =>
-        a.code.localeCompare(b.code, undefined, {
-          numeric: true,
-        }),
-      );
-  }, [accounts]);
+  const deleteSale = useSalesStore((state) => state.deleteSale);
 
-  // ======================================================
-  // تحويل أي قيمة إلى رقم
-  // ======================================================
+  /* =====================================================
+     البحث في الفواتير
+  ===================================================== */
 
-  const getAmount = (amount: unknown): number => {
-    if (typeof amount === "number") {
-      return Number.isFinite(amount) ? amount : 0;
-    }
-
-    if (typeof amount === "string") {
-      return Number(amount.replace(/[^\d.-]/g, "")) || 0;
-    }
-
-    return 0;
-  };
-
-  // ======================================================
-  // تنسيق المبلغ
-  // ======================================================
-
-  const formatMoney = (amount: number) => {
-    return amount.toLocaleString("ar-SA", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
-  };
-
-  // ======================================================
-  // إجمالي الفاتورة
-  // ======================================================
-
-  const getSaleTotal = (invoice: (typeof sales)[number]) => {
-    if (typeof invoice.total === "number") {
-      return invoice.total;
-    }
-
-    if (invoice.items?.length) {
-      return invoice.items.reduce((total, item) => {
-        if (typeof item.total === "number") {
-          return total + item.total;
-        }
-
-        const itemSubtotal = getAmount(item.quantity) * getAmount(item.price);
-
-        const discount = itemSubtotal * (getAmount(item.discount) / 100);
-
-        const tax =
-          Math.max(itemSubtotal - discount, 0) * (getAmount(item.tax) / 100);
-
-        return total + Math.max(itemSubtotal - discount, 0) + tax;
-      }, 0);
-    }
-
-    return 0;
-  };
-
-  // ======================================================
-  // حالة الفاتورة
-  // ======================================================
-
-  const getStatus = (invoice: (typeof sales)[number]) => {
-    if (invoice.paymentMethod === "credit") {
-      return "آجلة";
-    }
-
-    return "مدفوعة";
-  };
-
-  // ======================================================
-  // الحصول على الحساب من رقم الحساب
-  // ======================================================
-
-  const getAccount = (accountCode?: string) => {
-    if (!accountCode) {
-      return null;
-    }
-
-    return accounts.find((account) => account.code === accountCode) ?? null;
-  };
-
-  // ======================================================
-  // الحصول على حركات الحساب من الأستاذ العام
-  // ======================================================
-
-  const getAccountJournalLines = (accountCode?: string) => {
-    if (!accountCode) {
-      return [];
-    }
-
-    return journalEntries.flatMap((entry) =>
-      entry.lines
-        .filter((line) => line.accountCode === accountCode)
-        .map((line) => ({
-          ...line,
-          entryId: entry.id,
-          entryNumber: entry.number,
-          entryDate: entry.date,
-          entryDescription: entry.description,
-          entryStatus: entry.status,
-        })),
-    );
-  };
-
-  // ======================================================
-  // رصيد الحساب في الأستاذ العام
-  //
-  // المدين - الدائن
-  // ======================================================
-
-  const getAccountBalance = (accountCode?: string) => {
-    if (!accountCode) {
-      return 0;
-    }
-
-    const lines = getAccountJournalLines(accountCode);
-
-    return lines.reduce(
-      (balance, line) =>
-        balance + getAmount(line.debit) - getAmount(line.credit),
-      0,
-    );
-  };
-
-  // ======================================================
-  // إجمالي المدين للحساب
-  // ======================================================
-
-  const getAccountDebit = (accountCode?: string) => {
-    if (!accountCode) {
-      return 0;
-    }
-
-    return getAccountJournalLines(accountCode).reduce(
-      (total, line) => total + getAmount(line.debit),
-      0,
-    );
-  };
-
-  // ======================================================
-  // إجمالي الدائن للحساب
-  // ======================================================
-
-  const getAccountCredit = (accountCode?: string) => {
-    if (!accountCode) {
-      return 0;
-    }
-
-    return getAccountJournalLines(accountCode).reduce(
-      (total, line) => total + getAmount(line.credit),
-      0,
-    );
-  };
-
-  // ======================================================
-  // عدد حركات الحساب
-  // ======================================================
-
-  const getAccountMovementCount = (accountCode?: string) => {
-    if (!accountCode) {
-      return 0;
-    }
-
-    return getAccountJournalLines(accountCode).length;
-  };
-
-  // ======================================================
-  // اسم الحساب
-  // ======================================================
-
-  const getAccountName = (invoice: (typeof sales)[number]) => {
-    const account = getAccount(invoice.accountCode);
-
-    if (account) {
-      return `${account.code} - ${account.name}`;
-    }
-
-    if (invoice.accountName) {
-      return invoice.accountName;
-    }
-
-    return "غير محدد";
-  };
-
-  // ======================================================
-  // البحث
-  // ======================================================
-
-  const filteredInvoices = useMemo(() => {
+  const filteredSales = useMemo(() => {
     const value = search.trim().toLowerCase();
 
     if (!value) {
       return sales;
     }
 
-    return sales.filter((invoice) => {
-      const accountName = getAccountName(invoice);
+    return sales.filter((sale) => {
+      const invoiceNumber = sale.invoiceNumber.toLowerCase();
 
-      const accountBalance = getAccountBalance(invoice.accountCode);
+      const customerName = (sale.customerName ?? "").toLowerCase();
+
+      const accountName = (sale.accountName ?? "").toLowerCase();
 
       return (
-        String(invoice.invoiceNumber).toLowerCase().includes(value) ||
-        String(invoice.customerName).toLowerCase().includes(value) ||
-        String(invoice.date).toLowerCase().includes(value) ||
-        String(getStatus(invoice)).toLowerCase().includes(value) ||
-        String(accountName).toLowerCase().includes(value) ||
-        String(invoice.accountCode || "")
-          .toLowerCase()
-          .includes(value) ||
-        String(accountBalance).includes(value)
+        invoiceNumber.includes(value) ||
+        customerName.includes(value) ||
+        accountName.includes(value)
       );
     });
-  }, [sales, search, accounts, journalEntries]);
+  }, [sales, search]);
 
-  // ======================================================
-  // إجمالي المبيعات
-  // ======================================================
+  /* =====================================================
+     الإحصائيات
+  ===================================================== */
 
-  const totalSales = useMemo(() => {
-    return sales.reduce((total, invoice) => total + getSaleTotal(invoice), 0);
+  const statistics = useMemo(() => {
+    const total = sales.reduce((sum, sale) => sum + sale.total, 0);
+
+    const paid = sales.filter((sale) => sale.status === "paid");
+
+    const pending = sales.filter((sale) => sale.status === "pending");
+
+    const paidTotal = paid.reduce((sum, sale) => sum + sale.total, 0);
+
+    const pendingTotal = pending.reduce((sum, sale) => sum + sale.total, 0);
+
+    return {
+      count: sales.length,
+      total,
+      paidCount: paid.length,
+      paidTotal,
+      pendingCount: pending.length,
+      pendingTotal,
+    };
   }, [sales]);
 
-  // ======================================================
-  // عدد الفواتير
-  // ======================================================
+  /* =====================================================
+     تنسيق المبلغ
+  ===================================================== */
 
-  const totalInvoices = sales.length;
+  const formatMoney = (value: number) => {
+    return value.toLocaleString("ar-YE");
+  };
 
-  // ======================================================
-  // الفواتير المدفوعة
-  // ======================================================
+  /* =====================================================
+     اسم طريقة الدفع
+  ===================================================== */
 
-  const paidInvoices = useMemo(() => {
-    return sales.filter((invoice) => invoice.paymentMethod !== "credit").length;
-  }, [sales]);
+  const getPaymentMethodName = (method: string) => {
+    switch (method) {
+      case "cash":
+        return "نقدًا";
 
-  // ======================================================
-  // المبالغ المستحقة
-  // ======================================================
+      case "bank":
+        return "حوالة بنكية";
 
-  const dueAmount = useMemo(() => {
-    return sales
-      .filter((invoice) => invoice.paymentMethod === "credit")
-      .reduce((total, invoice) => total + getSaleTotal(invoice), 0);
-  }, [sales]);
+      case "credit":
+        return "آجل";
 
-  // ======================================================
-  // عدد القيود المرتبطة بالمبيعات
-  // ======================================================
+      default:
+        return method;
+    }
+  };
 
-  const salesJournalCount = useMemo(() => {
-    return journalEntries.filter((entry) =>
-      entry.reference?.toLowerCase().startsWith("sale"),
-    ).length;
-  }, [journalEntries]);
+  /* =====================================================
+     اسم الحالة
+  ===================================================== */
 
-  // ======================================================
-  // إجمالي حركات الأستاذ
-  // ======================================================
+  const getStatusName = (status: string) => {
+    switch (status) {
+      case "paid":
+        return "مدفوعة";
 
-  const totalJournalLines = useMemo(() => {
-    return journalEntries.reduce(
-      (total, entry) => total + entry.lines.length,
-      0,
+      case "pending":
+        return "معلقة";
+
+      case "cancelled":
+        return "ملغاة";
+
+      default:
+        return status;
+    }
+  };
+
+  /* =====================================================
+     تأكيد الحذف
+  ===================================================== */
+
+  const handleDelete = (id: string, invoiceNumber: string) => {
+    const confirmed = window.confirm(
+      `هل أنت متأكد من حذف الفاتورة ${invoiceNumber}؟`,
     );
-  }, [journalEntries]);
+
+    if (!confirmed) {
+      return;
+    }
+
+    deleteSale(id);
+  };
+
+  /* =====================================================
+     الصفحة
+  ===================================================== */
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 sm:p-6" dir="rtl">
-      {/* ==================================================
-          Header
-      ================================================== */}
+    <main dir="rtl" className="min-h-screen bg-gray-50 p-4">
+      <div className="mx-auto max-w-[1500px]">
+        {/* =================================================
+            رأس الصفحة
+        ================================================= */}
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">المبيعات</h1>
+        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-gray-800">المبيعات</h1>
 
-          <p className="text-sm text-gray-500 mt-1">
-            إدارة فواتير المبيعات والعملاء والتحصيلات والربط مع الأستاذ العام
-          </p>
+            <p className="mt-1 text-xs text-gray-500">
+              إدارة ومتابعة فواتير المبيعات
+            </p>
+          </div>
+
+          <Link
+            href="/sales/new"
+            className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+          >
+            <FiPlus size={17} />
+            فاتورة مبيعات جديدة
+          </Link>
         </div>
 
-        <Link
-          href="/sales/new"
-          className="inline-flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-lg font-medium transition"
-        >
-          <FiPlus size={20} />
-          فاتورة مبيعات جديدة
-        </Link>
-      </div>
+        {/* =================================================
+            بطاقات الإحصائيات
+        ================================================= */}
 
-      {/* ==================================================
-          Summary
-      ================================================== */}
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {/* عدد الفواتير */}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
-        <StatCard
-          title="إجمالي المبيعات"
-          value={`${formatMoney(totalSales)} ريال`}
-          icon={FiDollarSign}
-        />
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">عدد الفواتير</p>
 
-        <StatCard
-          title="الفواتير"
-          value={totalInvoices.toLocaleString("ar-SA")}
-          icon={FiFileText}
-        />
+                <p className="mt-2 text-xl font-bold text-gray-800">
+                  {statistics.count}
+                </p>
+              </div>
 
-        <StatCard
-          title="الفواتير المدفوعة"
-          value={paidInvoices.toLocaleString("ar-SA")}
-          icon={FiCheckCircle}
-        />
-
-        <StatCard
-          title="المبالغ المستحقة"
-          value={`${formatMoney(dueAmount)} ريال`}
-          icon={FiClock}
-        />
-      </div>
-
-      {/* ==================================================
-          حالة الربط المحاسبي
-      ================================================== */}
-
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-6">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
-              <FiBookOpen size={21} />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                <FiFileText size={20} />
+              </div>
             </div>
+          </div>
 
+          {/* إجمالي المبيعات */}
+
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">إجمالي المبيعات</p>
+
+                <p className="mt-2 text-xl font-bold text-gray-800">
+                  {formatMoney(statistics.total)}
+                </p>
+
+                <p className="mt-1 text-[10px] text-gray-400">ريال</p>
+              </div>
+
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-600">
+                <FiDollarSign size={20} />
+              </div>
+            </div>
+          </div>
+
+          {/* المدفوعة */}
+
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">الفواتير المدفوعة</p>
+
+                <p className="mt-2 text-xl font-bold text-green-600">
+                  {statistics.paidCount}
+                </p>
+
+                <p className="mt-1 text-[10px] text-gray-400">
+                  {formatMoney(statistics.paidTotal)} ريال
+                </p>
+              </div>
+
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-600">
+                <FiCheckCircle size={20} />
+              </div>
+            </div>
+          </div>
+
+          {/* المعلقة */}
+
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">الفواتير المعلقة</p>
+
+                <p className="mt-2 text-xl font-bold text-orange-500">
+                  {statistics.pendingCount}
+                </p>
+
+                <p className="mt-1 text-[10px] text-gray-400">
+                  {formatMoney(statistics.pendingTotal)} ريال
+                </p>
+              </div>
+
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
+                <FiClock size={20} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* =================================================
+            البحث
+        ================================================= */}
+
+        <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="relative">
+            <FiSearch
+              size={18}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+            />
+
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ابحث برقم الفاتورة أو اسم العميل أو الحساب..."
+              className="w-full rounded-lg border border-gray-300 bg-gray-50 py-2.5 pr-10 pl-4 text-sm outline-none transition focus:border-blue-500 focus:bg-white"
+            />
+          </div>
+        </div>
+
+        {/* =================================================
+            جدول المبيعات
+        ================================================= */}
+
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          {/* عنوان الجدول */}
+
+          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
             <div>
-              <h2 className="font-bold text-gray-800 text-sm">
-                الربط مع الأستاذ العام
+              <h2 className="text-sm font-bold text-gray-800">
+                فواتير المبيعات
               </h2>
 
-              <p className="text-xs text-gray-400 mt-1">
-                حركات الحسابات المحاسبية المرتبطة بفواتير المبيعات
+              <p className="mt-1 text-[10px] text-gray-500">
+                عدد النتائج: {filteredSales.length}
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div className="rounded-lg bg-gray-50 px-4 py-3 text-center">
-              <p className="text-xs text-gray-400">القيود</p>
+          {/* الجدول */}
 
-              <p className="font-bold text-gray-800 mt-1">
-                {salesJournalCount.toLocaleString("ar-SA")}
-              </p>
-            </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1050px] text-right">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+                  <th className="px-4 py-3 font-semibold">رقم الفاتورة</th>
 
-            <div className="rounded-lg bg-gray-50 px-4 py-3 text-center">
-              <p className="text-xs text-gray-400">حركات الأستاذ</p>
+                  <th className="px-4 py-3 font-semibold">التاريخ</th>
 
-              <p className="font-bold text-gray-800 mt-1">
-                {totalJournalLines.toLocaleString("ar-SA")}
-              </p>
-            </div>
+                  <th className="px-4 py-3 font-semibold">العميل</th>
 
-            <div className="rounded-lg bg-green-50 px-4 py-3 text-center col-span-2 sm:col-span-1">
-              <p className="text-xs text-green-600">الحسابات</p>
+                  <th className="px-4 py-3 font-semibold">طريقة الدفع</th>
 
-              <p className="font-bold text-green-700 mt-1">
-                {subAccounts.length.toLocaleString("ar-SA")}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+                  <th className="px-4 py-3 font-semibold">عدد الأصناف</th>
 
-      {/* ==================================================
-          الحسابات المتاحة
-      ================================================== */}
+                  <th className="px-4 py-3 font-semibold">الإجمالي</th>
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
-            <FiBookOpen size={20} />
-          </div>
+                  <th className="px-4 py-3 font-semibold">الحالة</th>
 
-          <div>
-            <h2 className="font-bold text-gray-800 text-sm">
-              الحسابات المحاسبية المتاحة للمبيعات
-            </h2>
-
-            <p className="text-xs text-gray-400 mt-1">
-              الحسابات الفرعية المستخدمة في المبيعات تظهر مع أرصدتها من الأستاذ
-              العام
-            </p>
-          </div>
-        </div>
-
-        {subAccounts.length === 0 ? (
-          <div className="mt-4 rounded-lg bg-yellow-50 border border-yellow-100 p-3">
-            <p className="text-xs text-yellow-700">
-              لا توجد حسابات فرعية حاليًا. أضف حسابًا رئيسيًا ثم أضف حسابات
-              فرعية من دليل الحسابات.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto mt-4">
-            <table className="w-full min-w-[800px] text-right">
-              <thead className="bg-gray-50">
-                <tr className="text-xs text-gray-500">
-                  <th className="px-4 py-3 font-medium">الحساب</th>
-
-                  <th className="px-4 py-3 font-medium">النوع</th>
-
-                  <th className="px-4 py-3 font-medium">مدين</th>
-
-                  <th className="px-4 py-3 font-medium">دائن</th>
-
-                  <th className="px-4 py-3 font-medium">الرصيد</th>
-
-                  <th className="px-4 py-3 font-medium">الحركات</th>
+                  <th className="px-4 py-3 text-center font-semibold">
+                    الإجراءات
+                  </th>
                 </tr>
               </thead>
 
-              <tbody className="divide-y divide-gray-100">
-                {subAccounts.map((account) => {
-                  const debit = getAccountDebit(account.code);
+              <tbody>
+                {filteredSales.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-12 text-center">
+                      <FiFileText
+                        size={32}
+                        className="mx-auto mb-3 text-gray-300"
+                      />
 
-                  const credit = getAccountCredit(account.code);
+                      <p className="text-sm font-semibold text-gray-500">
+                        لا توجد فواتير
+                      </p>
 
-                  const balance = getAccountBalance(account.code);
-
-                  const movementCount = getAccountMovementCount(account.code);
-
-                  return (
+                      <p className="mt-1 text-xs text-gray-400">
+                        لم يتم العثور على فواتير مطابقة للبحث
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredSales.map((sale) => (
                     <tr
-                      key={account.id}
-                      className="hover:bg-gray-50 transition"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col">
-                          <span className="font-mono text-xs font-semibold text-green-700">
-                            {account.code}
-                          </span>
-
-                          <span className="text-sm text-gray-700 mt-0.5">
-                            {account.name}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <AccountTypeBadge type={account.type} />
-                      </td>
-
-                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {formatMoney(debit)}
-                      </td>
-
-                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {formatMoney(credit)}
-                      </td>
-
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span
-                          className={`font-semibold ${
-                            balance >= 0 ? "text-green-600" : "text-red-600"
-                          }`}
-                        >
-                          {formatMoney(Math.abs(balance))}
-                        </span>
-
-                        <span className="text-xs text-gray-400 mr-1">
-                          {balance >= 0 ? "مدين" : "دائن"}
-                        </span>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                          <FiActivity size={14} />
-
-                          {movementCount.toLocaleString("ar-SA")}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ==================================================
-          فواتير المبيعات
-      ================================================== */}
-
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-gray-100">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h2 className="font-bold text-gray-800">فواتير المبيعات</h2>
-
-              <p className="text-xs text-gray-400 mt-1">
-                إجمالي الفواتير: {totalInvoices.toLocaleString("ar-SA")}
-              </p>
-            </div>
-
-            <div className="relative w-full md:w-80">
-              <FiSearch
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                size={18}
-              />
-
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="البحث عن فاتورة أو عميل أو حساب..."
-                className="w-full pr-10 pl-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:border-green-500 focus:ring-1 focus:ring-green-100 placeholder:text-gray-400"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1300px] text-right">
-            <thead className="bg-gray-50">
-              <tr className="text-sm text-gray-500">
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  رقم الفاتورة
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  العميل
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  الحساب
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  رصيد الحساب
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  التاريخ
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  المبلغ
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  طريقة الدفع
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  الحالة
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  الأستاذ
-                </th>
-
-                <th className="px-6 py-4 font-medium whitespace-nowrap">
-                  الإجراءات
-                </th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-gray-100">
-              {filteredInvoices.length > 0 ? (
-                filteredInvoices.map((invoice) => {
-                  const status = getStatus(invoice);
-
-                  const account = getAccount(invoice.accountCode);
-
-                  const accountBalance = getAccountBalance(invoice.accountCode);
-
-                  const movementCount = getAccountMovementCount(
-                    invoice.accountCode,
-                  );
-
-                  return (
-                    <tr
-                      key={invoice.id}
-                      className="hover:bg-gray-50 transition"
+                      key={sale.id}
+                      className="border-b border-gray-100 transition hover:bg-gray-50"
                     >
                       {/* رقم الفاتورة */}
 
-                      <td className="px-6 py-4">
-                        <Link
-                          href={`/sales/${invoice.id}`}
-                          className="font-semibold text-green-600 hover:text-green-700"
-                        >
-                          {invoice.invoiceNumber}
-                        </Link>
-                      </td>
-
-                      {/* العميل */}
-
-                      <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
-                        {invoice.customerName}
-                      </td>
-
-                      {/* الحساب */}
-
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {account ? (
-                          <div className="flex flex-col">
-                            <span className="font-mono text-xs font-semibold text-green-700">
-                              {account.code}
-                            </span>
-
-                            <span className="text-xs text-gray-600 mt-0.5">
-                              {account.name}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-gray-400">
-                            غير محدد
-                          </span>
-                        )}
-                      </td>
-
-                      {/* رصيد الحساب */}
-
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {invoice.accountCode ? (
-                          <div className="flex flex-col">
-                            <span
-                              className={`font-semibold text-sm ${
-                                accountBalance >= 0
-                                  ? "text-green-600"
-                                  : "text-red-600"
-                              }`}
-                            >
-                              {formatMoney(Math.abs(accountBalance))}
-                            </span>
-
-                            <span className="text-[11px] text-gray-400">
-                              {accountBalance >= 0 ? "مدين" : "دائن"}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-gray-400">—</span>
-                        )}
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-blue-600">
+                          {sale.invoiceNumber}
+                        </div>
                       </td>
 
                       {/* التاريخ */}
 
-                      <td className="px-6 py-4 text-gray-500 whitespace-nowrap">
-                        {invoice.date}
+                      <td className="px-4 py-3 text-xs text-gray-600">
+                        {sale.date}
                       </td>
 
-                      {/* المبلغ */}
+                      {/* العميل */}
 
-                      <td className="px-6 py-4 font-semibold text-gray-700 whitespace-nowrap">
-                        {formatMoney(getSaleTotal(invoice))} ريال
+                      <td className="px-4 py-3">
+                        <div className="text-sm font-semibold text-gray-800">
+                          {sale.customerName || "عميل نقدي"}
+                        </div>
+
+                        {sale.accountName && (
+                          <div className="mt-1 text-[10px] text-gray-400">
+                            {sale.accountCode ? `${sale.accountCode} - ` : ""}
+                            {sale.accountName}
+                          </div>
+                        )}
                       </td>
 
                       {/* طريقة الدفع */}
 
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <PaymentMethod method={invoice.paymentMethod} />
+                      <td className="px-4 py-3">
+                        <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-600">
+                          {getPaymentMethodName(sale.paymentMethod)}
+                        </span>
+                      </td>
+
+                      {/* عدد الأصناف */}
+
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {sale.items.length}
+                      </td>
+
+                      {/* الإجمالي */}
+
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-gray-800">
+                          {formatMoney(sale.total)}
+                        </div>
+
+                        <div className="text-[10px] text-gray-400">ريال</div>
                       </td>
 
                       {/* الحالة */}
 
-                      <td className="px-6 py-4">
-                        <Status status={status} />
-                      </td>
-
-                      {/* الأستاذ العام */}
-
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {movementCount > 0 ? (
-                          <div className="flex flex-col">
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
-                              <FiCheckCircle size={14} />
-                              مرتبط
-                            </span>
-
-                            <span className="text-[11px] text-gray-400 mt-1">
-                              {movementCount} حركة
-                            </span>
-                          </div>
+                      <td className="px-4 py-3">
+                        {sale.status === "paid" ? (
+                          <span className="inline-flex rounded-full bg-green-50 px-2.5 py-1 text-[11px] font-bold text-green-600">
+                            {getStatusName(sale.status)}
+                          </span>
+                        ) : sale.status === "pending" ? (
+                          <span className="inline-flex rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-600">
+                            {getStatusName(sale.status)}
+                          </span>
                         ) : (
-                          <div className="flex flex-col">
-                            <span className="text-xs font-medium text-yellow-600">
-                              بدون حركة
-                            </span>
-
-                            <span className="text-[11px] text-gray-400 mt-1">
-                              بانتظار القيد
-                            </span>
-                          </div>
+                          <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-600">
+                            {getStatusName(sale.status)}
+                          </span>
                         )}
                       </td>
 
                       {/* الإجراءات */}
 
-                      <td className="px-6 py-4">
-                        <button
-                          type="button"
-                          className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition"
-                        >
-                          <FiMoreVertical size={18} />
-                        </button>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-1">
+                          {/* عرض */}
+
+                          <Link
+                            href={`/sales/${sale.id}`}
+                            title="عرض الفاتورة"
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-blue-600"
+                          >
+                            <FiEye size={15} />
+                          </Link>
+
+                          {/* طباعة */}
+
+                          <Link
+                            href={`/sales/${sale.id}/print`}
+                            target="_blank"
+                            title="طباعة الفاتورة"
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-blue-50 hover:text-blue-600"
+                          >
+                            <FiPrinter size={15} />
+                          </Link>
+
+                          {/* حذف */}
+
+                          <button
+                            type="button"
+                            title="حذف الفاتورة"
+                            onClick={() =>
+                              handleDelete(sale.id, sale.invoiceNumber)
+                            }
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-red-50 hover:text-red-600"
+                          >
+                            <FiTrash2 size={15} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td
-                    colSpan={10}
-                    className="px-6 py-12 text-center text-gray-400"
-                  >
-                    {sales.length === 0
-                      ? "لا توجد فواتير مبيعات حاليًا"
-                      : "لا توجد فواتير مطابقة للبحث"}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* ==================================================
-            Footer
-        ================================================== */}
-
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-5 border-t border-gray-100">
-          <p className="text-sm text-gray-400">
-            عرض {filteredInvoices.length.toLocaleString("ar-SA")} من{" "}
-            {totalInvoices.toLocaleString("ar-SA")} فاتورة
-          </p>
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition"
-            >
-              السابق
-            </button>
-
-            <button
-              type="button"
-              className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm"
-            >
-              1
-            </button>
-
-            <button
-              type="button"
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition"
-            >
-              2
-            </button>
-
-            <button
-              type="button"
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition"
-            >
-              التالي
-            </button>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
     </main>
-  );
-}
-
-// ======================================================
-// Stat Card
-// ======================================================
-
-function StatCard({
-  title,
-  value,
-  icon: Icon,
-}: {
-  title: string;
-  value: string;
-  icon: React.ElementType;
-}) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-500">{title}</p>
-
-          <h2 className="text-xl font-bold text-gray-800 mt-2">{value}</h2>
-        </div>
-
-        <div className="w-11 h-11 rounded-xl bg-green-50 text-green-600 flex items-center justify-center">
-          <Icon size={22} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ======================================================
-// نوع الحساب
-// ======================================================
-
-function AccountTypeBadge({
-  type,
-}: {
-  type: "asset" | "liability" | "equity" | "revenue" | "expense";
-}) {
-  const labels = {
-    asset: "أصول",
-    liability: "التزامات",
-    equity: "حقوق ملكية",
-    revenue: "إيرادات",
-    expense: "مصروفات",
-  };
-
-  const styles = {
-    asset: "bg-blue-50 text-blue-600",
-    liability: "bg-orange-50 text-orange-600",
-    equity: "bg-purple-50 text-purple-600",
-    revenue: "bg-green-50 text-green-600",
-    expense: "bg-red-50 text-red-600",
-  };
-
-  return (
-    <span
-      className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${styles[type]}`}
-    >
-      {labels[type]}
-    </span>
-  );
-}
-
-// ======================================================
-// Payment Method
-// ======================================================
-
-function PaymentMethod({ method }: { method: "cash" | "bank" | "credit" }) {
-  const labels = {
-    cash: "نقدي",
-    bank: "بنكي",
-    credit: "آجل",
-  };
-
-  const styles = {
-    cash: "bg-green-50 text-green-600",
-    bank: "bg-blue-50 text-blue-600",
-    credit: "bg-yellow-50 text-yellow-600",
-  };
-
-  return (
-    <span
-      className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${styles[method]}`}
-    >
-      {labels[method]}
-    </span>
-  );
-}
-
-// ======================================================
-// Status
-// ======================================================
-
-function Status({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    مدفوعة: "bg-green-50 text-green-600",
-
-    آجلة: "bg-yellow-50 text-yellow-600",
-
-    معلقة: "bg-yellow-50 text-yellow-600",
-
-    متأخرة: "bg-red-50 text-red-600",
-  };
-
-  return (
-    <span
-      className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
-        styles[status] || "bg-gray-50 text-gray-600"
-      }`}
-    >
-      {status}
-    </span>
   );
 }

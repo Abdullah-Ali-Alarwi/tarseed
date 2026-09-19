@@ -120,7 +120,7 @@ export default function InventoryProductDetailsPage() {
           type: "شراء",
           date: purchase.date,
           invoiceNumber: purchase.invoiceNumber,
-          partyName: purchase.supplierName || "مورد",
+          partyName: purchase.supplierId || "مورد",
           quantity,
           price,
           discount,
@@ -405,14 +405,13 @@ export default function InventoryProductDetailsPage() {
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-            <InfoItem label="كود الصنف" value={product.code} />
+            <InfoItem label="كود الصنف" value={String(product.code ?? "-")} />
 
             <InfoItem label="اسم الصنف" value={product.name} />
 
-            <InfoItem label="وحدة القياس" value={product.unit} />
+            <InfoItem label="وحدة القياس" value={String(product.unit ?? "-")} />
           </div>
         </div>
-
         {/* =====================================================
             STATISTICS
         ===================================================== */}

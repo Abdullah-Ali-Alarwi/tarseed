@@ -2,282 +2,313 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import {
-  FiArrowRight,
-  FiPackage,
-  FiSave,
-  FiX,
-  FiCheckCircle,
-} from "react-icons/fi";
-import { useERPStore } from "@/Store/erpStore";
+import { FiArrowRight, FiPackage, FiSave, FiX } from "react-icons/fi";
+import { toast } from "sonner";
+import { useProductsStore } from "@/Store/productsStore";
 
 export default function NewProductPage() {
-  const products = useERPStore((state) => state.products);
+  /* ======================================================
+     ZUSTAND
+  ====================================================== */
 
-  const addProduct = useERPStore((state) => state.addProduct);
+  const products = useProductsStore((state) => state.products);
+
+  const addProduct = useProductsStore((state) => state.addProduct);
+
+  /* ======================================================
+     FORM
+  ====================================================== */
 
   const [name, setName] = useState("");
   const [unit, setUnit] = useState("");
+  const [category, setCategory] = useState("");
 
-  const [isSaved, setIsSaved] = useState(false);
-
-  // ======================================================
-  // حفظ الصنف
-  // ======================================================
+  /* ======================================================
+     SAVE PRODUCT
+  ====================================================== */
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const cleanName = name.trim();
     const cleanUnit = unit.trim();
+    const cleanCategory = category.trim();
 
-    // التحقق من اسم الصنف
+    /* ==================================================
+       VALIDATION
+    ================================================== */
+
     if (!cleanName) {
-      alert("يرجى إدخال اسم الصنف.");
+      toast.error("يرجى إدخال اسم الصنف.");
       return;
     }
 
-    // التحقق من الوحدة
     if (!cleanUnit) {
-      alert("يرجى إدخال وحدة الصنف.");
+      toast.error("يرجى إدخال وحدة الصنف.");
       return;
     }
 
-    // منع تكرار اسم الصنف
+    if (!cleanCategory) {
+      toast.error("يرجى إدخال تصنيف الصنف.");
+      return;
+    }
+
+    /* ==================================================
+       DUPLICATE NAME
+    ================================================== */
+
     const duplicateName = products.some(
       (product) =>
         product.name.trim().toLowerCase() === cleanName.toLowerCase(),
     );
 
     if (duplicateName) {
-      alert("اسم الصنف موجود بالفعل، يرجى استخدام اسم آخر.");
+      toast.error("اسم الصنف موجود بالفعل، يرجى استخدام اسم آخر.");
       return;
     }
 
-    // ==================================================
-    // إضافة الصنف
-    //
-    // كود الصنف يتم إنشاؤه داخل Zustand
-    // ==================================================
+    /* ==================================================
+       ADD PRODUCT TO ZUSTAND
+
+       الكود يتم إنشاؤه تلقائيًا داخل productsStore
+    ================================================== */
 
     addProduct({
       name: cleanName,
       unit: cleanUnit,
+      category: cleanCategory,
+      isActive: true,
     });
 
-    // تفريغ الحقول بعد الحفظ
+    /* ==================================================
+       CLEAR FORM
+    ================================================== */
+
     setName("");
     setUnit("");
+    setCategory("");
 
-    // إظهار حالة الحفظ
-    setIsSaved(true);
+    /* ==================================================
+       SUCCESS TOAST
+    ================================================== */
 
-    alert("تم إضافة الصنف بنجاح.");
-
-    setTimeout(() => {
-      setIsSaved(false);
-    }, 2500);
+    toast.success("تم إضافة الصنف بنجاح.", {
+      description: "تم حفظ الصنف ويمكنك الآن إضافة صنف آخر.",
+      duration: 3000,
+    });
   };
 
-  // ======================================================
-  // تفريغ الحقول
-  // ======================================================
+  /* ======================================================
+     CLEAR FORM
+  ====================================================== */
 
   const handleClear = () => {
     setName("");
     setUnit("");
-    setIsSaved(false);
+    setCategory("");
+
+    toast.success("تم تفريغ الحقول.");
   };
 
   return (
-    <main dir="rtl" className="min-h-screen bg-gray-100 p-4 sm:p-6">
+    <main dir="rtl" className="min-h-screen bg-gray-50 p-3 sm:p-4">
       {/* ==================================================
-          Header
+          HEADER
       ================================================== */}
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           {/* Breadcrumb */}
 
-          <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
-            <Link href="/" className="hover:text-green-600 transition">
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] text-gray-400">
+            <Link href="/" className="transition hover:text-green-600">
               الرئيسية
             </Link>
 
-            <FiArrowRight size={14} />
+            <FiArrowRight size={11} />
 
-            <Link href="/products" className="hover:text-green-600 transition">
+            <Link href="/products" className="transition hover:text-green-600">
               الأصناف
             </Link>
 
-            <FiArrowRight size={14} />
+            <FiArrowRight size={11} />
 
-            <span className="text-gray-800 font-medium">صنف جديد</span>
+            <span className="font-medium text-gray-700">صنف جديد</span>
           </div>
 
           {/* Title */}
 
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-green-50 text-green-600 flex items-center justify-center">
-              <FiPackage size={21} />
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-50 text-green-600">
+              <FiPackage size={18} />
             </div>
 
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+              <h1 className="text-lg font-bold text-gray-900">
                 إضافة صنف جديد
               </h1>
 
-              <p className="text-sm text-gray-500 mt-1">
+              <p className="mt-0.5 text-[11px] text-gray-500">
                 إضافة البيانات الأساسية للصنف
               </p>
             </div>
           </div>
         </div>
 
-        {/* Back */}
+        {/* ==================================================
+            BACK
+        ================================================== */}
 
         <Link
           href="/products"
-          className="inline-flex items-center justify-center gap-2 bg-white border-2 border-gray-300 hover:bg-gray-50 text-gray-700 px-5 py-3 rounded-lg text-sm font-semibold transition"
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
         >
-          <FiArrowRight size={18} />
+          <FiArrowRight size={14} />
           العودة للأصناف
         </Link>
       </div>
 
       {/* ==================================================
-          Success message
-      ================================================== */}
-
-      {isSaved && (
-        <div className="mb-5 bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-green-100 text-green-600 flex items-center justify-center">
-            <FiCheckCircle size={17} />
-          </div>
-
-          <div>
-            <p className="text-sm font-bold text-green-700">
-              تم حفظ الصنف بنجاح
-            </p>
-
-            <p className="text-xs text-green-600 mt-0.5">
-              تم تفريغ الحقول ويمكنك إضافة صنف آخر.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* ==================================================
-          Form
+          FORM
       ================================================== */}
 
       <form onSubmit={handleSubmit}>
-        <section className="max-w-4xl bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-          {/* Header */}
+        <section className="w-full max-w-4xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          {/* ==================================================
+              FORM HEADER
+          ================================================== */}
 
-          <div className="p-5 sm:p-6 border-b-2 border-gray-200">
+          <div className="border-b border-gray-100 px-4 py-3">
             <div className="flex items-center gap-2">
-              <FiPackage size={20} className="text-green-600" />
+              <FiPackage size={17} className="text-green-600" />
 
               <div>
-                <h2 className="font-bold text-gray-900">بيانات الصنف</h2>
+                <h2 className="text-sm font-bold text-gray-900">
+                  بيانات الصنف
+                </h2>
 
-                <p className="text-sm text-gray-500 mt-1">
-                  أدخل البيانات الأساسية فقط.
+                <p className="mt-0.5 text-[10px] text-gray-400">
+                  أدخل البيانات الأساسية للصنف.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Fields */}
+          {/* ==================================================
+              FIELDS
+          ================================================== */}
 
-          <div className="p-5 sm:p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* اسم الصنف */}
+          <div className="p-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {/* ==================================================
+                  NAME
+              ================================================== */}
 
               <div>
-                <label className="block text-sm font-semibold text-gray-800 mb-2">
+                <label
+                  htmlFor="product-name"
+                  className="mb-1.5 block text-xs font-semibold text-gray-700"
+                >
                   اسم الصنف
                 </label>
 
                 <input
+                  id="product-name"
                   type="text"
                   value={name}
-                  onChange={(event) => {
-                    setName(event.target.value);
-                    setIsSaved(false);
-                  }}
-                  placeholder="مثال: اسم المنتج"
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="مثال: عسل سدر"
                   autoFocus
-                  className="w-full h-12 bg-gray-50 border-2 border-gray-300 rounded-lg px-4 text-sm text-gray-900 font-medium outline-none hover:border-gray-400 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-100 transition"
+                  className="h-10 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 text-xs font-medium text-gray-900 outline-none transition hover:border-gray-300 focus:border-green-500 focus:bg-white focus:ring-2 focus:ring-green-50"
                 />
               </div>
 
-              {/* الوحدة */}
+              {/* ==================================================
+                  UNIT
+              ================================================== */}
 
               <div>
-                <label className="block text-sm font-semibold text-gray-800 mb-2">
+                <label
+                  htmlFor="product-unit"
+                  className="mb-1.5 block text-xs font-semibold text-gray-700"
+                >
                   الوحدة
                 </label>
 
                 <input
+                  id="product-unit"
                   type="text"
                   value={unit}
-                  onChange={(event) => {
-                    setUnit(event.target.value);
-                    setIsSaved(false);
-                  }}
-                  placeholder="مثال: كيس"
-                  className="w-full h-12 bg-gray-50 border-2 border-gray-300 rounded-lg px-4 text-sm text-gray-900 font-medium outline-none hover:border-gray-400 focus:bg-white focus:border-green-500 focus:ring-4 focus:ring-green-100 transition"
+                  onChange={(event) => setUnit(event.target.value)}
+                  placeholder="مثال: كيلو"
+                  className="h-10 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 text-xs font-medium text-gray-900 outline-none transition hover:border-gray-300 focus:border-green-500 focus:bg-white focus:ring-2 focus:ring-green-50"
+                />
+              </div>
+
+              {/* ==================================================
+                  CATEGORY
+              ================================================== */}
+
+              <div>
+                <label
+                  htmlFor="product-category"
+                  className="mb-1.5 block text-xs font-semibold text-gray-700"
+                >
+                  التصنيف
+                </label>
+
+                <input
+                  id="product-category"
+                  type="text"
+                  value={category}
+                  onChange={(event) => setCategory(event.target.value)}
+                  placeholder="مثال: العسل"
+                  className="h-10 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 text-xs font-medium text-gray-900 outline-none transition hover:border-gray-300 focus:border-green-500 focus:bg-white focus:ring-2 focus:ring-green-50"
                 />
               </div>
             </div>
 
             {/* ==================================================
-                معلومات الكود
+                PRODUCT CODE INFO
             ================================================== */}
 
-            <div className="mt-6 bg-blue-50 border border-blue-100 rounded-xl p-4">
-              <div className="flex gap-3">
-                <div className="w-8 h-8 shrink-0 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                  <FiPackage size={16} />
+            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5">
+              <div className="flex gap-2.5">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-600">
+                  <FiPackage size={14} />
                 </div>
 
                 <div>
-                  <h3 className="text-xs font-bold text-blue-800">
+                  <h3 className="text-[11px] font-bold text-blue-800">
                     ترقيم الصنف
                   </h3>
 
-                  <p className="text-[11px] sm:text-xs text-blue-700 leading-6 mt-1">
-                    يتم إنشاء كود الصنف تلقائيًا بواسطة النظام عند الحفظ. لا
-                    يمكن للمستخدم إدخال الكود أو تعديله.
-                  </p>
-
-                  <p className="text-[11px] sm:text-xs text-blue-700 leading-6">
-                    يبدأ الترقيم من 1001 ويستمر تلقائيًا دون تكرار.
+                  <p className="mt-0.5 text-[10px] leading-5 text-blue-700">
+                    يتم إنشاء كود الصنف تلقائيًا بواسطة النظام عند الحفظ، ويبدأ
+                    من 1001 دون تكرار الأكواد المستخدمة.
                   </p>
                 </div>
               </div>
             </div>
 
             {/* ==================================================
-                معلومات الأسعار والمخزون
+                PRICE / STOCK INFO
             ================================================== */}
 
-            <div className="mt-4 bg-amber-50 border border-amber-100 rounded-xl p-4">
-              <div className="flex gap-3">
-                <div className="w-8 h-8 shrink-0 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
-                  <FiPackage size={16} />
+            <div className="mt-2.5 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
+              <div className="flex gap-2.5">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-600">
+                  <FiPackage size={14} />
                 </div>
 
                 <div>
-                  <h3 className="text-xs font-bold text-amber-800">
+                  <h3 className="text-[11px] font-bold text-amber-800">
                     الكمية والسعر
                   </h3>
 
-                  <p className="text-[11px] sm:text-xs text-amber-700 leading-6 mt-1">
-                    لا يتم إدخال الكمية أو سعر الشراء عند إنشاء الصنف. يتم تحديد
-                    هذه البيانات عند تسجيل فاتورة المشتريات.
+                  <p className="mt-0.5 text-[10px] leading-5 text-amber-700">
+                    لا يتم إدخال الكمية أو سعر الشراء عند إنشاء الصنف. يتم
+                    تحديدهما عند تسجيل فاتورة المشتريات.
                   </p>
                 </div>
               </div>
@@ -285,24 +316,28 @@ export default function NewProductPage() {
           </div>
 
           {/* ==================================================
-              Buttons
+              BUTTONS
           ================================================== */}
 
-          <div className="flex flex-col sm:flex-row items-center justify-end gap-3 px-5 sm:px-6 py-5 bg-gray-50 border-t border-gray-200">
+          <div className="flex flex-col gap-2 border-t border-gray-100 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-end">
+            {/* CLEAR */}
+
             <button
               type="button"
               onClick={handleClear}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 bg-white border-2 border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 font-semibold text-sm transition"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-4 text-xs font-semibold text-gray-600 transition hover:bg-gray-100"
             >
-              <FiX size={17} />
+              <FiX size={14} />
               تفريغ الحقول
             </button>
 
+            {/* SAVE */}
+
             <button
               type="submit"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm transition"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-5 text-xs font-semibold text-white transition hover:bg-green-700"
             >
-              <FiSave size={18} />
+              <FiSave size={15} />
               حفظ الصنف
             </button>
           </div>
