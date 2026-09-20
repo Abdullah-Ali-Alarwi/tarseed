@@ -18,7 +18,8 @@ import {
   FiCheckCircle,
 } from "react-icons/fi";
 
-import { useERPStore } from "@/Store/erpStore";
+import { useSuppliersStore } from "@/Store/suppliersStore";
+import { usePurchasesStore } from "@/Store/purchasesStore";
 
 export default function SupplierDetailsPage() {
   const params = useParams();
@@ -29,8 +30,8 @@ export default function SupplierDetailsPage() {
   // Zustand
   // ======================================================
 
-  const suppliers = useERPStore((state) => state.suppliers);
-  const purchases = useERPStore((state) => state.purchases);
+  const suppliers = useSuppliersStore((state) => state.suppliers);
+  const purchases = usePurchasesStore((state) => state.purchases);
 
   // ======================================================
   // المورد
@@ -97,7 +98,12 @@ export default function SupplierDetailsPage() {
     }
 
     return purchases
-      .filter((purchase) => purchase.supplierId === supplier.id)
+      .filter(
+        (purchase) =>
+          purchase.supplierId === supplier.id &&
+          purchase.status !== "cancelled" &&
+          purchase.status !== "ملغاة",
+      )
       .sort((a, b) => {
         const dateA = new Date(a.date).getTime();
         const dateB = new Date(b.date).getTime();
@@ -129,7 +135,6 @@ export default function SupplierDetailsPage() {
 
   // ======================================================
   // إجمالي المدفوعات
-  //
   // نقدي + تحويل بنكي
   // ======================================================
 
@@ -159,10 +164,6 @@ export default function SupplierDetailsPage() {
 
   // ======================================================
   // إنشاء حركات كشف الحساب
-  //
-  // الرصيد:
-  // الدائن = المبلغ المستحق للمورد
-  // المدين = المبلغ الذي تم تسديده
   // ======================================================
 
   const statement = useMemo(() => {
@@ -373,7 +374,7 @@ export default function SupplierDetailsPage() {
                   <p className="mt-1 text-sm text-gray-400">
                     كود المورد:{" "}
                     <span className="font-medium text-gray-600">
-                      {supplier.id}
+                      {supplier.accountCode || supplier.id}
                     </span>
                   </p>
                 </div>
@@ -415,7 +416,7 @@ export default function SupplierDetailsPage() {
             <InfoItem
               icon={FiFileText}
               label="كود المورد"
-              value={supplier.id}
+              value={supplier.accountCode || supplier.id}
             />
           </div>
         </div>

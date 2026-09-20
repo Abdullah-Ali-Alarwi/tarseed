@@ -1,11 +1,19 @@
-"use client";
-
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-// ==================================================
-// Customer Interface
-// ==================================================
+// =========================================================
+// CONSTANTS
+// =========================================================
+
+export const CASH_CUSTOMER_ID = "CASH-CUSTOMER";
+
+export const CASH_ACCOUNT_CODE = "1002";
+
+export const CASH_ACCOUNT_NAME = "الصندوق";
+
+// =========================================================
+// CUSTOMER
+// =========================================================
 
 export interface Customer {
   id: string;
@@ -13,391 +21,337 @@ export interface Customer {
   phone?: string;
   address?: string;
   balance?: number;
-
-  // الحساب المحاسبي المرتبط بالعميل
   accountCode?: string;
   accountName?: string;
+  notes?: string;
+  isActive?: boolean;
 }
 
-// ==================================================
-// Store Interface
-// ==================================================
+// =========================================================
+// STORE
+// =========================================================
 
 interface CustomersStore {
   customers: Customer[];
 
-  // إضافة عميل
   addCustomer: (
-    customer: Omit<Customer, "id">
+    customer: Omit<Customer, "id">,
   ) => Customer;
 
-  // تعديل عميل
   updateCustomer: (
     id: string,
-    data: Partial<Omit<Customer, "id">>
+    data: Partial<Omit<Customer, "id">>,
   ) => void;
 
-  // حذف عميل
   deleteCustomer: (id: string) => void;
 
-  // البحث عن عميل بالـ ID
   getCustomerById: (
-    id: string
+    id: string,
   ) => Customer | undefined;
 
-  // البحث عن عميل بالحساب
   getCustomerByAccountCode: (
-    accountCode: string
+    accountCode: string,
   ) => Customer | undefined;
 
-  // البحث بالاسم
   searchCustomers: (
-    search: string
+    query: string,
   ) => Customer[];
 
-  // تغيير الرصيد
   updateCustomerBalance: (
     id: string,
-    balance: number
+    amount: number,
   ) => void;
 
-  // مسح جميع العملاء
   clearCustomers: () => void;
 }
 
-// ==================================================
-// Constants
-// ==================================================
+// =========================================================
+// ID GENERATOR
+// =========================================================
 
-// العميل النقدي الخاص بالنظام
-export const CASH_CUSTOMER_ID = "CASH-CUSTOMER";
-
-// حساب الصندوق
-export const CASH_ACCOUNT_CODE = "1002";
-
-export const CASH_ACCOUNT_NAME = "الصندوق";
-
-// ==================================================
-// إنشاء العميل النقدي
-// ==================================================
-
-const createCashCustomer = (): Customer => ({
-  id: CASH_CUSTOMER_ID,
-
-  name: CASH_ACCOUNT_NAME,
-
-  phone: "",
-
-  address: "",
-
-  balance: 0,
-
-  accountCode: CASH_ACCOUNT_CODE,
-
-  accountName: CASH_ACCOUNT_NAME,
-});
-
-// ==================================================
-// إنشاء ID
-// ==================================================
-
-const createCustomerId = () =>
-  `customer-${Date.now()}-${Math.random()
+function generateCustomerId() {
+  return `customer-${Date.now()}-${Math.random()
     .toString(36)
     .substring(2, 8)}`;
+}
 
-// ==================================================
-// Zustand Store
-// ==================================================
+// =========================================================
+// CASH CUSTOMER
+// =========================================================
 
-export const useCustomersStore = 
-  create<CustomersStore>()(
-    persist(
-      (set, get) => ({
-        // ==================================================
-        // البيانات الافتراضية
-        // ==================================================
+const cashCustomer: Customer = {
+  id: CASH_CUSTOMER_ID,
+  name: "العميل النقدي",
+  phone: undefined,
+  address: undefined,
+  balance: 0,
+  accountCode: CASH_ACCOUNT_CODE,
+  accountName: CASH_ACCOUNT_NAME,
+  notes: "عميل نقدي افتراضي لا يمكن حذفه أو تعديله",
+  isActive: true,
+};
 
-        customers: [
-          {
-            id: "customer-001",
-            name: "احمد محمد احمد العيشي",
-            phone: "",
-            address: "",
-            balance: 0,
-            accountCode: "1001",
-            accountName:
-              "احمد محمد احمد العيشي",
-          },
+// =========================================================
+// STORE
+// =========================================================
 
-          {
-            id: "customer-002",
-            name: "محمد علي صالح",
-            phone: "",
-            address: "",
-            balance: 0,
-            accountCode: "1002",
-            accountName: "محمد علي صالح",
-          },
+export const useCustomersStore = create<CustomersStore>()(
+  persist(
+    (set, get) => ({
+      // =====================================================
+      // INITIAL DATA
+      // =====================================================
 
-          {
-            id: "customer-003",
-            name: "عبدالله احمد",
-            phone: "",
-            address: "",
-            balance: 0,
-            accountCode: "1003",
-            accountName: "عبدالله احمد",
-          },
+      customers: [cashCustomer],
 
-          createCashCustomer(),
-        ],
+      // =====================================================
+      // ADD CUSTOMER
+      // =====================================================
 
-        // ==================================================
-        // إضافة عميل
-        // ==================================================
+      addCustomer: (customer) => {
+        const newCustomer: Customer = {
+          id: generateCustomerId(),
 
-        addCustomer: (customer) => {
-          const newCustomer: Customer = {
-            id: createCustomerId(),
+          name: customer.name.trim(),
 
-            ...customer,
+          phone: customer.phone?.trim() || undefined,
 
-            balance:
-              customer.balance ?? 0,
-          };
+          address:
+            customer.address?.trim() || undefined,
 
-          set((state) => ({
-            customers: [
-              ...state.customers,
-              newCustomer,
-            ],
-          }));
+          balance: Number(customer.balance ?? 0),
 
-          return newCustomer;
-        },
+          accountCode:
+            customer.accountCode?.trim() || undefined,
 
-        // ==================================================
-        // تعديل عميل
-        // ==================================================
+          accountName:
+            customer.accountName?.trim() || undefined,
 
-        updateCustomer: (id, data) => {
-          // منع تعديل العميل النقدي
-          if (id === CASH_CUSTOMER_ID) {
-            return;
-          }
+          notes:
+            customer.notes?.trim() || undefined,
 
-          set((state) => ({
-            customers: state.customers.map(
-              (customer) =>
-                customer.id === id
-                  ? {
-                      ...customer,
-                      ...data,
-                    }
-                  : customer
-            ),
-          }));
-        },
+          isActive:
+            customer.isActive ?? true,
+        };
 
-        // ==================================================
-        // حذف عميل
-        // ==================================================
+        set((state) => ({
+          customers: [
+            ...state.customers,
+            newCustomer,
+          ],
+        }));
 
-        deleteCustomer: (id) => {
-          // منع حذف العميل النقدي
-          if (id === CASH_CUSTOMER_ID) {
-            return;
-          }
+        return newCustomer;
+      },
 
-          set((state) => ({
-            customers: state.customers.filter(
-              (customer) =>
-                customer.id !== id
-            ),
-          }));
-        },
+      // =====================================================
+      // UPDATE CUSTOMER
+      // =====================================================
 
-        // ==================================================
-        // الحصول على العميل بواسطة ID
-        // ==================================================
+      updateCustomer: (id, data) => {
+        if (id === CASH_CUSTOMER_ID) {
+          return;
+        }
 
-        getCustomerById: (id) => {
-          return get().customers.find(
-            (customer) =>
-              customer.id === id
-          );
-        },
+        set((state) => ({
+          customers: state.customers.map((customer) =>
+            customer.id === id
+              ? {
+                  ...customer,
+                  ...data,
 
-        // ==================================================
-        // الحصول على العميل بواسطة رقم الحساب
-        // ==================================================
+                  name:
+                    data.name !== undefined
+                      ? data.name.trim()
+                      : customer.name,
 
-        getCustomerByAccountCode: (
-          accountCode
-        ) => {
-          return get().customers.find(
-            (customer) =>
-              customer.accountCode ===
-              accountCode
-          );
-        },
+                  phone:
+                    data.phone !== undefined
+                      ? data.phone?.trim() || undefined
+                      : customer.phone,
 
-        // ==================================================
-        // البحث عن العملاء
-        // ==================================================
+                  address:
+                    data.address !== undefined
+                      ? data.address?.trim() || undefined
+                      : customer.address,
 
-        searchCustomers: (search) => {
-          const value =
-            search.trim().toLowerCase();
+                  accountCode:
+                    data.accountCode !== undefined
+                      ? data.accountCode?.trim() || undefined
+                      : customer.accountCode,
 
-          if (!value) {
-            return get().customers;
-          }
+                  accountName:
+                    data.accountName !== undefined
+                      ? data.accountName?.trim() || undefined
+                      : customer.accountName,
 
-          return get().customers.filter(
-            (customer) =>
-              customer.name
-                .toLowerCase()
-                .includes(value) ||
-
-              customer.phone
-                ?.toLowerCase()
-                .includes(value) ||
-
-              customer.accountCode
-                ?.toLowerCase()
-                .includes(value) ||
-
-              customer.accountName
-                ?.toLowerCase()
-                .includes(value)
-          );
-        },
-
-        // ==================================================
-        // تعديل رصيد العميل
-        // ==================================================
-
-        updateCustomerBalance: (
-          id,
-          balance
-        ) => {
-          set((state) => ({
-            customers: state.customers.map(
-              (customer) =>
-                customer.id === id
-                  ? {
-                      ...customer,
-                      balance,
-                    }
-                  : customer
-            ),
-          }));
-        },
-
-        // ==================================================
-        // مسح جميع العملاء
-        // ==================================================
-
-        clearCustomers: () => {
-          set({
-            customers: [
-              createCashCustomer(),
-            ],
-          });
-        },
-      }),
-
-      // ==================================================
-      // Persist
-      // ==================================================
-
-      {
-        name: "erp-customers-storage",
-
-        // ==================================================
-        // دمج البيانات القديمة مع البيانات الحالية
-        // ==================================================
-
-        merge: (
-          persistedState,
-          currentState
-        ) => {
-          const persisted =
-            persistedState as
-              | Partial<CustomersStore>
-              | undefined;
-
-          const storedCustomers =
-            persisted?.customers;
-
-          if (!storedCustomers) {
-            return currentState;
-          }
-
-          // ----------------------------------------------
-          // التأكد من وجود العميل النقدي
-          // ----------------------------------------------
-
-          const cashCustomerExists =
-            storedCustomers.some(
-              (customer) =>
-                customer.id ===
-                CASH_CUSTOMER_ID
-            );
-
-          let customers: Customer[];
-
-          if (cashCustomerExists) {
-            customers =
-              storedCustomers.map(
-                (customer) => {
-                  if (
-                    customer.id !==
-                    CASH_CUSTOMER_ID
-                  ) {
-                    return {
-                      ...customer,
-
-                      balance:
-                        customer.balance ??
-                        0,
-                    };
-                  }
-
-                  return {
-                    ...customer,
-
-                    id: CASH_CUSTOMER_ID,
-
-                    name: CASH_ACCOUNT_NAME,
-
-                    accountCode:
-                      CASH_ACCOUNT_CODE,
-
-                    accountName:
-                      CASH_ACCOUNT_NAME,
-
-                    balance:
-                      customer.balance ??
-                      0,
-                  };
+                  notes:
+                    data.notes !== undefined
+                      ? data.notes?.trim() || undefined
+                      : customer.notes,
                 }
-              );
-          } else {
-            customers = [
-              createCashCustomer(),
-              ...storedCustomers,
-            ];
-          }
+              : customer,
+          ),
+        }));
+      },
 
-          return {
-            ...currentState,
+      // =====================================================
+      // DELETE CUSTOMER
+      // =====================================================
 
-            customers,
-          };
-        },
-      }
-    )
-  );
+      deleteCustomer: (id) => {
+        if (id === CASH_CUSTOMER_ID) {
+          return;
+        }
+
+        set((state) => ({
+          customers: state.customers.filter(
+            (customer) => customer.id !== id,
+          ),
+        }));
+      },
+
+      // =====================================================
+      // GET CUSTOMER BY ID
+      // =====================================================
+
+      getCustomerById: (id) => {
+        return get().customers.find(
+          (customer) => customer.id === id,
+        );
+      },
+
+      // =====================================================
+      // GET CUSTOMER BY ACCOUNT CODE
+      // =====================================================
+
+      getCustomerByAccountCode: (accountCode) => {
+        return get().customers.find(
+          (customer) =>
+            customer.accountCode === accountCode,
+        );
+      },
+
+      // =====================================================
+      // SEARCH CUSTOMERS
+      // =====================================================
+
+      searchCustomers: (query) => {
+        const value = query.trim().toLowerCase();
+
+        if (!value) {
+          return get().customers;
+        }
+
+        return get().customers.filter((customer) => {
+          return (
+            customer.name
+              .toLowerCase()
+              .includes(value) ||
+
+            String(customer.id)
+              .toLowerCase()
+              .includes(value) ||
+
+            String(customer.phone ?? "")
+              .toLowerCase()
+              .includes(value) ||
+
+            String(customer.address ?? "")
+              .toLowerCase()
+              .includes(value) ||
+
+            String(customer.accountCode ?? "")
+              .toLowerCase()
+              .includes(value) ||
+
+            String(customer.accountName ?? "")
+              .toLowerCase()
+              .includes(value)
+          );
+        });
+      },
+
+      // =====================================================
+      // UPDATE BALANCE
+      // =====================================================
+
+      updateCustomerBalance: (id, amount) => {
+        if (id === CASH_CUSTOMER_ID) {
+          return;
+        }
+
+        set((state) => ({
+          customers: state.customers.map((customer) =>
+            customer.id === id
+              ? {
+                  ...customer,
+                  balance:
+                    Number(customer.balance ?? 0) +
+                    Number(amount ?? 0),
+                }
+              : customer,
+          ),
+        }));
+      },
+
+      // =====================================================
+      // CLEAR CUSTOMERS
+      // =====================================================
+
+      clearCustomers: () => {
+        set({
+          customers: [cashCustomer],
+        });
+      },
+    }),
+
+    {
+      name: "erp-customers-storage",
+
+      // =====================================================
+      // STORAGE MERGE
+      // =====================================================
+
+      merge: (persistedState, currentState) => {
+        const persisted =
+          persistedState as Partial<CustomersStore> | undefined;
+
+        const savedCustomers =
+          Array.isArray(persisted?.customers)
+            ? persisted.customers
+            : [];
+
+        // التأكد من وجود العميل النقدي دائمًا
+        const hasCashCustomer =
+          savedCustomers.some(
+            (customer) =>
+              customer.id === CASH_CUSTOMER_ID,
+          );
+
+        const normalizedCustomers = hasCashCustomer
+          ? savedCustomers
+          : [cashCustomer, ...savedCustomers];
+
+        return {
+          ...currentState,
+
+          ...persisted,
+
+          customers: normalizedCustomers.map(
+            (customer) => ({
+              ...customer,
+
+              balance: Number(
+                customer.balance ?? 0,
+              ),
+
+              isActive:
+                customer.isActive ?? true,
+            }),
+          ),
+        };
+      },
+    },
+  ),
+);

@@ -6,13 +6,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { FiTrash2, FiBell } from "react-icons/fi";
-import { useERPStore } from "@/Store/erpStore";
+import { toast } from "sonner";
 
-export default function TopNave() {
+export default function SideNave() {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
-
-  const clearStore = useERPStore((state) => state.clearStore);
 
   const links = [
     { name: "الرئيسية", path: "/" },
@@ -22,7 +20,13 @@ export default function TopNave() {
     { name: "المخزون", path: "/inventory" },
     { name: "العملاء", path: "/customers" },
     { name: "الموردين", path: "/suppliers" },
+    { name: "المحاسبة", path: "/accounting" },
+    { name: "التقارير", path: "/reports" },
   ];
+
+  // =========================================================
+  // ACTIVE LINK
+  // =========================================================
 
   const isActive = (path: string) => {
     if (path === "/") {
@@ -32,17 +36,52 @@ export default function TopNave() {
     return pathname === path || pathname.startsWith(`${path}/`);
   };
 
+  // =========================================================
+  // مسح جميع بيانات LocalStorage
+  // =========================================================
+
   const handleClearStorage = () => {
     const confirmed = window.confirm(
-      "هل أنت متأكد من مسح جميع بيانات النظام؟\n\nسيتم حذف جميع المنتجات والعملاء والموردين والمبيعات والمشتريات والقيود اليومية.",
+      "هل أنت متأكد من مسح جميع بيانات النظام؟\n\n" +
+        "سيتم حذف جميع البيانات المحفوظة في LocalStorage، " +
+        "بما في ذلك العملاء والموردين والمنتجات والمبيعات والمشتريات " +
+        "والحسابات البنكية والقيود وغيرها.\n\n" +
+        "⚠️ هذا الإجراء نهائي ولا يمكن التراجع عنه.",
     );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
-    clearStore();
-    setMenuOpen(false);
+    try {
+      // =====================================================
+      // مسح جميع بيانات LocalStorage
+      // =====================================================
 
-    alert("تم مسح جميع بيانات النظام بنجاح");
+      localStorage.clear();
+
+      // إغلاق القائمة
+      setMenuOpen(false);
+
+      // رسالة نجاح
+      toast.success("تم مسح جميع بيانات النظام", {
+        description: "تم حذف جميع البيانات المحفوظة في LocalStorage.",
+      });
+
+      // =====================================================
+      // إعادة تحميل التطبيق
+      // =====================================================
+
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 700);
+    } catch (error) {
+      console.error("حدث خطأ أثناء مسح LocalStorage:", error);
+
+      toast.error("تعذر مسح البيانات", {
+        description: "حدث خطأ أثناء محاولة مسح البيانات المحفوظة.",
+      });
+    }
   };
 
   return (
@@ -50,8 +89,11 @@ export default function TopNave() {
       {/* =====================================================
           MOBILE TOP BAR
       ===================================================== */}
-      <div className="lg:hidden fixed top-0 right-0 left-0 z-50 h-14 bg-[#0E1F33] border-b border-gray-700 shadow-md">
-        <div className="h-full px-3 flex items-center justify-between">
+
+      <div className="fixed left-0 right-0 top-0 z-50 h-14 border-b border-gray-700 bg-[#0E1F33] shadow-md lg:hidden">
+        <div className="flex h-full items-center justify-between px-3">
+          {/* Logo */}
+
           <Link href="/" onClick={() => setMenuOpen(false)}>
             <Image
               src={icon}
@@ -63,17 +105,27 @@ export default function TopNave() {
             />
           </Link>
 
+          {/* Menu Button */}
+
           <button
             type="button"
             onClick={() => setMenuOpen(!menuOpen)}
-            className="w-9 h-9 rounded-lg bg-gray-700 hover:bg-gray-600 text-white flex items-center justify-center transition"
-            aria-label="فتح القائمة"
+            className="
+              flex h-9 w-9
+              items-center justify-center
+              rounded-lg
+              bg-gray-700
+              text-white
+              transition
+              hover:bg-gray-600
+            "
+            aria-label={menuOpen ? "إغلاق القائمة" : "فتح القائمة"}
             aria-expanded={menuOpen}
           >
             {menuOpen ? (
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                className="w-5 h-5"
+                className="h-5 w-5"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -88,7 +140,7 @@ export default function TopNave() {
             ) : (
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                className="w-5 h-5"
+                className="h-5 w-5"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -106,42 +158,74 @@ export default function TopNave() {
       </div>
 
       {/* =====================================================
-          MOBILE OVERLAY
+          OVERLAY
       ===================================================== */}
+
       {menuOpen && (
         <div
-          className="lg:hidden fixed inset-0 z-40 bg-black/50"
+          className="
+            fixed
+            inset-0
+            z-40
+            bg-black/40
+            backdrop-blur-[1px]
+          "
           onClick={() => setMenuOpen(false)}
         />
       )}
 
       {/* =====================================================
-          SIDEBAR
+          DROPDOWN MENU
+          تنزل من الأعلى
       ===================================================== */}
+
       <aside
         dir="rtl"
         className={`
-          fixed top-0 right-0 z-50
-          h-screen w-64
+          fixed
+          left-0
+          right-0
+          top-14
+          z-50
+          w-full
+          overflow-hidden
+          border-b
+          border-gray-700
           bg-[#0E1F33]
-          border-l border-gray-700
-          shadow-xl
-          flex flex-col
-          transition-transform duration-300 ease-in-out
-          lg:translate-x-0
-          ${menuOpen ? "translate-x-0" : "translate-x-full"}
+          shadow-2xl
+
+          transition-all
+          duration-300
+          ease-out
+
+          ${
+            menuOpen
+              ? "visible translate-y-0 opacity-100"
+              : "invisible -translate-y-[110%] opacity-0"
+          }
         `}
       >
         {/* =================================================
-            LOGO
+            LOGO / HEADER
         ================================================= */}
-        <div className="h-16 shrink-0 px-4 border-b border-gray-700 flex items-center justify-center">
+
+        <div
+          className="
+            flex
+            h-16
+            items-center
+            justify-center
+            border-b
+            border-gray-700
+            px-4
+          "
+        >
           <Link href="/" onClick={() => setMenuOpen(false)}>
             <Image
               src={icon}
               alt="Logo"
-              width={58}
-              height={58}
+              width={54}
+              height={54}
               priority
               className="rounded-lg object-contain"
             />
@@ -151,12 +235,28 @@ export default function TopNave() {
         {/* =================================================
             NAVIGATION
         ================================================= */}
-        <nav className="sidebar-scroll flex-1 overflow-y-auto px-2.5 py-4">
-          <p className="px-3 mb-2 text-[10px] font-semibold text-gray-500">
+
+        <nav
+          className="
+            max-h-[calc(100vh-8rem)]
+            overflow-y-auto
+            px-3
+            py-4
+          "
+        >
+          <p
+            className="
+              mb-3
+              px-3
+              text-[10px]
+              font-semibold
+              text-gray-500
+            "
+          >
             القائمة الرئيسية
           </p>
 
-          <div className="space-y-0.5">
+          <div className="grid grid-cols-2 gap-2">
             {links.map((link) => {
               const active = isActive(link.path);
 
@@ -166,33 +266,37 @@ export default function TopNave() {
                   href={link.path}
                   onClick={() => setMenuOpen(false)}
                   className={`
+                    group
                     relative
-                    flex items-center
-                    gap-2.5
-                    px-3 py-2
-                    rounded-lg
+                    flex
+                    items-center
+                    gap-2
+                    rounded-xl
+                    px-3
+                    py-2.5
                     text-[12px]
                     font-medium
                     transition-all
                     duration-200
-                    group
+
                     ${
                       active
                         ? "bg-blue-600 text-white shadow-md"
-                        : "text-gray-300 hover:bg-blue-950 hover:text-white"
+                        : "bg-gray-800/40 text-gray-300 hover:bg-blue-950 hover:text-white"
                     }
                   `}
                 >
                   {/* Active Indicator */}
+
                   {active && (
                     <span
                       className="
                         absolute
                         right-0
                         top-1/2
-                        -translate-y-1/2
-                        w-1
                         h-7
+                        w-1
+                        -translate-y-1/2
                         rounded-l-full
                         bg-white
                       "
@@ -200,14 +304,18 @@ export default function TopNave() {
                   )}
 
                   {/* Icon */}
+
                   <span
                     className={`
-                      w-8 h-8
+                      flex
+                      h-8
+                      w-8
                       shrink-0
-                      rounded-lg
-                      flex items-center
+                      items-center
                       justify-center
+                      rounded-lg
                       transition
+
                       ${
                         active
                           ? "bg-white/20 text-white"
@@ -219,6 +327,7 @@ export default function TopNave() {
                   </span>
 
                   {/* Name */}
+
                   <span className="truncate">{link.name}</span>
                 </Link>
               );
@@ -229,104 +338,133 @@ export default function TopNave() {
         {/* =================================================
             BOTTOM SECTION
         ================================================= */}
-        <div className="shrink-0 border-t border-gray-700 p-3">
-          {/* Notifications */}
-          <button
-            type="button"
-            className="
-              w-full
-              flex items-center
-              gap-2.5
-              px-2.5 py-2
-              rounded-lg
-              text-gray-300
-              hover:bg-gray-700
-              transition
-              mb-1.5
-            "
-          >
-            <div
+
+        <div
+          className="
+            border-t
+            border-gray-700
+            bg-[#0E1F33]
+            p-3
+          "
+        >
+          <div className="grid grid-cols-2 gap-2">
+            {/* =================================================
+                Notifications
+            ================================================= */}
+
+            <button
+              type="button"
               className="
-                relative
-                w-8 h-8
-                shrink-0
-                rounded-lg
-                bg-gray-700
-                flex items-center
-                justify-center
+                flex
+                items-center
+                gap-2
+                rounded-xl
+                bg-gray-800/40
+                px-3
+                py-2
+                text-gray-300
+                transition
+                hover:bg-gray-700
               "
             >
-              <FiBell className="w-4 h-4" />
-
-              <span
+              <div
                 className="
-                  absolute
-                  -top-1
-                  -right-1
-                  w-2.5
-                  h-2.5
-                  bg-red-500
-                  border-2
-                  border-[#0E1F33]
-                  rounded-full
+                  relative
+                  flex
+                  h-8
+                  w-8
+                  shrink-0
+                  items-center
+                  justify-center
+                  rounded-lg
+                  bg-gray-700
                 "
-              />
-            </div>
+              >
+                <FiBell className="h-4 w-4" />
 
-            <span className="text-[12px]">الإشعارات</span>
-          </button>
+                <span
+                  className="
+                    absolute
+                    -right-1
+                    -top-1
+                    h-2.5
+                    w-2.5
+                    rounded-full
+                    border-2
+                    border-[#0E1F33]
+                    bg-red-500
+                  "
+                />
+              </div>
 
-          {/* Clear Store */}
-          <button
-            type="button"
-            onClick={handleClearStorage}
-            className="
-              w-full
-              flex items-center
-              gap-2.5
-              px-2.5 py-2
-              rounded-lg
-              text-red-400
-              hover:bg-red-500/10
-              hover:text-red-300
-              transition
-              mb-2
-            "
-          >
-            <div
+              <span className="text-[11px]">الإشعارات</span>
+            </button>
+
+            {/* =================================================
+                Clear All LocalStorage
+            ================================================= */}
+
+            <button
+              type="button"
+              onClick={handleClearStorage}
               className="
-                w-8 h-8
-                shrink-0
-                rounded-lg
-                bg-red-500/10
-                flex items-center
-                justify-center
+                flex
+                items-center
+                gap-2
+                rounded-xl
+                bg-red-500/5
+                px-3
+                py-2
+                text-red-400
+                transition
+                hover:bg-red-500/10
+                hover:text-red-300
               "
             >
-              <FiTrash2 className="w-4 h-4" />
-            </div>
+              <div
+                className="
+                  flex
+                  h-8
+                  w-8
+                  shrink-0
+                  items-center
+                  justify-center
+                  rounded-lg
+                  bg-red-500/10
+                "
+              >
+                <FiTrash2 className="h-4 w-4" />
+              </div>
 
-            <span className="text-[12px]">مسح جميع البيانات</span>
-          </button>
+              <span className="text-[11px]">مسح البيانات</span>
+            </button>
+          </div>
 
-          {/* User */}
+          {/* =================================================
+              USER
+          ================================================= */}
+
           <div
             className="
-              flex items-center
+              mt-2
+              flex
+              items-center
               gap-2.5
-              p-2.5
-              rounded-lg
+              rounded-xl
               bg-gray-700/50
+              p-2.5
             "
           >
             <div
               className="
-                w-9 h-9
+                flex
+                h-9
+                w-9
                 shrink-0
+                items-center
+                justify-center
                 rounded-full
                 bg-gray-200
-                flex items-center
-                justify-center
                 text-sm
               "
             >
@@ -334,7 +472,7 @@ export default function TopNave() {
             </div>
 
             <div className="min-w-0">
-              <p className="text-[12px] font-semibold text-white truncate">
+              <p className="truncate text-[12px] font-semibold text-white">
                 عبدالله
               </p>
 

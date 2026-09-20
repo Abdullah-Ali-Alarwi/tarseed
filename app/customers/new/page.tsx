@@ -12,12 +12,17 @@ import {
   FiDollarSign,
 } from "react-icons/fi";
 import { toast } from "sonner";
-import { useERPStore } from "@/Store/erpStore";
+
+import { useCustomersStore } from "@/Store/customersStore";
 
 export default function NewCustomerPage() {
   const router = useRouter();
 
-  const { addCustomer } = useERPStore();
+  // ==================================================
+  // ZUSTAND - CUSTOMERS
+  // ==================================================
+
+  const addCustomer = useCustomersStore((state) => state.addCustomer);
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -50,7 +55,7 @@ export default function NewCustomerPage() {
 
     const numericBalance = Number(balance || 0);
 
-    if (Number.isNaN(numericBalance)) {
+    if (!Number.isFinite(numericBalance)) {
       toast.error("الرصيد الافتتاحي غير صحيح");
       return;
     }
@@ -58,6 +63,10 @@ export default function NewCustomerPage() {
     setSaving(true);
 
     try {
+      // ----------------------------------------------
+      // إنشاء العميل
+      // ----------------------------------------------
+
       const created = addCustomer({
         name: customerName,
 
@@ -66,9 +75,15 @@ export default function NewCustomerPage() {
         address: address.trim() || undefined,
 
         balance: numericBalance,
+
+        isActive: true,
       });
 
-      if (!created) {
+      // ----------------------------------------------
+      // التحقق من الإنشاء
+      // ----------------------------------------------
+
+      if (!created?.id) {
         toast.error("تعذر إنشاء العميل. تأكد من صحة البيانات.");
 
         setSaving(false);
@@ -76,21 +91,23 @@ export default function NewCustomerPage() {
       }
 
       // ----------------------------------------------
-      // رسالة نجاح
+      // رسالة النجاح
       // ----------------------------------------------
 
-      toast.success("تم إضافة العميل بنجاح");
+      toast.success("تم إضافة العميل بنجاح", {
+        description: `تم إنشاء حساب العميل ${created.name}`,
+      });
 
       // ----------------------------------------------
       // الانتقال إلى صفحة العميل
       // ----------------------------------------------
 
       router.push(`/customers/${created.id}`);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error("Error adding customer:", error);
 
       toast.error(
-        err instanceof Error ? err.message : "حدث خطأ أثناء حفظ العميل",
+        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ العميل",
       );
 
       setSaving(false);

@@ -1,11 +1,9 @@
-    "use client";
-
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-/* =========================================================
-   بيانات المورد
-========================================================= */
+// ======================================================
+// Supplier
+// ======================================================
 
 export interface Supplier {
   id: string;
@@ -13,259 +11,297 @@ export interface Supplier {
   phone?: string;
   address?: string;
   balance?: number;
-
-  // الحساب المحاسبي المرتبط بالمورد
   accountCode?: string;
   accountName?: string;
-
   notes?: string;
   isActive?: boolean;
 }
 
-/* =========================================================
-   بيانات Store
-========================================================= */
+// ======================================================
+// Helpers
+// ======================================================
 
-interface SuppliersStore {
+const generateSupplierId = () => {
+  return `supplier-${Date.now()}-${Math.random()
+    .toString(36)
+    .substring(2, 8)}`;
+};
+
+const generateAccountCode = (suppliers: Supplier[]) => {
+  const usedCodes = suppliers
+    .map((supplier) => Number(supplier.accountCode))
+    .filter((code) => Number.isFinite(code));
+
+  let code = 1001;
+
+  while (usedCodes.includes(code)) {
+    code++;
+  }
+
+  return String(code);
+};
+
+// ======================================================
+// Store Types
+// ======================================================
+
+interface SuppliersState {
   suppliers: Supplier[];
 
   addSupplier: (
-    supplier: Supplier
-  ) => void;
+    supplier: Omit<Supplier, "id">,
+  ) => Supplier;
 
   updateSupplier: (
     id: string,
-    data: Partial<Supplier>
+    data: Partial<Omit<Supplier, "id">>,
   ) => void;
 
-  deleteSupplier: (
-    id: string
-  ) => void;
+  deleteSupplier: (id: string) => void;
 
   getSupplierById: (
-    id: string
+    id: string,
   ) => Supplier | undefined;
 
   getSupplierByAccountCode: (
-    accountCode: string
+    accountCode: string,
   ) => Supplier | undefined;
 
   searchSuppliers: (
-    query: string
+    query: string,
   ) => Supplier[];
 
   updateSupplierBalance: (
     id: string,
-    balance: number
+    balance: number,
   ) => void;
 
   clearSuppliers: () => void;
 }
 
-/* =========================================================
-   البيانات الافتراضية
-========================================================= */
+// ======================================================
+// Zustand Store
+// ======================================================
 
-const defaultSuppliers: Supplier[] = [
-  {
-    id: "supplier-001",
-    name: "شركة مواد البناء",
-    phone: "",
-    address: "",
-    balance: 85000,
-    accountCode: "2001",
-    accountName: "الموردون",
-    isActive: true,
-  },
+export const useSuppliersStore = create<SuppliersState>()(
+  persist(
+    (set, get) => ({
+      // --------------------------------------------------
+      // البيانات
+      // --------------------------------------------------
 
-  {
-    id: "supplier-002",
-    name: "مؤسسة النور للتجارة",
-    phone: "",
-    address: "",
-    balance: 42500,
-    accountCode: "2002",
-    accountName: "مؤسسة النور للتجارة",
-    isActive: true,
-  },
+      suppliers: [],
 
-  {
-    id: "supplier-003",
-    name: "شركة الحديد المتحدة",
-    phone: "",
-    address: "",
-    balance: 120000,
-    accountCode: "2003",
-    accountName: "شركة الحديد المتحدة",
-    isActive: true,
-  },
-];
+      // --------------------------------------------------
+      // إضافة مورد
+      // --------------------------------------------------
 
-/* =========================================================
-   Zustand Store
-========================================================= */
+      addSupplier: (supplierData) => {
+        const currentSuppliers = get().suppliers;
 
-export const useSuppliersStore =
-  create<SuppliersStore>()(
-    persist(
-      (set, get) => ({
-        suppliers: defaultSuppliers,
+        const name = supplierData.name.trim();
 
-        /* =================================================
-           إضافة مورد
-        ================================================= */
+        if (!name) {
+          throw new Error("اسم المورد مطلوب");
+        }
 
-        addSupplier: (supplier) => {
-          set((state) => ({
-            suppliers: [
-              ...state.suppliers,
-              {
-                ...supplier,
-                balance:
-                  Number(supplier.balance) || 0,
-                isActive:
-                  supplier.isActive !== false,
-              },
-            ],
-          }));
-        },
+        // منع تكرار اسم المورد
+        const exists = currentSuppliers.some(
+          (supplier) =>
+            supplier.name.trim().toLowerCase() ===
+            name.toLowerCase(),
+        );
 
-        /* =================================================
-           تعديل مورد
-        ================================================= */
+        if (exists) {
+          throw new Error("هذا المورد موجود بالفعل");
+        }
 
-        updateSupplier: (
-          id,
-          data
-        ) => {
-          set((state) => ({
-            suppliers:
-              state.suppliers.map(
-                (supplier) =>
-                  supplier.id === id
-                    ? {
-                        ...supplier,
-                        ...data,
-                      }
-                    : supplier
-              ),
-          }));
-        },
+        const supplier: Supplier = {
+          id: generateSupplierId(),
 
-        /* =================================================
-           حذف مورد
-        ================================================= */
+          name,
 
-        deleteSupplier: (id) => {
-          set((state) => ({
-            suppliers:
-              state.suppliers.filter(
-                (supplier) =>
-                  supplier.id !== id
-              ),
-          }));
-        },
+          phone:
+            supplierData.phone?.trim() || undefined,
 
-        /* =================================================
-           الحصول على مورد بواسطة ID
-        ================================================= */
+          address:
+            supplierData.address?.trim() || undefined,
 
-        getSupplierById: (id) => {
-          return get().suppliers.find(
+          balance:
+            Number.isFinite(supplierData.balance)
+              ? supplierData.balance
+              : 0,
+
+          accountCode:
+            supplierData.accountCode ||
+            generateAccountCode(currentSuppliers),
+
+          accountName:
+            supplierData.accountName || name,
+
+          notes:
+            supplierData.notes?.trim() || undefined,
+
+          isActive:
+            supplierData.isActive ?? true,
+        };
+
+        set({
+          suppliers: [
+            ...currentSuppliers,
+            supplier,
+          ],
+        });
+
+        return supplier;
+      },
+
+      // --------------------------------------------------
+      // تعديل المورد
+      // --------------------------------------------------
+
+      updateSupplier: (id, data) => {
+        set((state) => ({
+          suppliers: state.suppliers.map(
             (supplier) =>
               supplier.id === id
-          );
-        },
+                ? {
+                    ...supplier,
+                    ...data,
+                    id: supplier.id,
+                  }
+                : supplier,
+          ),
+        }));
+      },
 
-        /* =================================================
-           الحصول على المورد بواسطة الحساب
-        ================================================= */
+      // --------------------------------------------------
+      // حذف المورد
+      // --------------------------------------------------
 
-        getSupplierByAccountCode: (
-          accountCode
-        ) => {
-          return get().suppliers.find(
+      deleteSupplier: (id) => {
+        set((state) => ({
+          suppliers: state.suppliers.filter(
+            (supplier) => supplier.id !== id,
+          ),
+        }));
+      },
+
+      // --------------------------------------------------
+      // البحث بالـ ID
+      // --------------------------------------------------
+
+      getSupplierById: (id) => {
+        return get().suppliers.find(
+          (supplier) => supplier.id === id,
+        );
+      },
+
+      // --------------------------------------------------
+      // البحث بكود الحساب
+      // --------------------------------------------------
+
+      getSupplierByAccountCode: (accountCode) => {
+        return get().suppliers.find(
+          (supplier) =>
+            supplier.accountCode === accountCode,
+        );
+      },
+
+      // --------------------------------------------------
+      // البحث
+      // --------------------------------------------------
+
+      searchSuppliers: (query) => {
+        const value = query.trim().toLowerCase();
+
+        if (!value) {
+          return get().suppliers;
+        }
+
+        return get().suppliers.filter(
+          (supplier) =>
+            supplier.id
+              .toLowerCase()
+              .includes(value) ||
+            supplier.name
+              .toLowerCase()
+              .includes(value) ||
+            String(supplier.phone || "")
+              .toLowerCase()
+              .includes(value) ||
+            String(supplier.address || "")
+              .toLowerCase()
+              .includes(value) ||
+            String(supplier.accountCode || "")
+              .toLowerCase()
+              .includes(value),
+        );
+      },
+
+      // --------------------------------------------------
+      // تعديل الرصيد
+      // --------------------------------------------------
+
+      updateSupplierBalance: (id, balance) => {
+        set((state) => ({
+          suppliers: state.suppliers.map(
             (supplier) =>
-              supplier.accountCode ===
-              accountCode
-          );
-        },
+              supplier.id === id
+                ? {
+                    ...supplier,
+                    balance,
+                  }
+                : supplier,
+          ),
+        }));
+      },
 
-        /* =================================================
-           البحث عن الموردين
-        ================================================= */
+      // --------------------------------------------------
+      // مسح الموردين
+      // --------------------------------------------------
 
-        searchSuppliers: (query) => {
-          const search =
-            query.trim().toLowerCase();
+      clearSuppliers: () => {
+        set({
+          suppliers: [],
+        });
+      },
+    }),
 
-          if (!search) {
-            return get().suppliers;
-          }
+    {
+      name: "erp-suppliers-storage",
 
-          return get().suppliers.filter(
-            (supplier) => {
-              return (
-                supplier.name
-                  .toLowerCase()
-                  .includes(search) ||
+      version: 1,
 
-                supplier.phone
-                  ?.toLowerCase()
-                  .includes(search) ||
+      // --------------------------------------------------
+      // دمج البيانات القديمة
+      // --------------------------------------------------
 
-                supplier.address
-                  ?.toLowerCase()
-                  .includes(search) ||
+      merge: (persistedState, currentState) => {
+        const persisted =
+          persistedState as Partial<SuppliersState>;
 
-                supplier.accountCode
-                  ?.toLowerCase()
-                  .includes(search) ||
+        const suppliers = Array.isArray(
+          persisted?.suppliers,
+        )
+          ? persisted.suppliers.map((supplier) => ({
+              ...supplier,
 
-                supplier.accountName
-                  ?.toLowerCase()
-                  .includes(search)
-              );
-            }
-          );
-        },
+              balance:
+                typeof supplier.balance === "number"
+                  ? supplier.balance
+                  : 0,
 
-        /* =================================================
-           تعديل رصيد المورد
-        ================================================= */
+              isActive:
+                supplier.isActive ?? true,
+            }))
+          : [];
 
-        updateSupplierBalance: (
-          id,
-          balance
-        ) => {
-          set((state) => ({
-            suppliers:
-              state.suppliers.map(
-                (supplier) =>
-                  supplier.id === id
-                    ? {
-                        ...supplier,
-                        balance:
-                          Number(balance) || 0,
-                      }
-                    : supplier
-              ),
-          }));
-        },
-
-        /* =================================================
-           حذف جميع الموردين
-        ================================================= */
-
-        clearSuppliers: () => {
-          set({
-            suppliers: [],
-          });
-        },
-      }),
-
-      {
-        name: "erp-suppliers-storage",
-      }
-    )
-  );
+        return {
+          ...currentState,
+          suppliers,
+        };
+      },
+    },
+  ),
+);

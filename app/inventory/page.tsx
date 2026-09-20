@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useERPStore } from "@/Store/erpStore";
 import {
   FiPlus,
   FiSearch,
@@ -13,6 +12,10 @@ import {
   FiMoreVertical,
 } from "react-icons/fi";
 
+import { useProductsStore } from "@/Store/productsStore";
+import { usePurchasesStore } from "@/Store/purchasesStore";
+import { useSalesStore } from "@/Store/salesStore";
+
 export default function InventoryPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("جميع التصنيفات");
@@ -21,9 +24,9 @@ export default function InventoryPage() {
      ZUSTAND
   ===================================================== */
 
-  const products = useERPStore((state) => state.products);
-  const purchases = useERPStore((state) => state.purchases);
-  const sales = useERPStore((state) => state.sales);
+  const products = useProductsStore((state) => state.products);
+  const purchases = usePurchasesStore((state) => state.purchases);
+  const sales = useSalesStore((state) => state.sales);
 
   /* =====================================================
      FORMAT MONEY
@@ -40,7 +43,21 @@ export default function InventoryPage() {
      CATEGORY
   ===================================================== */
 
-  const getCategory = (code: number | string) => {
+  const getCategory = (
+    productCategory: string | undefined,
+    code: string | number,
+  ) => {
+    /*
+     * إذا كان المنتج يحتوي على تصنيف محفوظ في productsStore
+     * نستخدمه مباشرة.
+     */
+    if (productCategory?.trim()) {
+      return productCategory;
+    }
+
+    /*
+     * تصنيف احتياطي حسب كود الصنف.
+     */
     const codeString = String(code);
 
     if (codeString.startsWith("100")) {
@@ -84,15 +101,21 @@ export default function InventoryPage() {
 
       purchases.forEach((purchase) => {
         purchase.items.forEach((item) => {
+          /*
+           * الربط الأساسي بين الصنف وحركة الشراء
+           */
           if (item.productId !== product.id) {
             return;
           }
 
           const quantity = getNumericAmount(item.quantity);
+
           const price = getNumericAmount(item.price);
 
           purchasedQuantity += quantity;
+
           purchaseQuantity += quantity;
+
           purchaseValue += quantity * price;
         });
       });
@@ -102,7 +125,17 @@ export default function InventoryPage() {
       ------------------------------------------ */
 
       sales.forEach((sale) => {
+        /*
+         * الفاتورة الملغاة لا تؤثر على المخزون
+         */
+        if (sale.status === "cancelled") {
+          return;
+        }
+
         sale.items.forEach((item) => {
+          /*
+           * الربط الأساسي بين الصنف وحركة البيع
+           */
           if (item.productId !== product.id) {
             return;
           }
@@ -130,14 +163,31 @@ export default function InventoryPage() {
 
       const total = quantity * averagePurchasePrice;
 
+      /* ------------------------------------------
+         التصنيف
+      ------------------------------------------ */
+
+      const productCategory = getCategory(product.category, product.code);
+
+      /* ------------------------------------------
+         النتيجة
+      ------------------------------------------ */
+
       return {
         ...product,
+
         quantity,
+
         averagePurchasePrice,
+
         total,
-        category: getCategory(product.code),
+
+        category: productCategory,
+
         status: getStatus(quantity),
+
         purchasedQuantity,
+
         soldQuantity,
       };
     });
@@ -190,13 +240,16 @@ export default function InventoryPage() {
   ===================================================== */
 
   const categories = useMemo(() => {
-    return [
-      "جميع التصنيفات",
-      ...Array.from(
-        new Set(inventoryProducts.map((product) => product.category)),
-      ),
-    ];
+    const uniqueCategories = Array.from(
+      new Set(inventoryProducts.map((product) => product.category)),
+    );
+
+    return ["جميع التصنيفات", ...uniqueCategories];
   }, [inventoryProducts]);
+
+  /* =====================================================
+     JSX
+  ===================================================== */
 
   return (
     <main className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-5" dir="rtl">
@@ -216,14 +269,43 @@ export default function InventoryPage() {
         <div className="flex gap-2">
           <Link
             href="/inventory/movements"
-            className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+            className="
+              inline-flex
+              items-center
+              justify-center
+              rounded-lg
+              border
+              border-gray-200
+              bg-white
+              px-3
+              py-2
+              text-xs
+              font-medium
+              text-gray-700
+              transition
+              hover:bg-gray-50
+            "
           >
             حركة المخزون
           </Link>
 
           <Link
             href="/products/new"
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-amber-700"
+            className="
+              inline-flex
+              items-center
+              justify-center
+              gap-1.5
+              rounded-lg
+              bg-amber-600
+              px-3
+              py-2
+              text-xs
+              font-medium
+              text-white
+              transition
+              hover:bg-amber-700
+            "
           >
             <FiPlus size={15} />
             إضافة صنف
@@ -290,7 +372,13 @@ export default function InventoryPage() {
 
               <div className="relative w-full sm:w-60">
                 <FiSearch
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                  className="
+                    absolute
+                    right-2.5
+                    top-1/2
+                    -translate-y-1/2
+                    text-gray-400
+                  "
                   size={15}
                 />
 
@@ -299,7 +387,23 @@ export default function InventoryPage() {
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="البحث عن صنف..."
-                  className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-8 text-xs text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-500 focus:ring-1 focus:ring-amber-100"
+                  className="
+                    w-full
+                    rounded-lg
+                    border
+                    border-gray-200
+                    bg-white
+                    py-2
+                    pl-3
+                    pr-8
+                    text-xs
+                    text-gray-900
+                    outline-none
+                    placeholder:text-gray-400
+                    focus:border-amber-500
+                    focus:ring-1
+                    focus:ring-amber-100
+                  "
                 />
               </div>
 
@@ -308,7 +412,18 @@ export default function InventoryPage() {
               <select
                 value={category}
                 onChange={(event) => setCategory(event.target.value)}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 outline-none focus:border-amber-500"
+                className="
+                  rounded-lg
+                  border
+                  border-gray-200
+                  bg-white
+                  px-3
+                  py-2
+                  text-xs
+                  text-gray-900
+                  outline-none
+                  focus:border-amber-500
+                "
               >
                 {categories.map((item) => (
                   <option key={item} value={item}>
@@ -371,7 +486,11 @@ export default function InventoryPage() {
                     <td className="px-3 py-2.5">
                       <Link
                         href={`/inventory/${product.id}`}
-                        className="font-semibold text-amber-600 hover:text-amber-700"
+                        className="
+                            font-semibold
+                            text-amber-600
+                            hover:text-amber-700
+                          "
                       >
                         {product.code}
                       </Link>
@@ -382,7 +501,11 @@ export default function InventoryPage() {
                     <td className="px-3 py-2.5">
                       <Link
                         href={`/inventory/${product.id}`}
-                        className="font-semibold text-gray-700 hover:text-amber-600"
+                        className="
+                            font-semibold
+                            text-gray-700
+                            hover:text-amber-600
+                          "
                       >
                         {product.name}
                       </Link>
@@ -438,7 +561,14 @@ export default function InventoryPage() {
                       <div className="flex items-center gap-0.5">
                         <Link
                           href={`/inventory/${product.id}`}
-                          className="rounded-md p-1.5 text-gray-400 transition hover:bg-amber-50 hover:text-amber-600"
+                          className="
+                              rounded-md
+                              p-1.5
+                              text-gray-400
+                              transition
+                              hover:bg-amber-50
+                              hover:text-amber-600
+                            "
                           title="تفاصيل المخزون"
                         >
                           <FiPackage size={15} />
@@ -446,7 +576,14 @@ export default function InventoryPage() {
 
                         <button
                           type="button"
-                          className="rounded-md p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+                          className="
+                              rounded-md
+                              p-1.5
+                              text-gray-400
+                              transition
+                              hover:bg-gray-100
+                              hover:text-gray-600
+                            "
                           title="المزيد"
                         >
                           <FiMoreVertical size={15} />
@@ -459,7 +596,13 @@ export default function InventoryPage() {
                 <tr>
                   <td
                     colSpan={8}
-                    className="px-3 py-10 text-center text-xs text-gray-400"
+                    className="
+                      px-3
+                      py-10
+                      text-center
+                      text-xs
+                      text-gray-400
+                    "
                   >
                     لا توجد أصناف مطابقة للبحث أو التصنيف
                   </td>
@@ -482,14 +625,29 @@ export default function InventoryPage() {
             <button
               type="button"
               disabled
-              className="rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] text-gray-400"
+              className="
+                rounded-md
+                border
+                border-gray-200
+                px-2.5
+                py-1.5
+                text-[11px]
+                text-gray-400
+              "
             >
               السابق
             </button>
 
             <button
               type="button"
-              className="rounded-md bg-amber-600 px-2.5 py-1.5 text-[11px] text-white"
+              className="
+                rounded-md
+                bg-amber-600
+                px-2.5
+                py-1.5
+                text-[11px]
+                text-white
+              "
             >
               1
             </button>
@@ -497,7 +655,15 @@ export default function InventoryPage() {
             <button
               type="button"
               disabled
-              className="rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] text-gray-400"
+              className="
+                rounded-md
+                border
+                border-gray-200
+                px-2.5
+                py-1.5
+                text-[11px]
+                text-gray-400
+              "
             >
               التالي
             </button>
@@ -562,7 +728,16 @@ function Status({ status }: { status: "متوفر" | "منخفض" }) {
 
   return (
     <span
-      className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium ${styles[status]}`}
+      className={`
+        inline-flex
+        whitespace-nowrap
+        rounded-full
+        px-2
+        py-0.5
+        text-[10px]
+        font-medium
+        ${styles[status]}
+      `}
     >
       {status}
     </span>

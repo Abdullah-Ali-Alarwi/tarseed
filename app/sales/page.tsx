@@ -9,7 +9,6 @@ import {
   FiDollarSign,
   FiClock,
   FiCheckCircle,
-  FiTrash2,
   FiPrinter,
   FiEye,
 } from "react-icons/fi";
@@ -27,8 +26,6 @@ export default function SalesPage() {
   ===================================================== */
 
   const sales = useSalesStore((state) => state.sales);
-
-  const deleteSale = useSalesStore((state) => state.deleteSale);
 
   /* =====================================================
      البحث في الفواتير
@@ -48,10 +45,13 @@ export default function SalesPage() {
 
       const accountName = (sale.accountName ?? "").toLowerCase();
 
+      const accountCode = (sale.accountCode ?? "").toLowerCase();
+
       return (
         invoiceNumber.includes(value) ||
         customerName.includes(value) ||
-        accountName.includes(value)
+        accountName.includes(value) ||
+        accountCode.includes(value)
       );
     });
   }, [sales, search]);
@@ -61,15 +61,21 @@ export default function SalesPage() {
   ===================================================== */
 
   const statistics = useMemo(() => {
-    const total = sales.reduce((sum, sale) => sum + sale.total, 0);
+    const total = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
 
     const paid = sales.filter((sale) => sale.status === "paid");
 
     const pending = sales.filter((sale) => sale.status === "pending");
 
-    const paidTotal = paid.reduce((sum, sale) => sum + sale.total, 0);
+    const paidTotal = paid.reduce(
+      (sum, sale) => sum + Number(sale.total || 0),
+      0,
+    );
 
-    const pendingTotal = pending.reduce((sum, sale) => sum + sale.total, 0);
+    const pendingTotal = pending.reduce(
+      (sum, sale) => sum + Number(sale.total || 0),
+      0,
+    );
 
     return {
       count: sales.length,
@@ -86,11 +92,11 @@ export default function SalesPage() {
   ===================================================== */
 
   const formatMoney = (value: number) => {
-    return value.toLocaleString("ar-YE");
+    return Number(value || 0).toLocaleString("ar-YE");
   };
 
   /* =====================================================
-     اسم طريقة الدفع
+     طريقة الدفع
   ===================================================== */
 
   const getPaymentMethodName = (method: string) => {
@@ -105,12 +111,12 @@ export default function SalesPage() {
         return "آجل";
 
       default:
-        return method;
+        return method || "-";
     }
   };
 
   /* =====================================================
-     اسم الحالة
+     حالة الفاتورة
   ===================================================== */
 
   const getStatusName = (status: string) => {
@@ -125,24 +131,21 @@ export default function SalesPage() {
         return "ملغاة";
 
       default:
-        return status;
+        return status || "-";
     }
   };
 
   /* =====================================================
-     تأكيد الحذف
+     الطباعة
   ===================================================== */
 
-  const handleDelete = (id: string, invoiceNumber: string) => {
-    const confirmed = window.confirm(
-      `هل أنت متأكد من حذف الفاتورة ${invoiceNumber}؟`,
-    );
+  const handlePrint = (id: string) => {
+    const printWindow = window.open(`/sales/${id}/print`, "_blank");
 
-    if (!confirmed) {
-      return;
+    if (!printWindow) {
+      // لا يوجد حذف أو تعديل للفاتورة هنا
+      console.error("تعذر فتح صفحة الطباعة، يرجى السماح بالنوافذ المنبثقة.");
     }
-
-    deleteSale(id);
   };
 
   /* =====================================================
@@ -150,26 +153,26 @@ export default function SalesPage() {
   ===================================================== */
 
   return (
-    <main dir="rtl" className="min-h-screen bg-gray-50 p-4">
+    <main dir="rtl" className="min-h-screen bg-gray-50 p-2 sm:p-3">
       <div className="mx-auto max-w-[1500px]">
         {/* =================================================
             رأس الصفحة
         ================================================= */}
 
-        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-800">المبيعات</h1>
+            <h1 className="text-base font-bold text-gray-800">المبيعات</h1>
 
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-0.5 text-[9px] text-gray-500">
               إدارة ومتابعة فواتير المبيعات
             </p>
           </div>
 
           <Link
             href="/sales/new"
-            className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+            className="flex h-8 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 text-[10px] font-bold text-white shadow-sm transition hover:bg-blue-700"
           >
-            <FiPlus size={17} />
+            <FiPlus size={14} />
             فاتورة مبيعات جديدة
           </Link>
         </div>
@@ -178,85 +181,85 @@ export default function SalesPage() {
             بطاقات الإحصائيات
         ================================================= */}
 
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
           {/* عدد الفواتير */}
 
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-gray-500">عدد الفواتير</p>
+                <p className="text-[9px] text-gray-500">عدد الفواتير</p>
 
-                <p className="mt-2 text-xl font-bold text-gray-800">
+                <p className="mt-1 text-base font-bold text-gray-800">
                   {statistics.count}
                 </p>
               </div>
 
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                <FiFileText size={20} />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                <FiFileText size={15} />
               </div>
             </div>
           </div>
 
           {/* إجمالي المبيعات */}
 
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-gray-500">إجمالي المبيعات</p>
+                <p className="text-[9px] text-gray-500">إجمالي المبيعات</p>
 
-                <p className="mt-2 text-xl font-bold text-gray-800">
+                <p className="mt-1 text-base font-bold text-gray-800">
                   {formatMoney(statistics.total)}
                 </p>
 
-                <p className="mt-1 text-[10px] text-gray-400">ريال</p>
+                <p className="text-[8px] text-gray-400">ريال</p>
               </div>
 
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-600">
-                <FiDollarSign size={20} />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-50 text-green-600">
+                <FiDollarSign size={15} />
               </div>
             </div>
           </div>
 
           {/* المدفوعة */}
 
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-gray-500">الفواتير المدفوعة</p>
+                <p className="text-[9px] text-gray-500">الفواتير المدفوعة</p>
 
-                <p className="mt-2 text-xl font-bold text-green-600">
+                <p className="mt-1 text-base font-bold text-green-600">
                   {statistics.paidCount}
                 </p>
 
-                <p className="mt-1 text-[10px] text-gray-400">
+                <p className="text-[8px] text-gray-400">
                   {formatMoney(statistics.paidTotal)} ريال
                 </p>
               </div>
 
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50 text-green-600">
-                <FiCheckCircle size={20} />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-50 text-green-600">
+                <FiCheckCircle size={15} />
               </div>
             </div>
           </div>
 
           {/* المعلقة */}
 
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-gray-500">الفواتير المعلقة</p>
+                <p className="text-[9px] text-gray-500">الفواتير المعلقة</p>
 
-                <p className="mt-2 text-xl font-bold text-orange-500">
+                <p className="mt-1 text-base font-bold text-orange-500">
                   {statistics.pendingCount}
                 </p>
 
-                <p className="mt-1 text-[10px] text-gray-400">
+                <p className="text-[8px] text-gray-400">
                   {formatMoney(statistics.pendingTotal)} ريال
                 </p>
               </div>
 
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
-                <FiClock size={20} />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
+                <FiClock size={15} />
               </div>
             </div>
           </div>
@@ -266,10 +269,10 @@ export default function SalesPage() {
             البحث
         ================================================= */}
 
-        <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm">
           <div className="relative">
             <FiSearch
-              size={18}
+              size={15}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
             />
 
@@ -278,7 +281,7 @@ export default function SalesPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="ابحث برقم الفاتورة أو اسم العميل أو الحساب..."
-              className="w-full rounded-lg border border-gray-300 bg-gray-50 py-2.5 pr-10 pl-4 text-sm outline-none transition focus:border-blue-500 focus:bg-white"
+              className="h-8 w-full rounded-lg border border-gray-300 bg-gray-50 pr-9 pl-3 text-[10px] outline-none transition focus:border-blue-500 focus:bg-white"
             />
           </div>
         </div>
@@ -290,13 +293,13 @@ export default function SalesPage() {
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           {/* عنوان الجدول */}
 
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+          <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2.5">
             <div>
-              <h2 className="text-sm font-bold text-gray-800">
+              <h2 className="text-[11px] font-bold text-gray-800">
                 فواتير المبيعات
               </h2>
 
-              <p className="mt-1 text-[10px] text-gray-500">
+              <p className="mt-0.5 text-[8px] text-gray-500">
                 عدد النتائج: {filteredSales.length}
               </p>
             </div>
@@ -305,24 +308,24 @@ export default function SalesPage() {
           {/* الجدول */}
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-right">
+            <table className="w-full min-w-[900px] text-right">
               <thead>
-                <tr className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
-                  <th className="px-4 py-3 font-semibold">رقم الفاتورة</th>
+                <tr className="border-b border-gray-200 bg-gray-50 text-[10px] text-gray-500">
+                  <th className="px-3 py-2.5 font-semibold">رقم الفاتورة</th>
 
-                  <th className="px-4 py-3 font-semibold">التاريخ</th>
+                  <th className="px-3 py-2.5 font-semibold">التاريخ</th>
 
-                  <th className="px-4 py-3 font-semibold">العميل</th>
+                  <th className="px-3 py-2.5 font-semibold">العميل</th>
 
-                  <th className="px-4 py-3 font-semibold">طريقة الدفع</th>
+                  <th className="px-3 py-2.5 font-semibold">طريقة الدفع</th>
 
-                  <th className="px-4 py-3 font-semibold">عدد الأصناف</th>
+                  <th className="px-3 py-2.5 font-semibold">الأصناف</th>
 
-                  <th className="px-4 py-3 font-semibold">الإجمالي</th>
+                  <th className="px-3 py-2.5 font-semibold">الإجمالي</th>
 
-                  <th className="px-4 py-3 font-semibold">الحالة</th>
+                  <th className="px-3 py-2.5 font-semibold">الحالة</th>
 
-                  <th className="px-4 py-3 text-center font-semibold">
+                  <th className="px-3 py-2.5 text-center font-semibold">
                     الإجراءات
                   </th>
                 </tr>
@@ -331,17 +334,17 @@ export default function SalesPage() {
               <tbody>
                 {filteredSales.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center">
+                    <td colSpan={8} className="px-3 py-12 text-center">
                       <FiFileText
-                        size={32}
-                        className="mx-auto mb-3 text-gray-300"
+                        size={28}
+                        className="mx-auto mb-2 text-gray-300"
                       />
 
-                      <p className="text-sm font-semibold text-gray-500">
+                      <p className="text-[11px] font-semibold text-gray-500">
                         لا توجد فواتير
                       </p>
 
-                      <p className="mt-1 text-xs text-gray-400">
+                      <p className="mt-1 text-[9px] text-gray-400">
                         لم يتم العثور على فواتير مطابقة للبحث
                       </p>
                     </td>
@@ -354,27 +357,27 @@ export default function SalesPage() {
                     >
                       {/* رقم الفاتورة */}
 
-                      <td className="px-4 py-3">
-                        <div className="font-bold text-blue-600">
+                      <td className="px-3 py-2">
+                        <div className="text-[10px] font-bold text-blue-600">
                           {sale.invoiceNumber}
                         </div>
                       </td>
 
                       {/* التاريخ */}
 
-                      <td className="px-4 py-3 text-xs text-gray-600">
+                      <td className="px-3 py-2 text-[9px] text-gray-600">
                         {sale.date}
                       </td>
 
                       {/* العميل */}
 
-                      <td className="px-4 py-3">
-                        <div className="text-sm font-semibold text-gray-800">
+                      <td className="px-3 py-2">
+                        <div className="text-[10px] font-semibold text-gray-800">
                           {sale.customerName || "عميل نقدي"}
                         </div>
 
                         {sale.accountName && (
-                          <div className="mt-1 text-[10px] text-gray-400">
+                          <div className="mt-0.5 text-[8px] text-gray-400">
                             {sale.accountCode ? `${sale.accountCode} - ` : ""}
                             {sale.accountName}
                           </div>
@@ -383,41 +386,41 @@ export default function SalesPage() {
 
                       {/* طريقة الدفع */}
 
-                      <td className="px-4 py-3">
-                        <span className="rounded-md bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-600">
+                      <td className="px-3 py-2">
+                        <span className="rounded-md bg-gray-100 px-2 py-1 text-[9px] font-medium text-gray-600">
                           {getPaymentMethodName(sale.paymentMethod)}
                         </span>
                       </td>
 
                       {/* عدد الأصناف */}
 
-                      <td className="px-4 py-3 text-sm text-gray-600">
+                      <td className="px-3 py-2 text-[9px] text-gray-600">
                         {sale.items.length}
                       </td>
 
                       {/* الإجمالي */}
 
-                      <td className="px-4 py-3">
-                        <div className="font-bold text-gray-800">
+                      <td className="px-3 py-2">
+                        <div className="text-[10px] font-bold text-gray-800">
                           {formatMoney(sale.total)}
                         </div>
 
-                        <div className="text-[10px] text-gray-400">ريال</div>
+                        <div className="text-[8px] text-gray-400">ريال</div>
                       </td>
 
                       {/* الحالة */}
 
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2">
                         {sale.status === "paid" ? (
-                          <span className="inline-flex rounded-full bg-green-50 px-2.5 py-1 text-[11px] font-bold text-green-600">
+                          <span className="inline-flex rounded-full bg-green-50 px-2 py-1 text-[9px] font-bold text-green-600">
                             {getStatusName(sale.status)}
                           </span>
                         ) : sale.status === "pending" ? (
-                          <span className="inline-flex rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-600">
+                          <span className="inline-flex rounded-full bg-orange-50 px-2 py-1 text-[9px] font-bold text-orange-600">
                             {getStatusName(sale.status)}
                           </span>
                         ) : (
-                          <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-600">
+                          <span className="inline-flex rounded-full bg-red-50 px-2 py-1 text-[9px] font-bold text-red-600">
                             {getStatusName(sale.status)}
                           </span>
                         )}
@@ -425,40 +428,27 @@ export default function SalesPage() {
 
                       {/* الإجراءات */}
 
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-1">
+                      <td className="px-3 py-2">
+                        <div className="flex items-center justify-center gap-0.5">
                           {/* عرض */}
 
                           <Link
                             href={`/sales/${sale.id}`}
                             title="عرض الفاتورة"
-                            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-blue-600"
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-blue-600"
                           >
-                            <FiEye size={15} />
+                            <FiEye size={13} />
                           </Link>
 
                           {/* طباعة */}
 
-                          <Link
-                            href={`/sales/${sale.id}/print`}
-                            target="_blank"
-                            title="طباعة الفاتورة"
-                            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-blue-50 hover:text-blue-600"
-                          >
-                            <FiPrinter size={15} />
-                          </Link>
-
-                          {/* حذف */}
-
                           <button
                             type="button"
-                            title="حذف الفاتورة"
-                            onClick={() =>
-                              handleDelete(sale.id, sale.invoiceNumber)
-                            }
-                            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-red-50 hover:text-red-600"
+                            title="طباعة الفاتورة"
+                            onClick={() => handlePrint(sale.id)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-gray-500 transition hover:bg-blue-50 hover:text-blue-600"
                           >
-                            <FiTrash2 size={15} />
+                            <FiPrinter size={13} />
                           </button>
                         </div>
                       </td>

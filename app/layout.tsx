@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import TopNav from "@/components/TopNave";
+import TopNav from "@/components/SideNave";
+import SideNave from "@/components/SideNave";
 
 export const metadata: Metadata = {
   title: "نظام الإدارة المحاسبية",
@@ -15,12 +16,20 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body className="min-h-screen bg-gray-50">
-        <div className="flex min-h-screen">
-          <aside className="w-64 shrink-0 border-l bg-white">
+        <div className="flex min-h-screen w-full">
+          {/* القائمة الجانبية */}
+          <aside className="hidden lg:block lg:w-64 lg:shrink-0 border-l bg-white">
             <TopNav />
           </aside>
 
-          <main className="min-w-0 flex-1 w-full">{children}</main>
+          <nav className=" lg:hidden">
+            <TopNav />
+          </nav>
+
+          {/* المحتوى */}
+          <main className="min-w-0 w-full flex-1 overflow-x-hidden">
+            {children}
+          </main>
         </div>
       </body>
     </html>

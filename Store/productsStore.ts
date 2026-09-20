@@ -1,5 +1,10 @@
+
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+
+/* =========================================================
+   PRODUCT
+========================================================= */
 
 export interface Product {
   id: string;
@@ -11,111 +16,77 @@ export interface Product {
   isActive?: boolean;
 }
 
+/* =========================================================
+   STORE
+========================================================= */
+
 interface ProductsStore {
   products: Product[];
 
+  /* إضافة صنف */
   addProduct: (
     product: Omit<Product, "id" | "code">
   ) => Product;
 
+  /* تعديل صنف */
   updateProduct: (
     id: string,
     data: Partial<Omit<Product, "id" | "code">>
   ) => void;
 
+  /* حذف صنف */
   deleteProduct: (id: string) => void;
 
+  /* الحصول على صنف بواسطة ID */
   getProductById: (
     id: string
   ) => Product | undefined;
 
+  /* الحصول على صنف بواسطة الكود */
   getProductByCode: (
     code: string
   ) => Product | undefined;
 
+  /* البحث */
   searchProducts: (
     search: string
   ) => Product[];
 
+  /* إنشاء كود جديد */
   generateProductCode: () => string;
 
+  /* حذف جميع الأصناف */
   clearProducts: () => void;
 }
 
-/*
-|--------------------------------------------------------------------------
-| المنتجات الافتراضية
-|--------------------------------------------------------------------------
-*/
+/* =========================================================
+   الأصناف الافتراضية
+========================================================= */
 
 const defaultProducts: Product[] = [
-  {
-    id: "product-1001",
-    code: "1001",
-    name: "عسل",
-    unit: "كيلو",
-    category: "عسل",
-    isActive: true,
-  },
-  {
-    id: "product-1002",
-    code: "1002",
-    name: "سليط",
-    unit: "كيلو",
-    category: "زيوت",
-    isActive: true,
-  },
-  {
-    id: "product-1003",
-    code: "1003",
-    name: "زيت",
-    unit: "لتر",
-    category: "زيوت",
-    isActive: true,
-  },
-  {
-    id: "product-1004",
-    code: "1004",
-    name: "مكسرات",
-    unit: "كيلو",
-    category: "مواد غذائية",
-    isActive: true,
-  },
-  {
-    id: "product-1005",
-    code: "1005",
-    name: "زبيب ",
-    unit: "كيلو",
-    category: "مواد غذائية",
-    isActive: true,
-  },
-  {
-    id: "product-1006",
-    code: "1006",
-    name: "بن ",
-    unit: "كيلو",
-    category: "مواد غذائية",
-    isActive: true,
-  },
+
 ];
 
-/*
-|--------------------------------------------------------------------------
-| Zustand Store
-|--------------------------------------------------------------------------
-*/
+/* =========================================================
+   ZUSTAND STORE
+========================================================= */
 
 export const useProductsStore =
   create<ProductsStore>()(
     persist(
       (set, get) => ({
+        /* =================================================
+           البيانات الأولية
+        ================================================= */
+
         products: defaultProducts,
 
-        /*
-        |--------------------------------------------------------------------------
-        | إنشاء كود جديد
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           إنشاء كود جديد
+           
+           يبدأ من 1001
+           ولا يعيد استخدام الأكواد المحذوفة
+        ================================================= */
 
         generateProductCode: () => {
           const products = get().products;
@@ -124,28 +95,39 @@ export const useProductsStore =
             .map((product) => Number(product.code))
             .filter((code) => !Number.isNaN(code));
 
-          let nextCode = 1001;
-
-          while (codes.includes(nextCode)) {
-            nextCode++;
+          if (codes.length === 0) {
+            return "1001";
           }
 
-          return String(nextCode);
+          const maxCode = Math.max(...codes);
+
+          return String(maxCode + 1);
         },
 
-        /*
-        |--------------------------------------------------------------------------
-        | إضافة منتج
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           إضافة صنف
+        ================================================= */
 
         addProduct: (productData) => {
           const code = get().generateProductCode();
 
           const newProduct: Product = {
-            ...productData,
-            id: `product-${Date.now()}`,
+            id: `product-${Date.now()}-${Math.random()
+              .toString(36)
+              .substring(2, 8)}`,
+
             code,
+
+            name: productData.name.trim(),
+
+            unit: productData.unit?.trim() || "",
+
+            category:
+              productData.category?.trim() || "",
+
+            description:
+              productData.description?.trim() || "",
+
             isActive:
               productData.isActive !== false,
           };
@@ -160,11 +142,11 @@ export const useProductsStore =
           return newProduct;
         },
 
-        /*
-        |--------------------------------------------------------------------------
-        | تعديل منتج
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           تعديل صنف
+           
+           الكود لا يتغير
+        ================================================= */
 
         updateProduct: (id, data) => {
           set((state) => ({
@@ -174,17 +156,31 @@ export const useProductsStore =
                   ? {
                       ...product,
                       ...data,
+                      name:
+                        data.name !== undefined
+                          ? data.name.trim()
+                          : product.name,
+                      unit:
+                        data.unit !== undefined
+                          ? data.unit.trim()
+                          : product.unit,
+                      category:
+                        data.category !== undefined
+                          ? data.category.trim()
+                          : product.category,
+                      description:
+                        data.description !== undefined
+                          ? data.description.trim()
+                          : product.description,
                     }
                   : product
             ),
           }));
         },
 
-        /*
-        |--------------------------------------------------------------------------
-        | حذف منتج
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           حذف صنف
+        ================================================= */
 
         deleteProduct: (id) => {
           set((state) => ({
@@ -195,11 +191,9 @@ export const useProductsStore =
           }));
         },
 
-        /*
-        |--------------------------------------------------------------------------
-        | البحث بواسطة ID
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           البحث بواسطة ID
+        ================================================= */
 
         getProductById: (id) => {
           return get().products.find(
@@ -208,11 +202,9 @@ export const useProductsStore =
           );
         },
 
-        /*
-        |--------------------------------------------------------------------------
-        | البحث بواسطة الكود
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           البحث بواسطة الكود
+        ================================================= */
 
         getProductByCode: (code) => {
           return get().products.find(
@@ -221,11 +213,9 @@ export const useProductsStore =
           );
         },
 
-        /*
-        |--------------------------------------------------------------------------
-        | البحث
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           البحث بالاسم أو الكود أو التصنيف
+        ================================================= */
 
         searchProducts: (search) => {
           const value =
@@ -240,20 +230,20 @@ export const useProductsStore =
               product.name
                 .toLowerCase()
                 .includes(value) ||
+
               product.code
                 .toLowerCase()
                 .includes(value) ||
-              product.category
-                ?.toLowerCase()
+
+              (product.category || "")
+                .toLowerCase()
                 .includes(value)
           );
         },
 
-        /*
-        |--------------------------------------------------------------------------
-        | تفريغ المنتجات
-        |--------------------------------------------------------------------------
-        */
+        /* =================================================
+           حذف جميع الأصناف
+        ================================================= */
 
         clearProducts: () => {
           set({
@@ -262,8 +252,13 @@ export const useProductsStore =
         },
       }),
 
+      /* ===================================================
+         LOCAL STORAGE
+      =================================================== */
+
       {
         name: "erp-products-storage",
       }
     )
   );
+

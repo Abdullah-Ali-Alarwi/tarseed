@@ -1,0 +1,487 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import {
+  FiArrowRight,
+  FiSave,
+  FiUser,
+  FiPhone,
+  FiMapPin,
+  FiCreditCard,
+  FiFileText,
+  FiCheckCircle,
+  FiAlertCircle,
+} from "react-icons/fi";
+import { toast } from "sonner";
+
+import { useCustomersStore, CASH_CUSTOMER_ID } from "@/Store/customersStore";
+
+export default function EditCustomerPage() {
+  const params = useParams();
+  const router = useRouter();
+
+  const customerId = String(params.id);
+
+  // =========================================================
+  // ZUSTAND
+  // =========================================================
+
+  const customer = useCustomersStore((state) =>
+    state.customers.find((item) => item.id === customerId),
+  );
+
+  const updateCustomer = useCustomersStore((state) => state.updateCustomer);
+
+  // =========================================================
+  // FORM
+  // =========================================================
+
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [balance, setBalance] = useState("");
+  const [accountCode, setAccountCode] = useState("");
+  const [accountName, setAccountName] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  // =========================================================
+  // تحميل بيانات العميل
+  // =========================================================
+
+  useEffect(() => {
+    if (!customer) return;
+
+    setName(customer.name ?? "");
+    setPhone(customer.phone ?? "");
+    setAddress(customer.address ?? "");
+    setBalance(String(customer.balance ?? 0));
+    setAccountCode(customer.accountCode ?? "");
+    setAccountName(customer.accountName ?? customer.name ?? "");
+  }, [customer]);
+
+  // =========================================================
+  // التحقق من العميل
+  // =========================================================
+
+  if (customerId === CASH_CUSTOMER_ID) {
+    return (
+      <main className="min-h-screen bg-gray-50 p-3" dir="rtl">
+        <div className="mx-auto max-w-3xl">
+          <div className="rounded-xl border border-red-100 bg-white p-6 text-center shadow-sm">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-500">
+              <FiAlertCircle size={24} />
+            </div>
+
+            <h1 className="text-lg font-bold text-gray-800">
+              لا يمكن تعديل العميل النقدي
+            </h1>
+
+            <p className="mt-2 text-sm text-gray-500">
+              العميل النقدي مرتبط بحساب الصندوق ولا يمكن تعديله.
+            </p>
+
+            <Link
+              href="/customers"
+              className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-medium text-white hover:bg-amber-700"
+            >
+              <FiArrowRight size={15} />
+              العودة إلى العملاء
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // =========================================================
+  // العميل غير موجود
+  // =========================================================
+
+  if (!customer) {
+    return (
+      <main className="min-h-screen bg-gray-50 p-3" dir="rtl">
+        <div className="mx-auto max-w-3xl">
+          <div className="rounded-xl border border-gray-100 bg-white p-6 text-center shadow-sm">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-50 text-gray-400">
+              <FiUser size={24} />
+            </div>
+
+            <h1 className="text-lg font-bold text-gray-800">
+              العميل غير موجود
+            </h1>
+
+            <p className="mt-2 text-sm text-gray-500">
+              لم يتم العثور على العميل المطلوب في Zustand.
+            </p>
+
+            <Link
+              href="/customers"
+              className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-medium text-white hover:bg-amber-700"
+            >
+              <FiArrowRight size={15} />
+              العودة إلى العملاء
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // =========================================================
+  // حفظ
+  // =========================================================
+
+  const handleSave = () => {
+    const cleanName = name.trim();
+
+    if (!cleanName) {
+      toast.error("اسم العميل مطلوب");
+      return;
+    }
+
+    if (!accountCode.trim()) {
+      toast.error("رقم الحساب مطلوب", {
+        description: "يجب ربط العميل بحسابه المحاسبي.",
+      });
+      return;
+    }
+
+    if (!accountName.trim()) {
+      toast.error("اسم الحساب مطلوب");
+      return;
+    }
+
+    const numericBalance = Number(balance.replace(/[^\d.-]/g, "")) || 0;
+
+    setIsSaving(true);
+
+    try {
+      updateCustomer(customerId, {
+        name: cleanName,
+        phone: phone.trim(),
+        address: address.trim(),
+        balance: numericBalance,
+        accountCode: accountCode.trim(),
+        accountName: accountName.trim(),
+      });
+
+      toast.success("تم حفظ بيانات العميل", {
+        description: `تم تحديث بيانات ${cleanName} بنجاح.`,
+      });
+
+      setTimeout(() => {
+        router.push(`/customers/${customerId}`);
+      }, 500);
+    } catch {
+      toast.error("حدث خطأ أثناء حفظ البيانات");
+      setIsSaving(false);
+    }
+  };
+
+  // =========================================================
+  // RENDER
+  // =========================================================
+
+  return (
+    <main className="min-h-screen bg-gray-50 p-2 sm:p-3" dir="rtl">
+      <div className="mx-auto max-w-4xl">
+        {/* =====================================================
+            HEADER
+        ===================================================== */}
+
+        <div className="mb-3 rounded-lg border border-gray-100 bg-white p-2.5 shadow-sm">
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                <FiUser size={16} />
+              </div>
+
+              <div>
+                <h1 className="text-base font-bold text-gray-800">
+                  تعديل العميل
+                </h1>
+
+                <p className="text-[10px] text-gray-400">
+                  تعديل بيانات العميل والحساب المحاسبي
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href={`/customers/${customerId}`}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-600 transition hover:bg-gray-50"
+              >
+                <FiArrowRight size={14} />
+                رجوع
+              </Link>
+
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-600 px-3 text-[11px] font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSaving ? <FiCheckCircle size={14} /> : <FiSave size={14} />}
+
+                {isSaving ? "جاري الحفظ..." : "حفظ التعديلات"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* =====================================================
+            CUSTOMER INFORMATION
+        ===================================================== */}
+
+        <section className="mb-3 overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
+          <div className="border-b border-gray-100 bg-gray-50/70 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-50 text-amber-600">
+                <FiUser size={14} />
+              </div>
+
+              <div>
+                <h2 className="text-xs font-bold text-gray-800">
+                  بيانات العميل
+                </h2>
+
+                <p className="text-[9px] text-gray-400">
+                  المعلومات الأساسية للعميل
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {/* الاسم */}
+
+              <FormField
+                label="اسم العميل"
+                required
+                icon={<FiUser size={13} />}
+              >
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="اسم العميل"
+                  className={inputClass}
+                />
+              </FormField>
+
+              {/* الهاتف */}
+
+              <FormField label="رقم الهاتف" icon={<FiPhone size={13} />}>
+                <input
+                  type="text"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="رقم الهاتف"
+                  className={inputClass}
+                  dir="ltr"
+                />
+              </FormField>
+
+              {/* العنوان */}
+
+              <FormField label="العنوان" icon={<FiMapPin size={13} />}>
+                <input
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="عنوان العميل"
+                  className={inputClass}
+                />
+              </FormField>
+
+              {/* الرصيد */}
+
+              <FormField
+                label="الرصيد الحالي"
+                icon={<FiCreditCard size={13} />}
+              >
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={balance}
+                    onChange={(e) => setBalance(e.target.value)}
+                    placeholder="0"
+                    className={`${inputClass} pl-14`}
+                  />
+
+                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-400">
+                    ريال
+                  </span>
+                </div>
+              </FormField>
+            </div>
+          </div>
+        </section>
+
+        {/* =====================================================
+            ACCOUNT INFORMATION
+        ===================================================== */}
+
+        <section className="mb-3 overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
+          <div className="border-b border-gray-100 bg-gray-50/70 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-50 text-blue-600">
+                <FiCreditCard size={14} />
+              </div>
+
+              <div>
+                <h2 className="text-xs font-bold text-gray-800">
+                  الحساب المحاسبي
+                </h2>
+
+                <p className="text-[9px] text-gray-400">
+                  الحساب المرتبط بهذا العميل في النظام المحاسبي
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {/* كود الحساب */}
+
+              <FormField label="رقم الحساب" required>
+                <input
+                  type="text"
+                  value={accountCode}
+                  onChange={(e) => setAccountCode(e.target.value)}
+                  placeholder="مثال: 1101"
+                  className={inputClass}
+                  dir="ltr"
+                />
+              </FormField>
+
+              {/* اسم الحساب */}
+
+              <FormField label="اسم الحساب" required>
+                <input
+                  type="text"
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  placeholder="اسم الحساب المحاسبي"
+                  className={inputClass}
+                />
+              </FormField>
+            </div>
+
+            {/* معلومات */}
+
+            <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-2.5 py-2">
+              <div className="flex items-start gap-2 text-blue-700">
+                <FiCreditCard size={13} className="mt-0.5 shrink-0" />
+
+                <p className="text-[10px] leading-5">
+                  هذا الحساب هو الحساب المحاسبي المرتبط بالعميل، وسيستخدم عند
+                  تسجيل المبيعات الآجلة والدفعات وكشف الحساب.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* =====================================================
+            NOTES
+        ===================================================== */}
+
+        <section className="mb-3 overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
+          <div className="border-b border-gray-100 bg-gray-50/70 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gray-100 text-gray-600">
+                <FiFileText size={14} />
+              </div>
+
+              <div>
+                <h2 className="text-xs font-bold text-gray-800">ملاحظات</h2>
+
+                <p className="text-[9px] text-gray-400">معلومات إضافية</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-3">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="اكتب أي ملاحظات..."
+              className="w-full resize-none rounded-md border border-gray-200 px-2.5 py-2 text-[11px] text-gray-800 outline-none placeholder:text-gray-400 focus:border-amber-500 focus:ring-1 focus:ring-amber-100"
+            />
+          </div>
+        </section>
+
+        {/* =====================================================
+            BOTTOM ACTIONS
+        ===================================================== */}
+
+        <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-2.5 shadow-sm">
+          <Link
+            href="/customers"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-gray-200 px-3 text-[11px] font-medium text-gray-600 transition hover:bg-gray-50"
+          >
+            <FiArrowRight size={14} />
+            قائمة العملاء
+          </Link>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-600 px-4 text-[11px] font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <FiSave size={14} />
+            {isSaving ? "جاري الحفظ..." : "حفظ التعديلات"}
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+// =========================================================
+// FORM FIELD
+// =========================================================
+
+function FormField({
+  label,
+  children,
+  required = false,
+  icon,
+}: {
+  label: string;
+  children: React.ReactNode;
+  required?: boolean;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-1 flex items-center gap-1 text-[10px] font-medium text-gray-600">
+        {icon && <span className="text-gray-400">{icon}</span>}
+
+        {label}
+
+        {required && <span className="text-red-500">*</span>}
+      </label>
+
+      {children}
+    </div>
+  );
+}
+
+// =========================================================
+// INPUT STYLE
+// =========================================================
+
+const inputClass =
+  "h-8 w-full rounded-md border border-gray-200 bg-white px-2.5 text-[11px] text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-amber-500 focus:ring-1 focus:ring-amber-100";
