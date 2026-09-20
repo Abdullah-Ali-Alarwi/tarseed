@@ -71,7 +71,7 @@ export default function Home() {
 
             <h1 className="text-4xl md:text-6xl font-extrabold text-blue-950  leading-tight">
               أدر أعمالك
-              <span className="block text-blue-400 mt-2">بسهولة واحترافية</span>
+              <span className="block text-red-400 mt-2">بسهولة واحترافية</span>
             </h1>
 
             <p className="text-lg md:text-xl  text-black leading-8 mt-6 max-w-2xl">
