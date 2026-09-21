@@ -94,7 +94,7 @@ const escapeHtml = (value: string) =>
     .replace(/'/g, "&#039;");
 
 /* =========================================================
-   صفحة إضافة قيد
+   الصفحة
 ========================================================= */
 
 export default function NewJournalEntryPage() {
@@ -159,7 +159,7 @@ export default function NewJournalEntryPage() {
   }, [accounts]);
 
   /* =======================================================
-     الحسابات المفلترة لكل سطر
+     الحسابات المفلترة
   ======================================================= */
 
   const getFilteredAccounts = (lineId: string) => {
@@ -205,7 +205,7 @@ export default function NewJournalEntryPage() {
   const balanced = totalDebit > 0 && totalCredit > 0 && difference < 0.001;
 
   /* =======================================================
-     رقم القيد التالي
+     رقم القيد القادم
   ======================================================= */
 
   const nextEntryNumber = useMemo(() => {
@@ -240,7 +240,11 @@ export default function NewJournalEntryPage() {
 
   const removeLine = (lineId: string) => {
     if (lines.length <= 2) {
-      toast.error("يجب أن يحتوي القيد على سطرين على الأقل");
+      toast.error("لا يمكن حذف السطر", {
+        description: "يجب أن يحتوي القيد على سطرين على الأقل.",
+        duration: 4000,
+      });
+
       return;
     }
 
@@ -334,18 +338,22 @@ export default function NewJournalEntryPage() {
 
   const resetForm = () => {
     setDate(new Date().toISOString().split("T")[0]);
+
     setDescription("");
+
     setReferenceType("manual");
+
     setReferenceId("");
 
     setLines([createEmptyLine(), createEmptyLine()]);
 
     setSearches({});
+
     setOpenAccountLine(null);
   };
 
   /* =======================================================
-     إنشاء سند القيد للطباعة
+     فتح سند الطباعة
   ======================================================= */
 
   const openPrintVoucher = ({
@@ -407,18 +415,28 @@ export default function NewJournalEntryPage() {
     const printWindow = window.open("", "_blank", "width=1000,height=800");
 
     if (!printWindow) {
-      toast.error("تعذر فتح نافذة الطباعة. تأكد من السماح بالنوافذ المنبثقة.");
+      toast.error("تعذر فتح نافذة الطباعة", {
+        description: "تأكد من السماح بالنوافذ المنبثقة في المتصفح.",
+        duration: 5000,
+      });
+
       return;
     }
 
     printWindow.document.write(`
       <!DOCTYPE html>
       <html lang="ar" dir="rtl">
+
       <head>
+
         <meta charset="UTF-8" />
-        <title>سند قيد ${escapeHtml(entryNumber)}</title>
+
+        <title>
+          سند قيد ${escapeHtml(entryNumber)}
+        </title>
 
         <style>
+
           * {
             box-sizing: border-box;
           }
@@ -563,6 +581,7 @@ export default function NewJournalEntryPage() {
           }
 
           @media print {
+
             body {
               padding: 0;
             }
@@ -576,108 +595,202 @@ export default function NewJournalEntryPage() {
             .actions {
               display: none;
             }
+
           }
+
         </style>
+
       </head>
 
       <body>
 
         <div class="actions">
+
           <button onclick="window.print()">
             طباعة سند القيد
           </button>
+
         </div>
 
         <div class="voucher">
 
           <div class="company">
-            <h1>شركة الجابري</h1>
-            <p>للعسل والزيوت الطبيعة وخدمات العمرة</p>
-            <p>البيضاء - اليمن | هاتف: 734 434 443</p>
+
+            <h1>
+              شركة الجابري
+            </h1>
+
+            <p>
+              للعسل والزيوت الطبيعة وخدمات العمرة
+            </p>
+
+            <p>
+              البيضاء - اليمن | هاتف: 734 434 443
+            </p>
+
           </div>
 
           <div class="title">
-            <h2>سند قيد يومية</h2>
+
+            <h2>
+              سند قيد يومية
+            </h2>
+
           </div>
 
           <div class="info">
 
             <div class="info-box">
-              <strong>رقم القيد</strong>
-              <span>${escapeHtml(entryNumber)}</span>
+
+              <strong>
+                رقم القيد
+              </strong>
+
+              <span>
+                ${escapeHtml(entryNumber)}
+              </span>
+
             </div>
 
             <div class="info-box">
-              <strong>التاريخ</strong>
-              <span>${escapeHtml(entryDate)}</span>
+
+              <strong>
+                التاريخ
+              </strong>
+
+              <span>
+                ${escapeHtml(entryDate)}
+              </span>
+
             </div>
 
             <div class="info-box">
-              <strong>نوع القيد</strong>
-              <span>${escapeHtml(referenceTypeText)}</span>
+
+              <strong>
+                نوع القيد
+              </strong>
+
+              <span>
+                ${escapeHtml(referenceTypeText)}
+              </span>
+
             </div>
 
             <div class="info-box">
-              <strong>المرجع</strong>
-              <span>${escapeHtml(entryReferenceId || "-")}</span>
+
+              <strong>
+                المرجع
+              </strong>
+
+              <span>
+                ${escapeHtml(entryReferenceId || "-")}
+              </span>
+
             </div>
 
           </div>
 
           <div class="info-box">
-            <strong>البيان</strong>
-            <span>${escapeHtml(entryDescription)}</span>
+
+            <strong>
+              البيان
+            </strong>
+
+            <span>
+              ${escapeHtml(entryDescription)}
+            </span>
+
           </div>
 
           <table>
 
             <thead>
+
               <tr>
-                <th>رمز الحساب</th>
-                <th>الحساب</th>
-                <th>البيان</th>
-                <th>مدين</th>
-                <th>دائن</th>
+
+                <th>
+                  رمز الحساب
+                </th>
+
+                <th>
+                  الحساب
+                </th>
+
+                <th>
+                  البيان
+                </th>
+
+                <th>
+                  مدين
+                </th>
+
+                <th>
+                  دائن
+                </th>
+
               </tr>
+
             </thead>
 
             <tbody>
+
               ${linesHtml}
+
             </tbody>
 
             <tfoot>
+
               <tr>
-                <td colspan="3">الإجمالي</td>
+
+                <td colspan="3">
+                  الإجمالي
+                </td>
+
                 <td class="number">
                   ${formatMoney(debitTotal)}
                 </td>
+
                 <td class="number">
                   ${formatMoney(creditTotal)}
                 </td>
+
               </tr>
+
             </tfoot>
 
           </table>
 
           <div class="balanced">
-            القيد متوازن — إجمالي المدين يساوي إجمالي الدائن
+
+            القيد متوازن —
+            إجمالي المدين يساوي إجمالي الدائن
+
           </div>
 
           <div class="footer">
 
             <div class="signature">
+
               المحاسب
+
               <div class="signature-line"></div>
+
             </div>
 
             <div class="signature">
+
               المراجع
+
               <div class="signature-line"></div>
+
             </div>
 
             <div class="signature">
+
               المدير
+
               <div class="signature-line"></div>
+
             </div>
 
           </div>
@@ -685,14 +798,21 @@ export default function NewJournalEntryPage() {
         </div>
 
         <script>
+
           window.onload = function () {
+
             setTimeout(function () {
+
               window.print();
+
             }, 500);
+
           };
+
         </script>
 
       </body>
+
       </html>
     `);
 
@@ -709,20 +829,28 @@ export default function NewJournalEntryPage() {
     }
 
     /* -----------------------------------------------------
-       التحقق من التاريخ
+       التاريخ
     ----------------------------------------------------- */
 
     if (!date) {
-      toast.error("يرجى تحديد تاريخ القيد");
+      toast.error("يرجى إكمال بيانات القيد", {
+        description: "حدد تاريخ القيد أولًا.",
+        duration: 4000,
+      });
+
       return;
     }
 
     /* -----------------------------------------------------
-       التحقق من البيان
+       البيان
     ----------------------------------------------------- */
 
     if (!description.trim()) {
-      toast.error("يرجى إدخال بيان القيد");
+      toast.error("يرجى إكمال بيانات القيد", {
+        description: "أدخل بيان القيد أولًا قبل الضغط على حفظ.",
+        duration: 4000,
+      });
+
       return;
     }
 
@@ -731,12 +859,16 @@ export default function NewJournalEntryPage() {
     ----------------------------------------------------- */
 
     if (lines.length < 2) {
-      toast.error("يجب أن يحتوي القيد على سطرين على الأقل");
+      toast.error("يرجى إكمال بيانات القيد", {
+        description: "يجب أن يحتوي القيد على سطرين على الأقل.",
+        duration: 4000,
+      });
+
       return;
     }
 
     /* -----------------------------------------------------
-       التحقق من الأسطر
+       الحسابات والقيم
     ----------------------------------------------------- */
 
     const usedAccounts = new Set<string>();
@@ -745,64 +877,109 @@ export default function NewJournalEntryPage() {
       const line = lines[index];
 
       if (!line.accountId) {
-        toast.error(`يرجى اختيار الحساب في السطر ${index + 1}`);
+        toast.error("يرجى إكمال بيانات القيد", {
+          description: `اختر الحساب في السطر ${index + 1}.`,
+          duration: 4000,
+        });
+
         return;
       }
 
       const account = getSelectedAccount(line.accountId);
 
       if (!account) {
-        toast.error(`الحساب في السطر ${index + 1} غير موجود`);
+        toast.error("الحساب غير موجود", {
+          description: `الحساب في السطر ${index + 1} غير موجود.`,
+          duration: 4000,
+        });
+
         return;
       }
 
       if (usedAccounts.has(account.id)) {
-        toast.error(`لا يمكن تكرار الحساب "${account.name}" في أكثر من سطر`);
+        toast.error("الحساب مكرر", {
+          description: `لا يمكن تكرار الحساب "${account.name}" في أكثر من سطر.`,
+          duration: 4000,
+        });
+
         return;
       }
 
       usedAccounts.add(account.id);
 
       const debit = Number(line.debit || 0);
+
       const credit = Number(line.credit || 0);
 
       if (!Number.isFinite(debit) || debit < 0) {
-        toast.error(`قيمة المدين في السطر ${index + 1} غير صحيحة`);
+        toast.error("قيمة المدين غير صحيحة", {
+          description: `راجع قيمة المدين في السطر ${index + 1}.`,
+          duration: 4000,
+        });
+
         return;
       }
 
       if (!Number.isFinite(credit) || credit < 0) {
-        toast.error(`قيمة الدائن في السطر ${index + 1} غير صحيحة`);
+        toast.error("قيمة الدائن غير صحيحة", {
+          description: `راجع قيمة الدائن في السطر ${index + 1}.`,
+          duration: 4000,
+        });
+
         return;
       }
 
       if (debit === 0 && credit === 0) {
-        toast.error(`يجب إدخال قيمة مدين أو دائن في السطر ${index + 1}`);
+        toast.error("يرجى إكمال بيانات القيد", {
+          description: `أدخل مبلغ المدين أو الدائن في السطر ${index + 1}.`,
+          duration: 4000,
+        });
+
         return;
       }
 
       if (debit > 0 && credit > 0) {
-        toast.error(`لا يمكن إدخال مدين ودائن معًا في السطر ${index + 1}`);
+        toast.error("القيد غير صحيح", {
+          description: `لا يمكن إدخال مدين ودائن معًا في السطر ${index + 1}.`,
+          duration: 4000,
+        });
+
         return;
       }
     }
 
     /* -----------------------------------------------------
-       التحقق من الإجماليات
+       الإجمالي
     ----------------------------------------------------- */
 
     if (totalDebit <= 0) {
-      toast.error("إجمالي المدين يجب أن يكون أكبر من صفر");
+      toast.error("يرجى إكمال بيانات القيد", {
+        description: "إجمالي المدين يجب أن يكون أكبر من صفر.",
+        duration: 4000,
+      });
+
       return;
     }
 
     if (totalCredit <= 0) {
-      toast.error("إجمالي الدائن يجب أن يكون أكبر من صفر");
+      toast.error("يرجى إكمال بيانات القيد", {
+        description: "إجمالي الدائن يجب أن يكون أكبر من صفر.",
+        duration: 4000,
+      });
+
       return;
     }
 
+    /* -----------------------------------------------------
+       التوازن
+    ----------------------------------------------------- */
+
     if (!balanced) {
-      toast.error(`القيد غير متوازن. الفرق: ${formatMoney(difference)}`);
+      toast.error("القيد غير متوازن", {
+        description: `الفرق بين المدين والدائن هو ${formatMoney(difference)}.`,
+        duration: 4000,
+      });
+
       return;
     }
 
@@ -814,7 +991,7 @@ export default function NewJournalEntryPage() {
 
     try {
       /* ---------------------------------------------------
-         تجهيز أسطر القيد
+         تجهيز الأسطر
       --------------------------------------------------- */
 
       const journalLines = lines.map((line, index) => {
@@ -826,29 +1003,70 @@ export default function NewJournalEntryPage() {
 
         return {
           id: createLineId(),
+
           accountId: account.id,
+
           accountCode: account.code,
+
           accountName: account.name,
+
           debit: Number(line.debit || 0),
+
           credit: Number(line.credit || 0),
+
           description: line.description.trim() || description.trim(),
         };
       });
 
       /* ---------------------------------------------------
-         حفظ القيد في Zustand
-         
-         لا نعتمد على قيمة الإرجاع من addJournalEntry
+         حفظ القيد
       --------------------------------------------------- */
 
       addJournalEntry({
         entryNumber: nextEntryNumber,
+
         date,
+
         description: description.trim(),
+
         referenceType,
+
         referenceId: referenceId.trim() || undefined,
+
         lines: journalLines,
       });
+
+      /* ---------------------------------------------------
+         بيانات الطباعة
+      --------------------------------------------------- */
+
+      const printData = {
+        entryNumber: nextEntryNumber,
+
+        entryDate: date,
+
+        entryDescription: description.trim(),
+
+        entryReferenceType: referenceType,
+
+        entryReferenceId: referenceId.trim(),
+
+        journalLines: journalLines.map((line) => ({
+          accountCode: line.accountCode,
+
+          accountName: line.accountName,
+
+          debit: line.debit,
+
+          credit: line.credit,
+
+          description: line.description,
+        })),
+
+        debitTotal: totalDebit,
+
+        creditTotal: totalCredit,
+      };
 
       /* ---------------------------------------------------
          رسالة النجاح
@@ -856,40 +1074,18 @@ export default function NewJournalEntryPage() {
 
       toast.success("تم حفظ القيد بنجاح", {
         description: `رقم القيد: ${nextEntryNumber}`,
+
         duration: 5000,
       });
 
       /* ---------------------------------------------------
-         فتح سند الطباعة
-         
-         نأخذ نسخة من البيانات قبل تفريغ النموذج
-      --------------------------------------------------- */
-
-      const printData = {
-        entryNumber: nextEntryNumber,
-        entryDate: date,
-        entryDescription: description.trim(),
-        entryReferenceType: referenceType,
-        entryReferenceId: referenceId.trim(),
-        journalLines: journalLines.map((line) => ({
-          accountCode: line.accountCode,
-          accountName: line.accountName,
-          debit: line.debit,
-          credit: line.credit,
-          description: line.description,
-        })),
-        debitTotal: totalDebit,
-        creditTotal: totalCredit,
-      };
-
-      /* ---------------------------------------------------
-         تفريغ النموذج
+         تفريغ الحقول
       --------------------------------------------------- */
 
       resetForm();
 
       /* ---------------------------------------------------
-         فتح سند القيد
+         فتح سند الطباعة
       --------------------------------------------------- */
 
       setTimeout(() => {
@@ -898,9 +1094,14 @@ export default function NewJournalEntryPage() {
     } catch (error) {
       console.error("خطأ أثناء حفظ القيد:", error);
 
-      toast.error(
-        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ القيد",
-      );
+      toast.error("تعذر حفظ القيد", {
+        description:
+          error instanceof Error
+            ? error.message
+            : "حدث خطأ غير متوقع أثناء حفظ القيد.",
+
+        duration: 5000,
+      });
     } finally {
       setIsSaving(false);
     }
@@ -974,7 +1175,7 @@ export default function NewJournalEntryPage() {
               />
             </div>
 
-            {/* نوع المرجع */}
+            {/* نوع القيد */}
 
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-slate-700">
@@ -997,10 +1198,15 @@ export default function NewJournalEntryPage() {
                 className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               >
                 <option value="manual">قيد يدوي</option>
+
                 <option value="sale">مبيعات</option>
+
                 <option value="purchase">مشتريات</option>
+
                 <option value="payment">سند صرف</option>
+
                 <option value="receipt">سند قبض</option>
+
                 <option value="other">أخرى</option>
               </select>
             </div>
@@ -1043,7 +1249,7 @@ export default function NewJournalEntryPage() {
         </div>
 
         {/* =================================================
-            جدول القيد
+            تفاصيل القيد
         ================================================= */}
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -1117,31 +1323,29 @@ export default function NewJournalEntryPage() {
 
                       <td className="relative px-3 py-3">
                         <div className="relative">
-                          <div className="relative">
-                            <FiSearch
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                              size={15}
-                            />
+                          <FiSearch
+                            className="absolute right-3 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                            size={15}
+                          />
 
-                            <input
-                              type="text"
-                              value={
-                                searches[line.id] ??
-                                (selectedAccount
-                                  ? `${selectedAccount.code} - ${selectedAccount.name}`
-                                  : "")
-                              }
-                              onFocus={() => setOpenAccountLine(line.id)}
-                              onChange={(e) =>
-                                handleAccountSearch(line.id, e.target.value)
-                              }
-                              placeholder="ابحث عن الحساب..."
-                              className="h-10 w-full rounded-lg border border-slate-300 bg-white pr-9 pl-3 text-xs outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                            />
-                          </div>
+                          <input
+                            type="text"
+                            value={
+                              searches[line.id] ??
+                              (selectedAccount
+                                ? `${selectedAccount.code} - ${selectedAccount.name}`
+                                : "")
+                            }
+                            onFocus={() => setOpenAccountLine(line.id)}
+                            onChange={(e) =>
+                              handleAccountSearch(line.id, e.target.value)
+                            }
+                            placeholder="ابحث عن الحساب..."
+                            className="h-10 w-full rounded-lg border border-slate-300 bg-white pr-9 pl-3 text-xs outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                          />
 
                           {openAccountLine === line.id && (
-                            <div className="absolute right-3 left-3 z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
+                            <div className="absolute right-0 left-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
                               {filteredAccounts.length === 0 ? (
                                 <div className="p-4 text-center text-xs text-slate-500">
                                   لا توجد حسابات مطابقة
@@ -1292,7 +1496,7 @@ export default function NewJournalEntryPage() {
           </div>
 
           {/* =================================================
-              أزرار الحفظ
+              الأزرار
           ================================================= */}
 
           <div className="flex flex-col-reverse gap-2 border-t border-slate-200 p-4 sm:flex-row sm:justify-end">
@@ -1328,7 +1532,7 @@ export default function NewJournalEntryPage() {
         </div>
 
         {/* =================================================
-            ملاحظة
+            الملاحظة
         ================================================= */}
 
         <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3">
@@ -1336,9 +1540,8 @@ export default function NewJournalEntryPage() {
             <FiPrinter className="mt-0.5 shrink-0 text-blue-600" size={17} />
 
             <p className="text-xs leading-6 text-blue-800">
-              بعد الضغط على <strong>حفظ القيد وطباعة السند</strong>، سيتم حفظ
-              القيد أولًا، ثم تفريغ الحقول وفتح سند القيد في نافذة جديدة
-              للطباعة.
+              بعد الضغط على <strong>حفظ القيد وطباعة السند</strong>، سيتم التحقق
+              من البيانات ثم حفظ القيد وتفريغ الحقول وفتح سند القيد للطباعة.
             </p>
           </div>
         </div>
