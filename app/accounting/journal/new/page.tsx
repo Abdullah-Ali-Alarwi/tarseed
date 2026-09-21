@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useERPStore } from "@/Store/erpStore";
 import { toast } from "sonner";
+import { useERPStore } from "@/Store/erpStore";
+
 import {
   FiArrowRight,
   FiPlus,
@@ -15,10 +15,11 @@ import {
   FiSearch,
   FiCheckCircle,
   FiAlertCircle,
+  FiPrinter,
 } from "react-icons/fi";
 
 /* =========================================================
-   TYPES
+   الأنواع
 ========================================================= */
 
 type JournalLineForm = {
@@ -40,12 +41,11 @@ type AccountOption = {
 };
 
 /* =========================================================
-   HELPERS
+   الدوال المساعدة
 ========================================================= */
 
-const createLineId = () => {
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-};
+const createLineId = () =>
+  `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
 const createEmptyLine = (): JournalLineForm => ({
   id: createLineId(),
@@ -55,11 +55,10 @@ const createEmptyLine = (): JournalLineForm => ({
   description: "",
 });
 
-const formatMoney = (value: number) => {
-  return new Intl.NumberFormat("ar-YE", {
+const formatMoney = (value: number) =>
+  new Intl.NumberFormat("ar-YE", {
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
-};
 
 const accountTypeLabel = (type: string) => {
   switch (type) {
@@ -86,15 +85,21 @@ const accountTypeLabel = (type: string) => {
   }
 };
 
+const escapeHtml = (value: string) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
 /* =========================================================
-   PAGE
+   صفحة إضافة قيد
 ========================================================= */
 
 export default function NewJournalEntryPage() {
-  const router = useRouter();
-
   /* =======================================================
-     STORE
+     Store
   ======================================================= */
 
   const accounts = useERPStore((state) => state.accounts);
@@ -102,10 +107,12 @@ export default function NewJournalEntryPage() {
   const addJournalEntry = useERPStore((state) => state.addJournalEntry);
 
   /* =======================================================
-     STATE
+     الحالة
   ======================================================= */
 
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState(() => {
+    return new Date().toISOString().split("T")[0];
+  });
 
   const [description, setDescription] = useState("");
 
@@ -127,7 +134,7 @@ export default function NewJournalEntryPage() {
   const [openAccountLine, setOpenAccountLine] = useState<string | null>(null);
 
   /* =======================================================
-     ACTIVE ACCOUNTS
+     الحسابات النشطة
   ======================================================= */
 
   const activeAccounts = useMemo<AccountOption[]>(() => {
@@ -135,15 +142,24 @@ export default function NewJournalEntryPage() {
       .filter(
         (account) => account.isActive !== false && account.isGroup !== true,
       )
-      .sort((a, b) =>
-        String(a.code).localeCompare(String(b.code), undefined, {
-          numeric: true,
-        }),
-      );
+      .map((account) => ({
+        id: account.id,
+        code: account.code,
+        name: account.name,
+        type: account.type,
+        nature: account.nature,
+        isGroup: account.isGroup,
+        isActive: account.isActive,
+      }))
+      .sort((a, b) => {
+        return (
+          Number(a.code.replace(/\D/g, "")) - Number(b.code.replace(/\D/g, ""))
+        );
+      });
   }, [accounts]);
 
   /* =======================================================
-     FILTER ACCOUNT OPTIONS
+     الحسابات المفلترة لكل سطر
   ======================================================= */
 
   const getFilteredAccounts = (lineId: string) => {
@@ -156,46 +172,40 @@ export default function NewJournalEntryPage() {
     }
 
     return activeAccounts
-      .filter((account) => {
-        const code = String(account.code || "").toLowerCase();
-        const name = String(account.name || "").toLowerCase();
-
-        return code.includes(search) || name.includes(search);
-      })
+      .filter(
+        (account) =>
+          account.code.toLowerCase().includes(search) ||
+          account.name.toLowerCase().includes(search),
+      )
       .slice(0, 40);
   };
 
   /* =======================================================
-     SELECTED ACCOUNT
+     الحساب المختار
   ======================================================= */
 
   const getSelectedAccount = (accountId: string) => {
-    return accounts.find((account) => account.id === accountId);
+    return activeAccounts.find((account) => account.id === accountId);
   };
 
   /* =======================================================
-     TOTALS
+     الإجماليات
   ======================================================= */
 
-  const totals = useMemo(() => {
-    let debit = 0;
-    let credit = 0;
-
-    lines.forEach((line) => {
-      debit += Number(line.debit || 0);
-      credit += Number(line.credit || 0);
-    });
-
-    return {
-      debit,
-      credit,
-      difference: debit - credit,
-      balanced: debit > 0 && credit > 0 && Math.abs(debit - credit) < 0.001,
-    };
+  const totalDebit = useMemo(() => {
+    return lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
   }, [lines]);
 
+  const totalCredit = useMemo(() => {
+    return lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+  }, [lines]);
+
+  const difference = Math.abs(totalDebit - totalCredit);
+
+  const balanced = totalDebit > 0 && totalCredit > 0 && difference < 0.001;
+
   /* =======================================================
-     NEXT ENTRY NUMBER
+     رقم القيد التالي
   ======================================================= */
 
   const nextEntryNumber = useMemo(() => {
@@ -217,7 +227,7 @@ export default function NewJournalEntryPage() {
   }, [journalEntries]);
 
   /* =======================================================
-     ADD LINE
+     إضافة سطر
   ======================================================= */
 
   const addLine = () => {
@@ -225,7 +235,7 @@ export default function NewJournalEntryPage() {
   };
 
   /* =======================================================
-     REMOVE LINE
+     حذف سطر
   ======================================================= */
 
   const removeLine = (lineId: string) => {
@@ -237,16 +247,18 @@ export default function NewJournalEntryPage() {
     setLines((current) => current.filter((line) => line.id !== lineId));
 
     setSearches((current) => {
-      const copy = { ...current };
-      delete copy[lineId];
-      return copy;
+      const next = { ...current };
+      delete next[lineId];
+      return next;
     });
 
-    setOpenAccountLine((current) => (current === lineId ? null : current));
+    if (openAccountLine === lineId) {
+      setOpenAccountLine(null);
+    }
   };
 
   /* =======================================================
-     UPDATE LINE
+     تعديل السطر
   ======================================================= */
 
   const updateLine = (
@@ -260,56 +272,26 @@ export default function NewJournalEntryPage() {
           return line;
         }
 
-        return {
+        const updated = {
           ...line,
           [field]: value,
         };
-      }),
-    );
-  };
 
-  /* =======================================================
-     DEBIT CHANGE
-  ======================================================= */
-
-  const handleDebitChange = (lineId: string, value: string) => {
-    setLines((current) =>
-      current.map((line) => {
-        if (line.id !== lineId) {
-          return line;
+        if (field === "debit" && value) {
+          updated.credit = "";
         }
 
-        return {
-          ...line,
-          debit: value,
-          credit: value ? "" : line.credit,
-        };
-      }),
-    );
-  };
-
-  /* =======================================================
-     CREDIT CHANGE
-  ======================================================= */
-
-  const handleCreditChange = (lineId: string, value: string) => {
-    setLines((current) =>
-      current.map((line) => {
-        if (line.id !== lineId) {
-          return line;
+        if (field === "credit" && value) {
+          updated.debit = "";
         }
 
-        return {
-          ...line,
-          credit: value,
-          debit: value ? "" : line.debit,
-        };
+        return updated;
       }),
     );
   };
 
   /* =======================================================
-     ACCOUNT SEARCH
+     البحث عن الحساب
   ======================================================= */
 
   const handleAccountSearch = (lineId: string, value: string) => {
@@ -320,49 +302,23 @@ export default function NewJournalEntryPage() {
 
     setOpenAccountLine(lineId);
 
-    setLines((current) =>
-      current.map((line) => {
-        if (line.id !== lineId) {
-          return line;
-        }
+    const line = lines.find((item) => item.id === lineId);
 
-        const selectedAccount = getSelectedAccount(line.accountId);
+    if (!line) return;
 
-        const selectedText = selectedAccount
-          ? `${selectedAccount.code} - ${selectedAccount.name}`
-          : "";
+    const selected = getSelectedAccount(line.accountId);
 
-        if (value !== selectedText) {
-          return {
-            ...line,
-            accountId: "",
-          };
-        }
-
-        return line;
-      }),
-    );
+    if (selected && value !== `${selected.code} - ${selected.name}`) {
+      updateLine(lineId, "accountId", "");
+    }
   };
 
   /* =======================================================
-     SELECT ACCOUNT
+     اختيار الحساب
   ======================================================= */
 
-  const handleSelectAccount = (lineId: string, accountId: string) => {
-    const account = getSelectedAccount(accountId);
-
-    if (!account) return;
-
-    setLines((current) =>
-      current.map((line) =>
-        line.id === lineId
-          ? {
-              ...line,
-              accountId: account.id,
-            }
-          : line,
-      ),
-    );
+  const selectAccount = (lineId: string, account: AccountOption) => {
+    updateLine(lineId, "accountId", account.id);
 
     setSearches((current) => ({
       ...current,
@@ -373,7 +329,7 @@ export default function NewJournalEntryPage() {
   };
 
   /* =======================================================
-     CLEAR FORM
+     تفريغ النموذج
   ======================================================= */
 
   const resetForm = () => {
@@ -381,30 +337,407 @@ export default function NewJournalEntryPage() {
     setDescription("");
     setReferenceType("manual");
     setReferenceId("");
+
     setLines([createEmptyLine(), createEmptyLine()]);
+
     setSearches({});
     setOpenAccountLine(null);
   };
 
   /* =======================================================
-     VALIDATE
+     إنشاء سند القيد للطباعة
   ======================================================= */
 
-  const validate = () => {
-    if (!date) {
-      toast.error("يرجى اختيار تاريخ القيد");
-      return false;
+  const openPrintVoucher = ({
+    entryNumber,
+    entryDate,
+    entryDescription,
+    entryReferenceType,
+    entryReferenceId,
+    journalLines,
+    debitTotal,
+    creditTotal,
+  }: {
+    entryNumber: string;
+    entryDate: string;
+    entryDescription: string;
+    entryReferenceType: string;
+    entryReferenceId: string;
+    journalLines: {
+      accountCode: string;
+      accountName: string;
+      debit: number;
+      credit: number;
+      description: string;
+    }[];
+    debitTotal: number;
+    creditTotal: number;
+  }) => {
+    const linesHtml = journalLines
+      .map(
+        (line) => `
+          <tr>
+            <td>${escapeHtml(line.accountCode)}</td>
+            <td>${escapeHtml(line.accountName)}</td>
+            <td>${escapeHtml(line.description || "")}</td>
+            <td class="number">
+              ${formatMoney(line.debit)}
+            </td>
+            <td class="number">
+              ${formatMoney(line.credit)}
+            </td>
+          </tr>
+        `,
+      )
+      .join("");
+
+    const referenceTypeText =
+      entryReferenceType === "manual"
+        ? "قيد يدوي"
+        : entryReferenceType === "sale"
+          ? "مبيعات"
+          : entryReferenceType === "purchase"
+            ? "مشتريات"
+            : entryReferenceType === "payment"
+              ? "سند صرف"
+              : entryReferenceType === "receipt"
+                ? "سند قبض"
+                : "أخرى";
+
+    const printWindow = window.open("", "_blank", "width=1000,height=800");
+
+    if (!printWindow) {
+      toast.error("تعذر فتح نافذة الطباعة. تأكد من السماح بالنوافذ المنبثقة.");
+      return;
     }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="ar" dir="rtl">
+      <head>
+        <meta charset="UTF-8" />
+        <title>سند قيد ${escapeHtml(entryNumber)}</title>
+
+        <style>
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            padding: 30px;
+            background: #fff;
+            color: #111827;
+            font-family:
+              "Tahoma",
+              "Arial",
+              sans-serif;
+          }
+
+          .voucher {
+            max-width: 1000px;
+            margin: 0 auto;
+            border: 1px solid #d1d5db;
+            padding: 30px;
+          }
+
+          .company {
+            text-align: center;
+            border-bottom: 2px solid #111827;
+            padding-bottom: 18px;
+            margin-bottom: 20px;
+          }
+
+          .company h1 {
+            margin: 0 0 8px;
+            font-size: 25px;
+          }
+
+          .company p {
+            margin: 4px 0;
+            font-size: 14px;
+            color: #4b5563;
+          }
+
+          .title {
+            text-align: center;
+            margin: 20px 0;
+          }
+
+          .title h2 {
+            margin: 0;
+            font-size: 22px;
+          }
+
+          .info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+          }
+
+          .info-box {
+            border: 1px solid #d1d5db;
+            padding: 10px 14px;
+            display: flex;
+            justify-content: space-between;
+            gap: 15px;
+          }
+
+          .info-box strong {
+            color: #374151;
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+          }
+
+          th,
+          td {
+            border: 1px solid #cbd5e1;
+            padding: 10px;
+            text-align: right;
+            font-size: 14px;
+          }
+
+          th {
+            background: #f3f4f6;
+            font-weight: bold;
+          }
+
+          .number {
+            text-align: left;
+            direction: ltr;
+          }
+
+          tfoot td {
+            font-weight: bold;
+            background: #f9fafb;
+          }
+
+          .balanced {
+            margin-top: 20px;
+            padding: 12px;
+            text-align: center;
+            border: 1px solid #16a34a;
+            background: #f0fdf4;
+            color: #166534;
+            font-weight: bold;
+          }
+
+          .footer {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 60px;
+            padding-top: 20px;
+          }
+
+          .signature {
+            width: 30%;
+            text-align: center;
+          }
+
+          .signature-line {
+            border-top: 1px solid #6b7280;
+            margin-top: 45px;
+            padding-top: 8px;
+          }
+
+          .actions {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px auto;
+          }
+
+          .actions button {
+            border: none;
+            background: #111827;
+            color: white;
+            padding: 10px 25px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+          }
+
+          @media print {
+            body {
+              padding: 0;
+            }
+
+            .voucher {
+              border: none;
+              max-width: none;
+              padding: 10px;
+            }
+
+            .actions {
+              display: none;
+            }
+          }
+        </style>
+      </head>
+
+      <body>
+
+        <div class="actions">
+          <button onclick="window.print()">
+            طباعة سند القيد
+          </button>
+        </div>
+
+        <div class="voucher">
+
+          <div class="company">
+            <h1>شركة الجابري</h1>
+            <p>للعسل والزيوت الطبيعة وخدمات العمرة</p>
+            <p>البيضاء - اليمن | هاتف: 734 434 443</p>
+          </div>
+
+          <div class="title">
+            <h2>سند قيد يومية</h2>
+          </div>
+
+          <div class="info">
+
+            <div class="info-box">
+              <strong>رقم القيد</strong>
+              <span>${escapeHtml(entryNumber)}</span>
+            </div>
+
+            <div class="info-box">
+              <strong>التاريخ</strong>
+              <span>${escapeHtml(entryDate)}</span>
+            </div>
+
+            <div class="info-box">
+              <strong>نوع القيد</strong>
+              <span>${escapeHtml(referenceTypeText)}</span>
+            </div>
+
+            <div class="info-box">
+              <strong>المرجع</strong>
+              <span>${escapeHtml(entryReferenceId || "-")}</span>
+            </div>
+
+          </div>
+
+          <div class="info-box">
+            <strong>البيان</strong>
+            <span>${escapeHtml(entryDescription)}</span>
+          </div>
+
+          <table>
+
+            <thead>
+              <tr>
+                <th>رمز الحساب</th>
+                <th>الحساب</th>
+                <th>البيان</th>
+                <th>مدين</th>
+                <th>دائن</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${linesHtml}
+            </tbody>
+
+            <tfoot>
+              <tr>
+                <td colspan="3">الإجمالي</td>
+                <td class="number">
+                  ${formatMoney(debitTotal)}
+                </td>
+                <td class="number">
+                  ${formatMoney(creditTotal)}
+                </td>
+              </tr>
+            </tfoot>
+
+          </table>
+
+          <div class="balanced">
+            القيد متوازن — إجمالي المدين يساوي إجمالي الدائن
+          </div>
+
+          <div class="footer">
+
+            <div class="signature">
+              المحاسب
+              <div class="signature-line"></div>
+            </div>
+
+            <div class="signature">
+              المراجع
+              <div class="signature-line"></div>
+            </div>
+
+            <div class="signature">
+              المدير
+              <div class="signature-line"></div>
+            </div>
+
+          </div>
+
+        </div>
+
+        <script>
+          window.onload = function () {
+            setTimeout(function () {
+              window.print();
+            }, 500);
+          };
+        </script>
+
+      </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+  };
+
+  /* =======================================================
+     حفظ القيد
+  ======================================================= */
+
+  const handleSave = () => {
+    if (isSaving) {
+      return;
+    }
+
+    /* -----------------------------------------------------
+       التحقق من التاريخ
+    ----------------------------------------------------- */
+
+    if (!date) {
+      toast.error("يرجى تحديد تاريخ القيد");
+      return;
+    }
+
+    /* -----------------------------------------------------
+       التحقق من البيان
+    ----------------------------------------------------- */
 
     if (!description.trim()) {
       toast.error("يرجى إدخال بيان القيد");
-      return false;
+      return;
     }
+
+    /* -----------------------------------------------------
+       عدد الأسطر
+    ----------------------------------------------------- */
 
     if (lines.length < 2) {
       toast.error("يجب أن يحتوي القيد على سطرين على الأقل");
-      return false;
+      return;
     }
+
+    /* -----------------------------------------------------
+       التحقق من الأسطر
+    ----------------------------------------------------- */
 
     const usedAccounts = new Set<string>();
 
@@ -413,74 +746,76 @@ export default function NewJournalEntryPage() {
 
       if (!line.accountId) {
         toast.error(`يرجى اختيار الحساب في السطر ${index + 1}`);
-        return false;
+        return;
       }
 
-      if (usedAccounts.has(line.accountId)) {
-        toast.error(`الحساب مكرر في السطر ${index + 1}`);
-        return false;
+      const account = getSelectedAccount(line.accountId);
+
+      if (!account) {
+        toast.error(`الحساب في السطر ${index + 1} غير موجود`);
+        return;
       }
 
-      usedAccounts.add(line.accountId);
+      if (usedAccounts.has(account.id)) {
+        toast.error(`لا يمكن تكرار الحساب "${account.name}" في أكثر من سطر`);
+        return;
+      }
+
+      usedAccounts.add(account.id);
 
       const debit = Number(line.debit || 0);
       const credit = Number(line.credit || 0);
 
-      if (debit < 0 || credit < 0) {
-        toast.error(`لا يمكن إدخال مبلغ سالب في السطر ${index + 1}`);
-        return false;
+      if (!Number.isFinite(debit) || debit < 0) {
+        toast.error(`قيمة المدين في السطر ${index + 1} غير صحيحة`);
+        return;
+      }
+
+      if (!Number.isFinite(credit) || credit < 0) {
+        toast.error(`قيمة الدائن في السطر ${index + 1} غير صحيحة`);
+        return;
       }
 
       if (debit === 0 && credit === 0) {
-        toast.error(`يرجى إدخال مبلغ مدين أو دائن في السطر ${index + 1}`);
-        return false;
+        toast.error(`يجب إدخال قيمة مدين أو دائن في السطر ${index + 1}`);
+        return;
       }
 
       if (debit > 0 && credit > 0) {
-        toast.error(`لا يمكن أن يحتوي السطر ${index + 1} على مدين ودائن معًا`);
-        return false;
+        toast.error(`لا يمكن إدخال مدين ودائن معًا في السطر ${index + 1}`);
+        return;
       }
     }
 
-    if (totals.debit <= 0) {
-      toast.error("يجب أن يحتوي القيد على مبلغ مدين");
-      return false;
-    }
+    /* -----------------------------------------------------
+       التحقق من الإجماليات
+    ----------------------------------------------------- */
 
-    if (totals.credit <= 0) {
-      toast.error("يجب أن يحتوي القيد على مبلغ دائن");
-      return false;
-    }
-
-    if (Math.abs(totals.debit - totals.credit) > 0.001) {
-      toast.error(
-        `القيد غير متوازن. الفرق: ${formatMoney(Math.abs(totals.difference))}`,
-      );
-      return false;
-    }
-
-    return true;
-  };
-
-  /* =======================================================
-     SAVE
-  ======================================================= */
-
-  const handleSave = () => {
-    if (isSaving) return;
-
-    if (!validate()) {
+    if (totalDebit <= 0) {
+      toast.error("إجمالي المدين يجب أن يكون أكبر من صفر");
       return;
     }
+
+    if (totalCredit <= 0) {
+      toast.error("إجمالي الدائن يجب أن يكون أكبر من صفر");
+      return;
+    }
+
+    if (!balanced) {
+      toast.error(`القيد غير متوازن. الفرق: ${formatMoney(difference)}`);
+      return;
+    }
+
+    /* -----------------------------------------------------
+       بدء الحفظ
+    ----------------------------------------------------- */
 
     setIsSaving(true);
 
     try {
-      /*
-       * نحتفظ بهذا المعرف لاستخدامه في رابط الطباعة.
-       * أما Store فهو الذي ينشئ معرف القيد الفعلي.
-       */
-      const journalEntryId = createLineId();
+      /* ---------------------------------------------------
+         تجهيز أسطر القيد
+      --------------------------------------------------- */
 
       const journalLines = lines.map((line, index) => {
         const account = getSelectedAccount(line.accountId);
@@ -500,11 +835,12 @@ export default function NewJournalEntryPage() {
         };
       });
 
-      /*
-       * مهم:
-       * addJournalEntry لا يستقبل id أو createdAt
-       * لأن الـ Store يقوم بإنشائهما داخليًا.
-       */
+      /* ---------------------------------------------------
+         حفظ القيد في Zustand
+         
+         لا نعتمد على قيمة الإرجاع من addJournalEntry
+      --------------------------------------------------- */
+
       addJournalEntry({
         entryNumber: nextEntryNumber,
         date,
@@ -514,20 +850,53 @@ export default function NewJournalEntryPage() {
         lines: journalLines,
       });
 
+      /* ---------------------------------------------------
+         رسالة النجاح
+      --------------------------------------------------- */
+
       toast.success("تم حفظ القيد بنجاح", {
         description: `رقم القيد: ${nextEntryNumber}`,
-        duration: 8000,
-        action: {
-          label: "عرض سند القيد",
-          onClick: () => {
-            router.push(`/accounting/journal/${journalEntryId}/print`);
-          },
-        },
+        duration: 5000,
       });
 
+      /* ---------------------------------------------------
+         فتح سند الطباعة
+         
+         نأخذ نسخة من البيانات قبل تفريغ النموذج
+      --------------------------------------------------- */
+
+      const printData = {
+        entryNumber: nextEntryNumber,
+        entryDate: date,
+        entryDescription: description.trim(),
+        entryReferenceType: referenceType,
+        entryReferenceId: referenceId.trim(),
+        journalLines: journalLines.map((line) => ({
+          accountCode: line.accountCode,
+          accountName: line.accountName,
+          debit: line.debit,
+          credit: line.credit,
+          description: line.description,
+        })),
+        debitTotal: totalDebit,
+        creditTotal: totalCredit,
+      };
+
+      /* ---------------------------------------------------
+         تفريغ النموذج
+      --------------------------------------------------- */
+
       resetForm();
+
+      /* ---------------------------------------------------
+         فتح سند القيد
+      --------------------------------------------------- */
+
+      setTimeout(() => {
+        openPrintVoucher(printData);
+      }, 150);
     } catch (error) {
-      console.error(error);
+      console.error("خطأ أثناء حفظ القيد:", error);
 
       toast.error(
         error instanceof Error ? error.message : "حدث خطأ أثناء حفظ القيد",
@@ -538,94 +907,62 @@ export default function NewJournalEntryPage() {
   };
 
   /* =======================================================
-     RENDER
+     JSX
   ======================================================= */
 
   return (
-    <main
-      dir="rtl"
-      className="min-h-screen bg-gray-50 px-2.5 py-3 sm:px-4 sm:py-4 lg:px-5"
-    >
+    <div className="min-h-screen bg-slate-50 p-3 sm:p-5" dir="rtl">
       <div className="mx-auto max-w-7xl">
         {/* =================================================
-            HEADER
+            العنوان
         ================================================= */}
 
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2.5">
+        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
             <Link
               href="/accounting/journal"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50"
-              title="العودة للقيود"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100"
+              title="العودة"
             >
-              <FiArrowRight size={17} />
+              <FiArrowRight size={18} />
             </Link>
 
             <div>
-              <h1 className="text-xl font-bold text-gray-800 sm:text-2xl">
-                قيد يومي جديد
+              <h1 className="text-lg font-bold text-slate-800 sm:text-xl">
+                إضافة قيد يومية
               </h1>
 
-              <p className="mt-0.5 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-slate-500 sm:text-sm">
                 إنشاء قيد محاسبي جديد
               </p>
             </div>
           </div>
 
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={resetForm}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
-            >
-              <FiRefreshCw size={15} />
-              إعادة ضبط
-            </button>
+          <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2">
+            <FiFileText className="text-slate-600" size={17} />
 
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving || !totals.balanced}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-[#0E1F33] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#162b43] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <FiSave size={15} />
+            <span className="text-xs font-medium text-slate-600">
+              رقم القيد القادم:
+            </span>
 
-              {isSaving ? "جاري الحفظ..." : "حفظ القيد"}
-            </button>
+            <span className="font-bold text-slate-800">{nextEntryNumber}</span>
           </div>
         </div>
 
         {/* =================================================
-            ENTRY INFO
+            معلومات القيد
         ================================================= */}
 
-        <section className="mb-4 rounded-xl border border-gray-200 bg-white p-3.5 shadow-sm sm:p-4">
-          <div className="mb-4 flex items-center gap-2">
-            <FiFileText size={17} className="text-blue-600" />
-
-            <h2 className="text-sm font-bold text-gray-800">بيانات القيد</h2>
+        <div className="mb-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <h2 className="text-sm font-bold text-slate-800">معلومات القيد</h2>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            {/* Entry number */}
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2">
+            {/* التاريخ */}
 
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-gray-700">
-                رقم القيد
-              </label>
-
-              <input
-                type="text"
-                value={nextEntryNumber}
-                readOnly
-                className="h-10 w-full rounded-lg border border-gray-200 bg-gray-100 px-3 text-xs font-bold text-gray-700 outline-none"
-              />
-            </div>
-
-            {/* Date */}
-
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-gray-700">
+              <label className="mb-1.5 block text-xs font-semibold text-slate-700">
                 التاريخ
               </label>
 
@@ -633,15 +970,15 @@ export default function NewJournalEntryPage() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               />
             </div>
 
-            {/* Reference type */}
+            {/* نوع المرجع */}
 
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-gray-700">
-                نوع المرجع
+              <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+                نوع القيد
               </label>
 
               <select
@@ -657,7 +994,7 @@ export default function NewJournalEntryPage() {
                       | "other",
                   )
                 }
-                className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               >
                 <option value="manual">قيد يدوي</option>
                 <option value="sale">مبيعات</option>
@@ -668,13 +1005,29 @@ export default function NewJournalEntryPage() {
               </select>
             </div>
 
-            {/* Reference ID */}
+            {/* البيان */}
 
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-gray-700">
+            <div className="md:col-span-2">
+              <label className="mb-1.5 block text-xs font-semibold text-slate-700">
+                البيان
+              </label>
+
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={2}
+                placeholder="أدخل بيان القيد..."
+                className="w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+              />
+            </div>
+
+            {/* المرجع */}
+
+            <div className="md:col-span-2">
+              <label className="mb-1.5 block text-xs font-semibold text-slate-700">
                 رقم المرجع
-                <span className="mr-1 text-[10px] font-normal text-gray-400">
-                  اختياري
+                <span className="mr-1 font-normal text-slate-400">
+                  (اختياري)
                 </span>
               </label>
 
@@ -682,86 +1035,64 @@ export default function NewJournalEntryPage() {
                 type="text"
                 value={referenceId}
                 onChange={(e) => setReferenceId(e.target.value)}
-                placeholder="مثال: INV-1001"
-                className="h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="رقم الفاتورة أو السند..."
+                className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               />
             </div>
           </div>
-
-          {/* Description */}
-
-          <div className="mt-3">
-            <label className="mb-1.5 block text-xs font-semibold text-gray-700">
-              بيان القيد
-            </label>
-
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={2}
-              placeholder="اكتب وصف القيد أو سبب العملية..."
-              className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-        </section>
+        </div>
 
         {/* =================================================
-            JOURNAL LINES
+            جدول القيد
         ================================================= */}
 
-        <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
-          {/* Section header */}
-
-          <div className="flex flex-col gap-2.5 border-b border-gray-200 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-sm font-bold text-gray-800">تفاصيل القيد</h2>
+              <h2 className="text-sm font-bold text-slate-800">تفاصيل القيد</h2>
 
-              <p className="mt-0.5 text-[11px] text-gray-500">
-                اختر الحساب ثم أدخل المبلغ المدين أو الدائن
+              <p className="mt-1 text-xs text-slate-500">
+                يجب أن يتساوى إجمالي المدين مع إجمالي الدائن
               </p>
             </div>
 
             <button
               type="button"
               onClick={addLine}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-blue-700"
+              className="flex h-9 items-center justify-center gap-2 rounded-lg bg-slate-800 px-4 text-xs font-semibold text-white transition hover:bg-slate-700"
             >
-              <FiPlus size={15} />
+              <FiPlus size={16} />
               إضافة سطر
             </button>
           </div>
 
-          {/* =================================================
-              TABLE
-          ================================================= */}
+          {/* الجدول */}
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[950px] border-collapse">
-              <thead>
-                <tr className="bg-gray-50 text-xs">
-                  <th className="w-10 border-b border-l border-gray-200 px-2.5 py-2.5 text-center">
+            <table className="w-full min-w-[950px] text-right">
+              <thead className="bg-slate-50">
+                <tr className="border-b border-slate-200">
+                  <th className="w-10 px-3 py-3 text-center text-xs font-bold text-slate-600">
                     #
                   </th>
 
-                  <th className="border-b border-l border-gray-200 px-2.5 py-2.5 text-right">
+                  <th className="px-3 py-3 text-xs font-bold text-slate-600">
                     الحساب
                   </th>
 
-                  <th className="w-40 border-b border-l border-gray-200 px-2.5 py-2.5">
+                  <th className="w-40 px-3 py-3 text-xs font-bold text-slate-600">
                     مدين
                   </th>
 
-                  <th className="w-40 border-b border-l border-gray-200 px-2.5 py-2.5">
+                  <th className="w-40 px-3 py-3 text-xs font-bold text-slate-600">
                     دائن
                   </th>
 
-                  <th className="border-b border-l border-gray-200 px-2.5 py-2.5 text-right">
+                  <th className="w-64 px-3 py-3 text-xs font-bold text-slate-600">
                     البيان
                   </th>
 
-                  <th className="w-12 border-b border-gray-200 px-2.5 py-2.5">
-                    حذف
-                  </th>
+                  <th className="w-12 px-3 py-3"></th>
                 </tr>
               </thead>
 
@@ -772,125 +1103,118 @@ export default function NewJournalEntryPage() {
                   const filteredAccounts = getFilteredAccounts(line.id);
 
                   return (
-                    <tr key={line.id} className="align-top hover:bg-gray-50/50">
-                      {/* Number */}
+                    <tr
+                      key={line.id}
+                      className="border-b border-slate-100 align-top"
+                    >
+                      {/* الرقم */}
 
-                      <td className="border-b border-l border-gray-200 px-2.5 py-3 text-center text-xs font-bold text-gray-500">
+                      <td className="px-3 py-3 text-center text-xs font-semibold text-slate-500">
                         {index + 1}
                       </td>
 
-                      {/* Account */}
+                      {/* الحساب */}
 
-                      <td className="relative border-b border-l border-gray-200 px-2.5 py-3">
+                      <td className="relative px-3 py-3">
                         <div className="relative">
-                          <FiSearch
-                            size={14}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-                          />
+                          <div className="relative">
+                            <FiSearch
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                              size={15}
+                            />
 
-                          <input
-                            type="text"
-                            value={
-                              searches[line.id] ??
-                              (selectedAccount
-                                ? `${selectedAccount.code} - ${selectedAccount.name}`
-                                : "")
-                            }
-                            onChange={(e) =>
-                              handleAccountSearch(line.id, e.target.value)
-                            }
-                            onFocus={() => setOpenAccountLine(line.id)}
-                            placeholder="ابحث عن الحساب..."
-                            className={`h-9 w-full rounded-lg border ${
-                              line.accountId
-                                ? "border-green-300 bg-green-50/30"
-                                : "border-gray-300 bg-white"
-                            } py-2 pr-8 pl-2.5 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100`}
-                          />
-                        </div>
-
-                        {/* Account dropdown */}
-
-                        {openAccountLine === line.id && (
-                          <div className="absolute right-2.5 left-2.5 top-[calc(100%-6px)] z-50 max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl">
-                            {filteredAccounts.length === 0 ? (
-                              <div className="p-3 text-center text-xs text-gray-500">
-                                لا توجد حسابات مطابقة
-                              </div>
-                            ) : (
-                              filteredAccounts.map((account) => (
-                                <button
-                                  key={account.id}
-                                  type="button"
-                                  onClick={() =>
-                                    handleSelectAccount(line.id, account.id)
-                                  }
-                                  className="flex w-full items-center justify-between border-b border-gray-100 px-3 py-2.5 text-right transition last:border-b-0 hover:bg-blue-50"
-                                >
-                                  <div>
-                                    <p className="text-xs font-bold text-gray-800">
-                                      {account.name}
-                                    </p>
-
-                                    <p className="mt-0.5 text-[10px] text-gray-500">
-                                      {account.code}
-                                    </p>
-                                  </div>
-
-                                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">
-                                    {accountTypeLabel(account.type)}
-                                  </span>
-                                </button>
-                              ))
-                            )}
+                            <input
+                              type="text"
+                              value={
+                                searches[line.id] ??
+                                (selectedAccount
+                                  ? `${selectedAccount.code} - ${selectedAccount.name}`
+                                  : "")
+                              }
+                              onFocus={() => setOpenAccountLine(line.id)}
+                              onChange={(e) =>
+                                handleAccountSearch(line.id, e.target.value)
+                              }
+                              placeholder="ابحث عن الحساب..."
+                              className="h-10 w-full rounded-lg border border-slate-300 bg-white pr-9 pl-3 text-xs outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                            />
                           </div>
-                        )}
 
-                        {selectedAccount && (
-                          <p className="mt-1 text-[10px] text-green-600">
-                            طبيعة الحساب:{" "}
-                            {selectedAccount.nature === "debit"
-                              ? "مدين"
-                              : "دائن"}
-                          </p>
-                        )}
+                          {openAccountLine === line.id && (
+                            <div className="absolute right-3 left-3 z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl">
+                              {filteredAccounts.length === 0 ? (
+                                <div className="p-4 text-center text-xs text-slate-500">
+                                  لا توجد حسابات مطابقة
+                                </div>
+                              ) : (
+                                filteredAccounts.map((account) => (
+                                  <button
+                                    type="button"
+                                    key={account.id}
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() =>
+                                      selectAccount(line.id, account)
+                                    }
+                                    className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3 py-2.5 text-right transition last:border-b-0 hover:bg-slate-50"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-mono text-xs font-bold text-slate-700">
+                                          {account.code}
+                                        </span>
+
+                                        <span className="truncate text-xs font-semibold text-slate-800">
+                                          {account.name}
+                                        </span>
+                                      </div>
+
+                                      <div className="mt-1 text-[10px] text-slate-400">
+                                        {accountTypeLabel(account.type)}
+                                      </div>
+                                    </div>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </td>
 
-                      {/* Debit */}
+                      {/* المدين */}
 
-                      <td className="border-b border-l border-gray-200 px-2.5 py-3">
+                      <td className="px-3 py-3">
                         <input
                           type="number"
                           min="0"
                           step="0.01"
                           value={line.debit}
                           onChange={(e) =>
-                            handleDebitChange(line.id, e.target.value)
+                            updateLine(line.id, "debit", e.target.value)
                           }
                           placeholder="0.00"
-                          className="h-9 w-full rounded-lg border border-blue-200 bg-blue-50/30 px-2.5 text-left text-xs font-semibold text-blue-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-lg border border-slate-300 px-3 text-left text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                         />
                       </td>
 
-                      {/* Credit */}
+                      {/* الدائن */}
 
-                      <td className="border-b border-l border-gray-200 px-2.5 py-3">
+                      <td className="px-3 py-3">
                         <input
                           type="number"
                           min="0"
                           step="0.01"
                           value={line.credit}
                           onChange={(e) =>
-                            handleCreditChange(line.id, e.target.value)
+                            updateLine(line.id, "credit", e.target.value)
                           }
                           placeholder="0.00"
-                          className="h-9 w-full rounded-lg border border-green-200 bg-green-50/30 px-2.5 text-left text-xs font-semibold text-green-800 outline-none transition focus:border-green-500 focus:ring-2 focus:ring-green-100"
+                          className="h-10 w-full rounded-lg border border-slate-300 px-3 text-left text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                         />
                       </td>
 
-                      {/* Description */}
+                      {/* البيان */}
 
-                      <td className="border-b border-l border-gray-200 px-2.5 py-3">
+                      <td className="px-3 py-3">
                         <input
                           type="text"
                           value={line.description}
@@ -898,20 +1222,21 @@ export default function NewJournalEntryPage() {
                             updateLine(line.id, "description", e.target.value)
                           }
                           placeholder="بيان السطر..."
-                          className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-lg border border-slate-300 px-3 text-xs outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                         />
                       </td>
 
-                      {/* Delete */}
+                      {/* حذف */}
 
-                      <td className="border-b border-gray-200 px-2.5 py-3 text-center">
+                      <td className="px-3 py-3">
                         <button
                           type="button"
                           onClick={() => removeLine(line.id)}
-                          className="mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 hover:text-red-700"
+                          disabled={lines.length <= 2}
+                          className="flex h-9 w-9 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
                           title="حذف السطر"
                         >
-                          <FiTrash2 size={15} />
+                          <FiTrash2 size={16} />
                         </button>
                       </td>
                     </tr>
@@ -919,127 +1244,105 @@ export default function NewJournalEntryPage() {
                 })}
               </tbody>
 
-              {/* =================================================
-                  TOTALS
-              ================================================= */}
+              {/* الإجماليات */}
 
               <tfoot>
-                <tr className="bg-gray-50">
+                <tr className="bg-slate-50">
                   <td
                     colSpan={2}
-                    className="border-l border-gray-200 px-3 py-3 text-left text-xs font-bold text-gray-700"
+                    className="px-3 py-4 text-left text-sm font-bold text-slate-700"
                   >
                     الإجمالي
                   </td>
 
-                  <td className="border-l border-gray-200 px-3 py-3 text-center text-xs font-bold text-blue-700">
-                    {formatMoney(totals.debit)}
+                  <td className="px-3 py-4">
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left font-bold text-slate-800">
+                      {formatMoney(totalDebit)}
+                    </div>
                   </td>
 
-                  <td className="border-l border-gray-200 px-3 py-3 text-center text-xs font-bold text-green-700">
-                    {formatMoney(totals.credit)}
+                  <td className="px-3 py-4">
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left font-bold text-slate-800">
+                      {formatMoney(totalCredit)}
+                    </div>
                   </td>
 
-                  <td colSpan={2} className="px-3 py-3" />
+                  <td colSpan={2} className="px-3 py-4">
+                    {balanced ? (
+                      <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs font-bold text-green-700">
+                        <FiCheckCircle size={17} />
+
+                        <span>القيد متوازن</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700">
+                        <div className="flex items-center gap-2">
+                          <FiAlertCircle size={17} />
+
+                          <span>القيد غير متوازن</span>
+                        </div>
+
+                        <span>الفرق: {formatMoney(difference)}</span>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               </tfoot>
             </table>
           </div>
-        </section>
 
-        {/* =================================================
-            BALANCE STATUS
-        ================================================= */}
+          {/* =================================================
+              أزرار الحفظ
+          ================================================= */}
 
-        <section className="mt-4">
-          {totals.balanced ? (
-            <div className="flex flex-col gap-2.5 rounded-xl border border-green-200 bg-green-50 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-green-100">
-                  <FiCheckCircle size={19} className="text-green-600" />
-                </div>
+          <div className="flex flex-col-reverse gap-2 border-t border-slate-200 p-4 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={resetForm}
+              disabled={isSaving}
+              className="flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              <FiRefreshCw size={15} />
+              تفريغ الحقول
+            </button>
 
-                <div>
-                  <p className="text-xs font-bold text-green-800">
-                    القيد متوازن
-                  </p>
-
-                  <p className="mt-0.5 text-[10px] text-green-700">
-                    إجمالي المدين يساوي إجمالي الدائن
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-xs font-bold text-green-800">
-                {formatMoney(totals.debit)} ريال
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5 rounded-xl border border-orange-200 bg-orange-50 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-100">
-                  <FiAlertCircle size={19} className="text-orange-600" />
-                </div>
-
-                <div>
-                  <p className="text-xs font-bold text-orange-800">
-                    القيد غير متوازن
-                  </p>
-
-                  <p className="mt-0.5 text-[10px] text-orange-700">
-                    يجب أن يكون إجمالي المدين مساويًا لإجمالي الدائن
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-xs font-bold text-orange-800">
-                الفرق: {formatMoney(Math.abs(totals.difference))} ريال
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* =================================================
-            BOTTOM ACTIONS
-        ================================================= */}
-
-        <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:justify-end">
-          <Link
-            href="/accounting/journal"
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-xs font-bold text-gray-700 transition hover:bg-gray-50"
-          >
-            <FiArrowRight size={15} />
-            إلغاء والعودة
-          </Link>
-
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving || !totals.balanced}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-[#0E1F33] px-6 py-2.5 text-xs font-bold text-white transition hover:bg-[#162b43] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <FiSave size={15} />
-
-            {isSaving ? "جاري الحفظ..." : "حفظ القيد"}
-          </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-800 px-6 text-xs font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSaving ? (
+                <>
+                  <FiRefreshCw className="animate-spin" size={16} />
+                  جارٍ الحفظ...
+                </>
+              ) : (
+                <>
+                  <FiSave size={16} />
+                  حفظ القيد وطباعة السند
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* =================================================
-            COMPANY FOOTER
+            ملاحظة
         ================================================= */}
 
-        <div className="mt-6 rounded-xl border border-gray-200 bg-white p-3 text-center">
-          <p className="text-xs font-bold text-gray-700">شركة الجابري</p>
+        <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3">
+          <div className="flex gap-2">
+            <FiPrinter className="mt-0.5 shrink-0 text-blue-600" size={17} />
 
-          <p className="mt-0.5 text-[10px] text-gray-500">
-            للعسل والزيوت الطبيعة وخدمات العمرة
-          </p>
-
-          <p className="mt-0.5 text-[10px] text-gray-400">
-            البيضاء - اليمن | هاتف: 734 434 443
-          </p>
+            <p className="text-xs leading-6 text-blue-800">
+              بعد الضغط على <strong>حفظ القيد وطباعة السند</strong>، سيتم حفظ
+              القيد أولًا، ثم تفريغ الحقول وفتح سند القيد في نافذة جديدة
+              للطباعة.
+            </p>
+          </div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }
