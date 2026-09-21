@@ -14,9 +14,7 @@ import {
   FiEdit,
 } from "react-icons/fi";
 
-import { useCustomersStore, CASH_CUSTOMER_ID } from "@/Store/customersStore";
-
-import { useSalesStore } from "@/Store/salesStore";
+import { useERPStore, CASH_CUSTOMER_ID } from "@/Store/erpStore";
 
 // =========================================================
 // Customers Page
@@ -27,16 +25,14 @@ export default function CustomersPage() {
   const [statusFilter, setStatusFilter] = useState("جميع العملاء");
 
   // =========================================================
-  // ZUSTAND - CUSTOMERS
+  // ZUSTAND - ERP STORE
   // =========================================================
 
-  const customers = useCustomersStore((state) => state.customers);
+  const customers = useERPStore((state) => state.customers);
 
-  // =========================================================
-  // ZUSTAND - SALES
-  // =========================================================
+  const sales = useERPStore((state) => state.sales);
 
-  const sales = useSalesStore((state) => state.sales);
+  const accounts = useERPStore((state) => state.accounts);
 
   // =========================================================
   // استبعاد العميل النقدي
@@ -74,12 +70,28 @@ export default function CustomersPage() {
   };
 
   // =========================================================
-  // استبعاد الفواتير الملغاة
+  // الفواتير الصحيحة
   // =========================================================
 
   const validSales = useMemo(() => {
     return sales.filter((sale) => sale.status !== "cancelled");
   }, [sales]);
+
+  // =========================================================
+  // الحصول على الحساب المحاسبي للعميل
+  // =========================================================
+
+  const getCustomerAccount = (customer: (typeof normalCustomers)[number]) => {
+    if (!customer.accountId && !customer.accountCode) {
+      return undefined;
+    }
+
+    return accounts.find(
+      (account) =>
+        (customer.accountId && account.id === customer.accountId) ||
+        (customer.accountCode && account.code === customer.accountCode),
+    );
+  };
 
   // =========================================================
   // إجمالي مبيعات العميل
@@ -121,18 +133,18 @@ export default function CustomersPage() {
   // الرصيد المستحق
   // =========================================================
   //
-  // رصيد العميل في Customer Store
-  // +
-  // المبيعات الآجلة
+  // يعتمد على:
+  // 1. المبيعات الآجلة
+  // 2. الرصيد الافتتاحي إن وجد
   //
   // =========================================================
 
   const getCustomerDue = (customer: (typeof normalCustomers)[number]) => {
-    const balance = getNumericAmount(customer.balance);
+    const openingBalance = getNumericAmount(customer.balance);
 
     const creditSales = getCustomerCreditSales(customer.id);
 
-    return Math.max(0, balance + creditSales);
+    return Math.max(0, openingBalance + creditSales);
   };
 
   // =========================================================
@@ -181,7 +193,7 @@ export default function CustomersPage() {
 
       return matchesSearch && matchesStatus;
     });
-  }, [normalCustomers, validSales, search, statusFilter]);
+  }, [normalCustomers, validSales, accounts, search, statusFilter]);
 
   // =========================================================
   // الإحصائيات
@@ -238,7 +250,7 @@ export default function CustomersPage() {
             <h1 className="text-lg font-bold text-gray-800">العملاء</h1>
 
             <p className="mt-0.5 text-[10px] text-gray-500">
-              إدارة بيانات العملاء والمبيعات والأرصدة المستحقة
+              إدارة بيانات العملاء والحسابات والمبيعات والأرصدة المستحقة
             </p>
           </div>
 
@@ -371,7 +383,7 @@ export default function CustomersPage() {
           {/* TABLE */}
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[950px] text-right">
+            <table className="w-full min-w-[1050px] text-right">
               <thead className="bg-gray-50">
                 <tr className="text-[10px] text-gray-500">
                   <th className="whitespace-nowrap px-3 py-2 font-medium">
@@ -383,7 +395,7 @@ export default function CustomersPage() {
                   </th>
 
                   <th className="whitespace-nowrap px-3 py-2 font-medium">
-                    الحساب
+                    الحساب المحاسبي
                   </th>
 
                   <th className="whitespace-nowrap px-3 py-2 font-medium">
@@ -403,7 +415,7 @@ export default function CustomersPage() {
                   </th>
 
                   <th className="whitespace-nowrap px-3 py-2 font-medium">
-                    الحالة
+                    حالة الحساب
                   </th>
 
                   <th className="whitespace-nowrap px-3 py-2 font-medium">
@@ -422,6 +434,8 @@ export default function CustomersPage() {
                     const customerDue = getCustomerDue(customer);
 
                     const status = getCustomerStatus(customer);
+
+                    const account = getCustomerAccount(customer);
 
                     return (
                       <tr
@@ -454,14 +468,25 @@ export default function CustomersPage() {
                         {/* ACCOUNT */}
 
                         <td className="px-3 py-2">
-                          <div className="max-w-[170px]">
-                            <p className="truncate text-[11px] font-medium text-gray-700">
-                              {customer.accountName || customer.name}
-                            </p>
+                          <div className="max-w-[190px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate text-[11px] font-semibold text-gray-700">
+                                {account?.name ||
+                                  customer.accountName ||
+                                  customer.name}
+                              </span>
+                            </div>
 
-                            {customer.accountCode && (
-                              <p className="text-[9px] text-gray-400">
-                                {customer.accountCode}
+                            {(account?.code || customer.accountCode) && (
+                              <p className="mt-0.5 text-[9px] text-gray-400">
+                                كود الحساب:{" "}
+                                {account?.code || customer.accountCode}
+                              </p>
+                            )}
+
+                            {account && (
+                              <p className="text-[8px] text-gray-400">
+                                الأصول ← العملاء
                               </p>
                             )}
                           </div>
@@ -527,7 +552,7 @@ export default function CustomersPage() {
 
                             <Link
                               href={`/customers/${customer.id}`}
-                              title="عرض العميل"
+                              title="عرض كشف الحساب"
                               className="rounded-md p-1.5 text-gray-400 transition hover:bg-green-50 hover:text-green-600"
                             >
                               <FiEye size={14} />
@@ -578,6 +603,7 @@ export default function CustomersPage() {
                             type="button"
                             onClick={() => {
                               setSearch("");
+
                               setStatusFilter("جميع العملاء");
                             }}
                             className="mt-3 rounded-md bg-amber-600 px-3 py-1.5 text-[10px] font-medium text-white transition hover:bg-amber-700"
@@ -609,7 +635,7 @@ export default function CustomersPage() {
             </p>
 
             <p className="text-[9px] text-gray-400">
-              البيانات محفوظة في Zustand
+              الحسابات مرتبطة بشجرة الحسابات
             </p>
           </div>
         </div>
@@ -723,6 +749,7 @@ function StatCard({
 function Status({ status }: { status: string }) {
   const styles: Record<string, string> = {
     نشط: "bg-green-50 text-green-600",
+
     متأخر: "bg-red-50 text-red-600",
   };
 

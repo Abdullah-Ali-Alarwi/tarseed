@@ -18,21 +18,19 @@ import {
 } from "react-icons/fi";
 import { toast } from "sonner";
 
-import { useSuppliersStore } from "@/Store/suppliersStore";
-import { usePurchasesStore } from "@/Store/purchasesStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function SuppliersPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("جميع الموردين");
 
   // ======================================================
-  // Zustand
+  // Zustand - ERP Store
   // ======================================================
 
-  const suppliers = useSuppliersStore((state) => state.suppliers);
-  const deleteSupplier = useSuppliersStore((state) => state.deleteSupplier);
-
-  const purchases = usePurchasesStore((state) => state.purchases);
+  const suppliers = useERPStore((state) => state.suppliers);
+  const purchases = useERPStore((state) => state.purchases);
+  const deleteSupplier = useERPStore((state) => state.deleteSupplier);
 
   // ======================================================
   // تحويل أي قيمة إلى رقم
@@ -141,6 +139,12 @@ export default function SuppliersPage() {
           .toLowerCase()
           .includes(searchValue) ||
         String(supplier.address || "")
+          .toLowerCase()
+          .includes(searchValue) ||
+        String(supplier.accountCode || "")
+          .toLowerCase()
+          .includes(searchValue) ||
+        String(supplier.accountName || "")
           .toLowerCase()
           .includes(searchValue);
 

@@ -20,6 +20,8 @@ export default function SideNave() {
     { name: "المخزون", path: "/inventory" },
     { name: "العملاء", path: "/customers" },
     { name: "الموردين", path: "/suppliers" },
+    { name: "المحاسبة", path: "/accounting" },
+    { name: "الحسابات", path: "/accounting/accounts" },
   ];
 
   // =========================================================
@@ -29,6 +31,21 @@ export default function SideNave() {
   const isActive = (path: string) => {
     if (path === "/") {
       return pathname === "/";
+    }
+
+    // صفحة الحسابات مستقلة عن صفحة المحاسبة
+    if (path === "/accounting/accounts") {
+      return pathname === "/accounting/accounts";
+    }
+
+    // إذا كان المستخدم داخل إحدى الصفحات الفرعية للمحاسبة
+    // لا نجعل رابط المحاسبة فعالاً في صفحة الحسابات
+    if (path === "/accounting") {
+      return (
+        pathname === "/accounting" ||
+        (pathname.startsWith("/accounting/") &&
+          pathname !== "/accounting/accounts")
+      );
     }
 
     return pathname === path || pathname.startsWith(`${path}/`);
@@ -391,6 +408,10 @@ function getIcon(path: string) {
   const iconClass = "w-4 h-4";
 
   switch (path) {
+    /* =====================================================
+       الرئيسية
+    ===================================================== */
+
     case "/":
       return (
         <svg
@@ -407,6 +428,10 @@ function getIcon(path: string) {
           />
         </svg>
       );
+
+    /* =====================================================
+       لوحة التحكم
+    ===================================================== */
 
     case "/dashboard":
       return (
@@ -425,6 +450,10 @@ function getIcon(path: string) {
         </svg>
       );
 
+    /* =====================================================
+       المبيعات
+    ===================================================== */
+
     case "/sales":
       return (
         <svg
@@ -441,6 +470,10 @@ function getIcon(path: string) {
           />
         </svg>
       );
+
+    /* =====================================================
+       المشتريات
+    ===================================================== */
 
     case "/purchases":
       return (
@@ -459,6 +492,10 @@ function getIcon(path: string) {
         </svg>
       );
 
+    /* =====================================================
+       المخزون
+    ===================================================== */
+
     case "/inventory":
       return (
         <svg
@@ -475,6 +512,10 @@ function getIcon(path: string) {
           />
         </svg>
       );
+
+    /* =====================================================
+       العملاء
+    ===================================================== */
 
     case "/customers":
       return (
@@ -493,6 +534,10 @@ function getIcon(path: string) {
         </svg>
       );
 
+    /* =====================================================
+       الموردين
+    ===================================================== */
+
     case "/suppliers":
       return (
         <svg
@@ -510,6 +555,10 @@ function getIcon(path: string) {
         </svg>
       );
 
+    /* =====================================================
+       المحاسبة
+    ===================================================== */
+
     case "/accounting":
       return (
         <svg
@@ -526,6 +575,37 @@ function getIcon(path: string) {
           />
         </svg>
       );
+
+    /* =====================================================
+       الحسابات
+    ===================================================== */
+
+    case "/accounting/accounts":
+      return (
+        <svg
+          className={iconClass}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={1.8}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M4 5h16M4 12h16M4 19h16"
+          />
+
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M8 5v14M16 5v14"
+          />
+        </svg>
+      );
+
+    /* =====================================================
+       التقارير
+    ===================================================== */
 
     case "/reports":
       return (

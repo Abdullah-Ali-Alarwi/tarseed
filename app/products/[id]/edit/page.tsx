@@ -14,7 +14,7 @@ import {
   FiTrash2,
 } from "react-icons/fi";
 import { toast } from "sonner";
-import { useProductsStore } from "@/Store/productsStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function EditProductPage() {
   const params = useParams();
@@ -22,13 +22,21 @@ export default function EditProductPage() {
 
   const id = params?.id as string;
 
-  const product = useProductsStore((state) =>
+  // =========================================================
+  // ERP STORE
+  // =========================================================
+
+  const product = useERPStore((state) =>
     state.products.find((item) => item.id === id),
   );
 
-  const updateProduct = useProductsStore((state) => state.updateProduct);
+  const updateProduct = useERPStore((state) => state.updateProduct);
 
-  const deleteProduct = useProductsStore((state) => state.deleteProduct);
+  const deleteProduct = useERPStore((state) => state.deleteProduct);
+
+  // =========================================================
+  // FORM STATE
+  // =========================================================
 
   const [name, setName] = useState("");
   const [unit, setUnit] = useState("كيلو");
@@ -39,7 +47,10 @@ export default function EditProductPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // تحميل بيانات الصنف
+  // =========================================================
+  // LOAD PRODUCT
+  // =========================================================
+
   useEffect(() => {
     if (product) {
       setName(product.name || "");
@@ -47,6 +58,7 @@ export default function EditProductPage() {
       setCategory(product.category || "");
       setDescription(product.description || "");
       setIsActive(product.isActive !== false);
+
       setLoading(false);
     } else {
       const timer = setTimeout(() => {
@@ -57,7 +69,10 @@ export default function EditProductPage() {
     }
   }, [product]);
 
-  // الصنف غير موجود
+  // =========================================================
+  // PRODUCT NOT FOUND
+  // =========================================================
+
   if (!loading && !product) {
     return (
       <main
@@ -77,7 +92,7 @@ export default function EditProductPage() {
 
           <Link
             href="/products"
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
           >
             <FiArrowRight />
             العودة إلى الأصناف
@@ -86,6 +101,10 @@ export default function EditProductPage() {
       </main>
     );
   }
+
+  // =========================================================
+  // LOADING
+  // =========================================================
 
   if (loading || !product) {
     return (
@@ -97,6 +116,10 @@ export default function EditProductPage() {
       </main>
     );
   }
+
+  // =========================================================
+  // SAVE
+  // =========================================================
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -141,27 +164,49 @@ export default function EditProductPage() {
     }
   };
 
+  // =========================================================
+  // DELETE
+  // =========================================================
+
   const handleDelete = () => {
     const confirmed = window.confirm(
       `هل أنت متأكد من حذف الصنف "${product.name}"؟`,
     );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
-    deleteProduct(product.id);
+    try {
+      deleteProduct(product.id);
 
-    toast.success("تم حذف الصنف", {
-      description: `تم حذف "${product.name}" من النظام.`,
-      duration: 4000,
-    });
+      toast.success("تم حذف الصنف", {
+        description: `تم حذف "${product.name}" من النظام.`,
+        duration: 4000,
+      });
 
-    router.push("/products");
+      router.push("/products");
+    } catch (error) {
+      console.error("Error deleting product:", error);
+
+      toast.error("حدث خطأ أثناء حذف الصنف", {
+        description: "تعذر حذف بيانات الصنف.",
+        duration: 4000,
+      });
+    }
   };
+
+  // =========================================================
+  // UI
+  // =========================================================
 
   return (
     <main dir="rtl" className="min-h-screen bg-gray-50 p-3 sm:p-5 lg:p-6">
       <div className="mx-auto max-w-5xl">
-        {/* Header */}
+        {/* =====================================================
+            Header
+        ===================================================== */}
+
         <div className="mb-5">
           <Link
             href="/products"
@@ -201,10 +246,16 @@ export default function EditProductPage() {
           </div>
         </div>
 
-        {/* Form */}
+        {/* =====================================================
+            Form
+        ===================================================== */}
+
         <form onSubmit={handleSubmit}>
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-            {/* Main form */}
+            {/* =================================================
+                Main Form
+            ================================================= */}
+
             <div className="space-y-5 lg:col-span-2">
               <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
                 <div className="border-b border-gray-100 p-5">
@@ -216,7 +267,10 @@ export default function EditProductPage() {
                 </div>
 
                 <div className="space-y-5 p-5">
-                  {/* Code */}
+                  {/* =================================================
+                      Code
+                  ================================================= */}
+
                   <div>
                     <label className="mb-2 block text-sm font-semibold text-gray-700">
                       رقم الصنف
@@ -235,7 +289,10 @@ export default function EditProductPage() {
                     </div>
                   </div>
 
-                  {/* Name */}
+                  {/* =================================================
+                      Name
+                  ================================================= */}
+
                   <div>
                     <label className="mb-2 block text-sm font-semibold text-gray-700">
                       اسم الصنف
@@ -258,8 +315,13 @@ export default function EditProductPage() {
                     </div>
                   </div>
 
-                  {/* Unit + Category */}
+                  {/* =================================================
+                      Unit + Category
+                  ================================================= */}
+
                   <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                    {/* Unit */}
+
                     <div>
                       <label className="mb-2 block text-sm font-semibold text-gray-700">
                         الوحدة
@@ -277,17 +339,31 @@ export default function EditProductPage() {
                           className="h-12 w-full appearance-none rounded-xl border border-gray-200 bg-white pr-10 pl-4 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         >
                           <option value="كيلو">كيلو</option>
+
                           <option value="جرام">جرام</option>
+
                           <option value="لتر">لتر</option>
+
                           <option value="مل">مل</option>
+
                           <option value="حبة">حبة</option>
+
+                          <option value="قطعة">قطعة</option>
+
                           <option value="علبة">علبة</option>
+
                           <option value="كرتون">كرتون</option>
+
                           <option value="عبوة">عبوة</option>
+
                           <option value="وحدة">وحدة</option>
+
+                          <option value="خدمة">خدمة</option>
                         </select>
                       </div>
                     </div>
+
+                    {/* Category */}
 
                     <div>
                       <label className="mb-2 block text-sm font-semibold text-gray-700">
@@ -311,7 +387,10 @@ export default function EditProductPage() {
                     </div>
                   </div>
 
-                  {/* Description */}
+                  {/* =================================================
+                      Description
+                  ================================================= */}
+
                   <div>
                     <label className="mb-2 block text-sm font-semibold text-gray-700">
                       وصف الصنف
@@ -326,7 +405,10 @@ export default function EditProductPage() {
                     />
                   </div>
 
-                  {/* Status */}
+                  {/* =================================================
+                      Status
+                  ================================================= */}
+
                   <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
                     <div className="flex items-center justify-between gap-4">
                       <div>
@@ -372,7 +454,10 @@ export default function EditProductPage() {
                 </div>
               </div>
 
-              {/* Actions */}
+              {/* =================================================
+                  Actions
+              ================================================= */}
+
               <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
                 <button
                   type="button"
@@ -404,7 +489,10 @@ export default function EditProductPage() {
               </div>
             </div>
 
-            {/* Preview */}
+            {/* =================================================
+                Preview
+            ================================================= */}
+
             <div className="lg:col-span-1">
               <div className="sticky top-5 rounded-2xl border border-gray-200 bg-white shadow-sm">
                 <div className="border-b border-gray-100 p-5">
@@ -436,6 +524,8 @@ export default function EditProductPage() {
                     </div>
 
                     <div className="mt-5 space-y-3">
+                      {/* Unit */}
+
                       <div className="flex items-center justify-between rounded-xl bg-white p-3">
                         <span className="text-xs text-gray-500">الوحدة</span>
 
@@ -444,6 +534,8 @@ export default function EditProductPage() {
                         </span>
                       </div>
 
+                      {/* Category */}
+
                       <div className="flex items-center justify-between rounded-xl bg-white p-3">
                         <span className="text-xs text-gray-500">التصنيف</span>
 
@@ -451,6 +543,8 @@ export default function EditProductPage() {
                           {category.trim() || "عام"}
                         </span>
                       </div>
+
+                      {/* Status */}
 
                       <div className="flex items-center justify-between rounded-xl bg-white p-3">
                         <span className="text-xs text-gray-500">الحالة</span>
@@ -473,6 +567,7 @@ export default function EditProductPage() {
                   </div>
 
                   {/* Info */}
+
                   <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
                     <div className="flex gap-3">
                       <FiCheck className="mt-0.5 shrink-0 text-blue-600" />

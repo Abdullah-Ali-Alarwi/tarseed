@@ -12,7 +12,8 @@ import {
   FiPrinter,
   FiEye,
 } from "react-icons/fi";
-import { useSalesStore } from "@/Store/salesStore";
+
+import { useERPStore } from "@/Store/erpStore";
 
 export default function SalesPage() {
   /* =====================================================
@@ -22,10 +23,10 @@ export default function SalesPage() {
   const [search, setSearch] = useState("");
 
   /* =====================================================
-     Store
+     ERP STORE
   ===================================================== */
 
-  const sales = useSalesStore((state) => state.sales);
+  const sales = useERPStore((state) => state.sales);
 
   /* =====================================================
      البحث في الفواتير
@@ -39,13 +40,13 @@ export default function SalesPage() {
     }
 
     return sales.filter((sale) => {
-      const invoiceNumber = sale.invoiceNumber.toLowerCase();
+      const invoiceNumber = String(sale.invoiceNumber ?? "").toLowerCase();
 
-      const customerName = (sale.customerName ?? "").toLowerCase();
+      const customerName = String(sale.customerName ?? "").toLowerCase();
 
-      const accountName = (sale.accountName ?? "").toLowerCase();
+      const accountName = String(sale.accountName ?? "").toLowerCase();
 
-      const accountCode = (sale.accountCode ?? "").toLowerCase();
+      const accountCode = String(sale.accountCode ?? "").toLowerCase();
 
       return (
         invoiceNumber.includes(value) ||
@@ -143,7 +144,6 @@ export default function SalesPage() {
     const printWindow = window.open(`/sales/${id}/print`, "_blank");
 
     if (!printWindow) {
-      // لا يوجد حذف أو تعديل للفاتورة هنا
       console.error("تعذر فتح صفحة الطباعة، يرجى السماح بالنوافذ المنبثقة.");
     }
   };
@@ -402,7 +402,7 @@ export default function SalesPage() {
 
                       <td className="px-3 py-2">
                         <div className="text-[10px] font-bold text-gray-800">
-                          {formatMoney(sale.total)}
+                          {formatMoney(Number(sale.total || 0))}
                         </div>
 
                         <div className="text-[8px] text-gray-400">ريال</div>

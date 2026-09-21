@@ -3,259 +3,358 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { useParams } from "next/navigation";
+import { useERPStore } from "@/Store/erpStore";
 import {
   FiArrowRight,
   FiBox,
-  FiCalendar,
-  FiHash,
-  FiLayers,
   FiShoppingCart,
+  FiTruck,
+  FiDollarSign,
   FiTrendingDown,
   FiTrendingUp,
+  FiAlertCircle,
+  FiCheckCircle,
+  FiPackage,
+  FiFileText,
+  FiPrinter,
 } from "react-icons/fi";
 
-import { useProductsStore } from "@/Store/productsStore";
-import { usePurchasesStore } from "@/Store/purchasesStore";
-import { useSalesStore } from "@/Store/salesStore";
+/* =========================================================
+   HELPERS
+========================================================= */
 
-export default function InventoryProductDetailsPage() {
+const formatMoney = (value: number) => {
+  return new Intl.NumberFormat("ar-YE", {
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+};
+
+const formatNumber = (value: number) => {
+  return new Intl.NumberFormat("ar-YE", {
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+};
+
+const getPaymentMethodName = (method: string) => {
+  switch (method) {
+    case "cash":
+      return "نقدي";
+
+    case "bank":
+      return "بنك";
+
+    case "credit":
+      return "آجل";
+
+    default:
+      return method || "-";
+  }
+};
+
+const getPurchaseStatusName = (status: string) => {
+  switch (status) {
+    case "paid":
+      return "مدفوعة";
+
+    case "pending":
+      return "آجلة";
+
+    case "cancelled":
+      return "ملغاة";
+
+    default:
+      return status || "-";
+  }
+};
+
+const getSaleStatusName = (status: string) => {
+  switch (status) {
+    case "paid":
+      return "مدفوعة";
+
+    case "pending":
+      return "آجلة";
+
+    case "cancelled":
+      return "ملغاة";
+
+    default:
+      return status || "-";
+  }
+};
+
+/* =========================================================
+   PAGE
+========================================================= */
+
+export default function ProductDetailsPage() {
   const params = useParams();
 
-  const productId = String(params?.id || "");
+  const productId = String(params.id || "");
 
-  /* =====================================================
-     Stores
-  ===================================================== */
+  /* =======================================================
+     STORE
+  ======================================================= */
 
-  const products = useProductsStore((state) => state.products);
-  const purchases = usePurchasesStore((state) => state.purchases);
-  const sales = useSalesStore((state) => state.sales);
+  const products = useERPStore((state) => state.products);
 
-  /* =====================================================
-     Product
-  ===================================================== */
+  const purchases = useERPStore((state) => state.purchases);
+
+  const sales = useERPStore((state) => state.sales);
+
+  const getInventoryItem = useERPStore((state) => state.getInventoryItem);
+
+  /* =======================================================
+     PRODUCT
+  ======================================================= */
 
   const product = useMemo(() => {
-    if (!productId) return undefined;
-
-    return products.find((item) => item.id === productId);
+    return products.find((item) => String(item.id) === productId);
   }, [products, productId]);
 
-  /* =====================================================
-     Product code
-  ===================================================== */
+  /* =======================================================
+     INVENTORY
+  ======================================================= */
 
-  const productCode = product?.code || "";
+  const inventory = useMemo(() => {
+    if (!product) {
+      return null;
+    }
 
-  /* =====================================================
-     Purchases
-  ===================================================== */
+    return getInventoryItem(product.id);
+  }, [product, getInventoryItem, purchases, sales, products]);
 
-  const productPurchases = useMemo(() => {
-    if (!product) return [];
+  /* =======================================================
+     PURCHASE MOVEMENTS
+  ======================================================= */
 
-    return purchases
-      .filter((purchase) => {
-        // الفواتير الملغاة لا تدخل في حساب المخزون
-        if (purchase.status === "cancelled") {
-          return false;
+  const purchaseMovements = useMemo(() => {
+    if (!product) {
+      return [];
+    }
+
+    const result: {
+      id: string;
+      invoiceNumber: string;
+      date: string;
+      supplier: string;
+      quantity: number;
+      price: number;
+      discount: number;
+      total: number;
+      paymentMethod: string;
+      status: string;
+    }[] = [];
+
+    purchases.forEach((purchase) => {
+      if (purchase.status === "cancelled") {
+        return;
+      }
+
+      purchase.items.forEach((item) => {
+        if (String(item.productId) !== String(product.id)) {
+          return;
         }
 
-        return purchase.items?.some((item) => {
-          const sameProductId = item.productId && item.productId === product.id;
+        result.push({
+          id: `${purchase.id}-${item.id}`,
 
-          const sameProductCode =
-            item.productCode &&
-            product.code &&
-            item.productCode === product.code;
+          invoiceNumber: purchase.invoiceNumber,
 
-          return sameProductId || sameProductCode;
+          date: purchase.date,
+
+          supplier: purchase.supplier,
+
+          quantity: Number(item.quantity || 0),
+
+          price: Number(item.price || 0),
+
+          discount: Number(item.discount || 0),
+
+          total: Number(item.total || 0),
+
+          paymentMethod: purchase.paymentMethod,
+
+          status: purchase.status,
         });
-      })
-      .map((purchase) => {
-        const items =
-          purchase.items?.filter((item) => {
-            const sameProductId =
-              item.productId && item.productId === product.id;
-
-            const sameProductCode =
-              item.productCode &&
-              product.code &&
-              item.productCode === product.code;
-
-            return sameProductId || sameProductCode;
-          }) || [];
-
-        const quantity = items.reduce(
-          (sum, item) => sum + Number(item.quantity || 0),
-          0,
-        );
-
-        const value = items.reduce(
-          (sum, item) => sum + Number(item.total || 0),
-          0,
-        );
-
-        return {
-          purchase,
-          items,
-          quantity,
-          value,
-        };
       });
+    });
+
+    return result.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   }, [purchases, product]);
 
-  /* =====================================================
-     Sales
-  ===================================================== */
+  /* =======================================================
+     SALE MOVEMENTS
+  ======================================================= */
 
-  const productSales = useMemo(() => {
-    if (!product) return [];
+  const saleMovements = useMemo(() => {
+    if (!product) {
+      return [];
+    }
 
-    return sales
-      .filter((sale) => {
-        // الفواتير الملغاة لا تدخل في حساب المخزون
-        if (sale.status === "cancelled") {
-          return false;
+    const result: {
+      id: string;
+      invoiceNumber: string;
+      date: string;
+      customer: string;
+      quantity: number;
+      price: number;
+      discount: number;
+      total: number;
+      paymentMethod: string;
+      status: string;
+    }[] = [];
+
+    sales.forEach((sale) => {
+      if (sale.status === "cancelled") {
+        return;
+      }
+
+      sale.items.forEach((item) => {
+        /*
+          نعتمد على productId.
+
+          هذا مهم جدًا لأن المخزون يحسب
+          المبيعات اعتمادًا على productId.
+        */
+        if (String(item.productId) !== String(product.id)) {
+          return;
         }
 
-        return sale.items?.some((item) => {
-          const sameProductId = item.productId && item.productId === product.id;
+        result.push({
+          id: `${sale.id}-${item.id}`,
 
-          const sameProductCode =
-            item.productCode &&
-            product.code &&
-            item.productCode === product.code;
+          invoiceNumber: sale.invoiceNumber,
 
-          return sameProductId || sameProductCode;
+          date: sale.date,
+
+          customer: sale.customerName || "عميل نقدي",
+
+          quantity: Number(item.quantity || 0),
+
+          price: Number(item.price || 0),
+
+          discount: Number(item.discount || 0),
+
+          total: Number(item.total || 0),
+
+          paymentMethod: sale.paymentMethod,
+
+          status: sale.status,
         });
-      })
-      .map((sale) => {
-        const items =
-          sale.items?.filter((item) => {
-            const sameProductId =
-              item.productId && item.productId === product.id;
-
-            const sameProductCode =
-              item.productCode &&
-              product.code &&
-              item.productCode === product.code;
-
-            return sameProductId || sameProductCode;
-          }) || [];
-
-        const quantity = items.reduce(
-          (sum, item) => sum + Number(item.quantity || 0),
-          0,
-        );
-
-        const value = items.reduce(
-          (sum, item) => sum + Number(item.total || 0),
-          0,
-        );
-
-        return {
-          sale,
-          items,
-          quantity,
-          value,
-        };
       });
+    });
+
+    return result.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   }, [sales, product]);
 
-  /* =====================================================
-     Inventory calculations
-  ===================================================== */
+  /* =======================================================
+     TOTALS
+  ======================================================= */
 
-  const statistics = useMemo(() => {
-    const purchaseQuantity = productPurchases.reduce(
-      (sum, item) => sum + item.quantity,
+  const totals = useMemo(() => {
+    const purchaseQuantity = purchaseMovements.reduce(
+      (sum, item) => sum + Number(item.quantity || 0),
       0,
     );
 
-    const saleQuantity = productSales.reduce(
-      (sum, item) => sum + item.quantity,
+    const saleQuantity = saleMovements.reduce(
+      (sum, item) => sum + Number(item.quantity || 0),
       0,
     );
 
-    const quantity = purchaseQuantity - saleQuantity;
-
-    const purchaseValue = productPurchases.reduce(
-      (sum, item) => sum + item.value,
+    const purchaseValue = purchaseMovements.reduce(
+      (sum, item) => sum + Number(item.quantity || 0) * Number(item.price || 0),
       0,
     );
 
-    const salesValue = productSales.reduce((sum, item) => sum + item.value, 0);
+    const salesValue = saleMovements.reduce(
+      (sum, item) => sum + Number(item.total || 0),
+      0,
+    );
+
+    const currentQuantity = purchaseQuantity - saleQuantity;
 
     const averagePurchasePrice =
       purchaseQuantity > 0 ? purchaseValue / purchaseQuantity : 0;
 
-    const inventoryValue = Math.max(quantity, 0) * averagePurchasePrice;
+    const inventoryValue = currentQuantity * averagePurchasePrice;
 
     return {
       purchaseQuantity,
       saleQuantity,
-      quantity,
+      currentQuantity,
       purchaseValue,
       salesValue,
       averagePurchasePrice,
       inventoryValue,
     };
-  }, [productPurchases, productSales]);
+  }, [purchaseMovements, saleMovements]);
 
-  /* =====================================================
-     Helpers
-  ===================================================== */
+  /* =======================================================
+     STOCK STATUS
+  ======================================================= */
 
-  const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("ar-SA", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    }).format(value || 0);
-  };
+  const stockStatus = useMemo(() => {
+    const quantity = Number(totals.currentQuantity || 0);
 
-  const formatDate = (date: string) => {
-    if (!date) return "-";
-
-    const parsed = new Date(date);
-
-    if (Number.isNaN(parsed.getTime())) {
-      return date;
+    if (quantity <= 0) {
+      return {
+        label: "المخزون نافذ",
+        description: "لا توجد كمية متاحة حاليًا",
+        className: "border-red-200 bg-red-50 text-red-700",
+        iconClass: "bg-red-100 text-red-600",
+        Icon: FiAlertCircle,
+      };
     }
 
-    return new Intl.DateTimeFormat("ar-SA", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(parsed);
-  };
+    if (quantity <= 5) {
+      return {
+        label: "مخزون منخفض",
+        description: "يُنصح بتوفير كمية إضافية",
+        className: "border-orange-200 bg-orange-50 text-orange-700",
+        iconClass: "bg-orange-100 text-orange-600",
+        Icon: FiAlertCircle,
+      };
+    }
 
-  /* =====================================================
-     Product not found
-  ===================================================== */
+    return {
+      label: "متوفر",
+      description: "الكمية متوفرة في المخزون",
+      className: "border-green-200 bg-green-50 text-green-700",
+      iconClass: "bg-green-100 text-green-600",
+      Icon: FiCheckCircle,
+    };
+  }, [totals.currentQuantity]);
+
+  /* =======================================================
+     PRODUCT NOT FOUND
+  ======================================================= */
 
   if (!product) {
     return (
       <main
         dir="rtl"
-        className="flex min-h-screen items-center justify-center bg-gray-50 p-4"
+        className="flex min-h-screen items-center justify-center bg-gray-50 p-6"
       >
         <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
-          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-red-50 text-red-500">
-            <FiBox size={30} />
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-50">
+            <FiBox size={30} className="text-red-500" />
           </div>
 
-          <h1 className="text-xl font-bold text-gray-900">الصنف غير موجود</h1>
+          <h1 className="mt-5 text-xl font-bold text-gray-800">
+            المنتج غير موجود
+          </h1>
 
-          <p className="mt-2 text-sm leading-6 text-gray-500">
-            لم يتم العثور على الصنف المطلوب أو ربما تم حذفه من النظام.
+          <p className="mt-2 text-sm text-gray-500">
+            لم يتم العثور على المنتج المطلوب.
           </p>
 
           <Link
             href="/inventory"
-            className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+            className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-[#0E1F33] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#162b43]"
           >
-            <FiArrowRight />
+            <FiArrowRight size={18} />
             العودة إلى المخزون
           </Link>
         </div>
@@ -263,479 +362,573 @@ export default function InventoryProductDetailsPage() {
     );
   }
 
-  /* =====================================================
-     Main
-  ===================================================== */
+  /* =======================================================
+     PRINT
+  ======================================================= */
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  /* =======================================================
+     RENDER
+  ======================================================= */
 
   return (
-    <main dir="rtl" className="min-h-screen bg-gray-50 p-3 sm:p-5 lg:p-6">
-      <div className="mx-auto max-w-7xl">
-        {/* =================================================
-            Header
-        ================================================= */}
+    <>
+      <style jsx global>{`
+        @media print {
+          body {
+            background: white !important;
+          }
 
-        <div className="mb-6">
-          <Link
-            href="/inventory"
-            className="mb-4 inline-flex items-center gap-2 text-sm text-gray-500 transition hover:text-blue-600"
-          >
-            <FiArrowRight />
-            العودة إلى المخزون
-          </Link>
+          .no-print {
+            display: none !important;
+          }
 
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-sm text-gray-500">
-                <FiBox />
-                <span>إدارة المخزون</span>
-              </div>
+          .print-area {
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+          }
+        }
+      `}</style>
 
-              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
-                تفاصيل الصنف
-              </h1>
+      <main dir="rtl" className="min-h-screen bg-gray-50 p-4 md:p-6">
+        <div className="print-area mx-auto max-w-7xl">
+          {/* =================================================
+              HEADER
+          ================================================= */}
 
-              <p className="mt-1 text-sm text-gray-500">
-                عرض حركة المخزون والمشتريات والمبيعات الخاصة بهذا الصنف
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="no-print mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
               <Link
-                href={`/products/${product.id}/edit`}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+                href="/inventory"
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50"
+                title="العودة إلى المخزون"
               >
-                تعديل الصنف
+                <FiArrowRight size={20} />
               </Link>
 
-              <div className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-gray-100">
-                <FiHash className="text-blue-600" />
+              <div>
+                <h1 className="text-2xl font-bold text-gray-800">
+                  تفاصيل المنتج
+                </h1>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  حركة المخزون والمشتريات والمبيعات
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="flex items-center justify-center gap-2 rounded-lg bg-[#0E1F33] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#162b43]"
+            >
+              <FiPrinter size={18} />
+              طباعة
+            </button>
+          </div>
+
+          {/* =================================================
+              PRODUCT HEADER
+          ================================================= */}
+
+          <section className="mb-5 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-blue-50">
+                  <FiPackage size={30} className="text-blue-600" />
+                </div>
 
                 <div>
-                  <p className="text-[11px] text-gray-500">رقم الصنف</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-xl font-black text-gray-800">
+                      {product.name}
+                    </h2>
 
-                  <p className="font-mono font-bold text-gray-900">
-                    {product.code}
+                    {!product.isActive && (
+                      <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-500">
+                        غير نشط
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap gap-3 text-sm text-gray-500">
+                    <span>
+                      الكود:{" "}
+                      <strong className="text-gray-700">{product.code}</strong>
+                    </span>
+
+                    {product.category && (
+                      <span>
+                        التصنيف:{" "}
+                        <strong className="text-gray-700">
+                          {product.category}
+                        </strong>
+                      </span>
+                    )}
+
+                    {product.unit && (
+                      <span>
+                        الوحدة:{" "}
+                        <strong className="text-gray-700">
+                          {product.unit}
+                        </strong>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${stockStatus.className}`}
+              >
+                <div
+                  className={`flex h-11 w-11 items-center justify-center rounded-full ${stockStatus.iconClass}`}
+                >
+                  <stockStatus.Icon size={22} />
+                </div>
+
+                <div>
+                  <p className="font-bold">{stockStatus.label}</p>
+
+                  <p className="mt-1 text-xs">{stockStatus.description}</p>
+                </div>
+              </div>
+            </div>
+
+            {product.description && (
+              <div className="mt-5 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-bold text-gray-500">وصف المنتج</p>
+
+                <p className="mt-1 text-sm text-gray-700">
+                  {product.description}
+                </p>
+              </div>
+            )}
+          </section>
+
+          {/* =================================================
+              STATISTICS
+          ================================================= */}
+
+          <section className="mb-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Current Stock */}
+
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">الكمية الحالية</p>
+
+                  <p className="mt-2 text-2xl font-black text-gray-800">
+                    {formatNumber(totals.currentQuantity)}
+                  </p>
+
+                  {product.unit && (
+                    <p className="mt-1 text-xs text-gray-400">{product.unit}</p>
+                  )}
+                </div>
+
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-50">
+                  <FiPackage size={22} className="text-blue-600" />
+                </div>
+              </div>
+            </div>
+
+            {/* Purchases */}
+
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">إجمالي المشتريات</p>
+
+                  <p className="mt-2 text-2xl font-black text-green-700">
+                    {formatNumber(totals.purchaseQuantity)}
+                  </p>
+
+                  <p className="mt-1 text-xs text-gray-400">الكمية الداخلة</p>
+                </div>
+
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-green-50">
+                  <FiTrendingUp size={22} className="text-green-600" />
+                </div>
+              </div>
+            </div>
+
+            {/* Sales */}
+
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">إجمالي المبيعات</p>
+
+                  <p className="mt-2 text-2xl font-black text-red-700">
+                    {formatNumber(totals.saleQuantity)}
+                  </p>
+
+                  <p className="mt-1 text-xs text-gray-400">الكمية الخارجة</p>
+                </div>
+
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-red-50">
+                  <FiTrendingDown size={22} className="text-red-600" />
+                </div>
+              </div>
+            </div>
+
+            {/* Inventory Value */}
+
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">قيمة المخزون</p>
+
+                  <p className="mt-2 text-2xl font-black text-purple-700">
+                    {formatMoney(totals.inventoryValue)}
+                  </p>
+
+                  <p className="mt-1 text-xs text-gray-400">ريال يمني</p>
+                </div>
+
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-purple-50">
+                  <FiDollarSign size={22} className="text-purple-600" />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* =================================================
+              INVENTORY SUMMARY
+          ================================================= */}
+
+          <section className="mb-5 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="mb-5 flex items-center gap-2">
+              <FiBox className="text-blue-600" />
+
+              <h2 className="font-bold text-gray-800">ملخص المخزون</h2>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-lg bg-gray-50 p-4">
+                <p className="text-xs text-gray-500">الكمية المشتراة</p>
+
+                <p className="mt-2 text-lg font-black text-gray-800">
+                  {formatNumber(totals.purchaseQuantity)}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-gray-50 p-4">
+                <p className="text-xs text-gray-500">الكمية المباعة</p>
+
+                <p className="mt-2 text-lg font-black text-gray-800">
+                  {formatNumber(totals.saleQuantity)}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-gray-50 p-4">
+                <p className="text-xs text-gray-500">متوسط سعر الشراء</p>
+
+                <p className="mt-2 text-lg font-black text-gray-800">
+                  {formatMoney(totals.averagePurchasePrice)}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-gray-50 p-4">
+                <p className="text-xs text-gray-500">قيمة المخزون الحالية</p>
+
+                <p className="mt-2 text-lg font-black text-gray-800">
+                  {formatMoney(totals.inventoryValue)}
+                </p>
+              </div>
+            </div>
+
+            {/* Stock calculation */}
+
+            <div className="mt-5 rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <div className="flex flex-wrap items-center justify-center gap-3 text-sm font-bold text-blue-800">
+                <span>المشتريات</span>
+
+                <span className="text-blue-400">−</span>
+
+                <span>المبيعات</span>
+
+                <span className="text-blue-400">=</span>
+
+                <span>الكمية الحالية</span>
+
+                <span className="mr-2 rounded-lg bg-white px-4 py-2 text-blue-900 shadow-sm">
+                  {formatNumber(totals.purchaseQuantity)} −{" "}
+                  {formatNumber(totals.saleQuantity)} ={" "}
+                  {formatNumber(totals.currentQuantity)}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* =================================================
+              PURCHASES
+          ================================================= */}
+
+          <section className="mb-5 rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-gray-200 p-5">
+              <div className="flex items-center gap-2">
+                <FiTruck className="text-green-600" />
+
+                <div>
+                  <h2 className="font-bold text-gray-800">حركة المشتريات</h2>
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    الفواتير التي دخل منها المنتج إلى المخزون
                   </p>
                 </div>
               </div>
+
+              <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-bold text-green-700">
+                {purchaseMovements.length} حركة
+              </span>
             </div>
-          </div>
-        </div>
 
-        {/* =================================================
-            Product Card
-        ================================================= */}
+            <div className="overflow-x-auto">
+              {purchaseMovements.length === 0 ? (
+                <div className="p-10 text-center">
+                  <FiTruck size={35} className="mx-auto text-gray-300" />
 
-        <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
-                <FiBox size={30} />
-              </div>
-
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  {product.name}
-                </h2>
-
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
-                    <FiHash size={12} />
-                    {product.code}
-                  </span>
-
-                  <span className="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
-                    <FiLayers size={12} />
-                    {product.unit || "وحدة"}
-                  </span>
-
-                  <span className="rounded-lg bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                    {product.category || "عام"}
-                  </span>
+                  <p className="mt-3 text-sm font-bold text-gray-500">
+                    لا توجد مشتريات لهذا المنتج
+                  </p>
                 </div>
-              </div>
-            </div>
-
-            <div>
-              <span
-                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold ${
-                  product.isActive === false
-                    ? "bg-red-50 text-red-600"
-                    : "bg-green-50 text-green-600"
-                }`}
-              >
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    product.isActive === false ? "bg-red-500" : "bg-green-500"
-                  }`}
-                />
-
-                {product.isActive === false ? "غير نشط" : "نشط"}
-              </span>
-            </div>
-          </div>
-
-          {product.description && (
-            <div className="mt-5 rounded-xl bg-gray-50 p-4">
-              <p className="text-xs font-semibold text-gray-500">وصف الصنف</p>
-
-              <p className="mt-1 text-sm leading-6 text-gray-700">
-                {product.description}
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* =================================================
-            Statistics
-        ================================================= */}
-
-        <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {/* Current quantity */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">الرصيد الحالي</p>
-
-                <p className="mt-2 text-2xl font-bold text-gray-900">
-                  {formatMoney(statistics.quantity)}
-                </p>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  {product.unit || "وحدة"}
-                </p>
-              </div>
-
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-                <FiBox size={21} />
-              </div>
-            </div>
-          </div>
-
-          {/* Purchases */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">إجمالي المشتريات</p>
-
-                <p className="mt-2 text-2xl font-bold text-gray-900">
-                  {formatMoney(statistics.purchaseQuantity)}
-                </p>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  {formatMoney(statistics.purchaseValue)} ريال
-                </p>
-              </div>
-
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-50 text-green-600">
-                <FiTrendingUp size={21} />
-              </div>
-            </div>
-          </div>
-
-          {/* Sales */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">إجمالي المبيعات</p>
-
-                <p className="mt-2 text-2xl font-bold text-gray-900">
-                  {formatMoney(statistics.saleQuantity)}
-                </p>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  {formatMoney(statistics.salesValue)} ريال
-                </p>
-              </div>
-
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
-                <FiTrendingDown size={21} />
-              </div>
-            </div>
-          </div>
-
-          {/* Inventory value */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-500">قيمة المخزون</p>
-
-                <p className="mt-2 text-2xl font-bold text-gray-900">
-                  {formatMoney(statistics.inventoryValue)}
-                </p>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  متوسط الشراء: {formatMoney(statistics.averagePurchasePrice)}
-                </p>
-              </div>
-
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
-                <FiShoppingCart size={21} />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* =================================================
-            Movement
-        ================================================= */}
-
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-          {/* Purchases */}
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-gray-100 p-5">
-              <div>
-                <h2 className="font-bold text-gray-900">حركة المشتريات</h2>
-
-                <p className="mt-1 text-xs text-gray-500">
-                  الفواتير التي تحتوي على هذا الصنف
-                </p>
-              </div>
-
-              <span className="rounded-lg bg-green-50 px-3 py-1.5 text-xs font-semibold text-green-700">
-                {productPurchases.length} فاتورة
-              </span>
-            </div>
-
-            {productPurchases.length === 0 ? (
-              <div className="p-10 text-center">
-                <FiShoppingCart className="mx-auto text-gray-300" size={35} />
-
-                <p className="mt-3 text-sm font-semibold text-gray-600">
-                  لا توجد مشتريات
-                </p>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  لم يتم تسجيل مشتريات لهذا الصنف حتى الآن.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[650px] text-sm">
+              ) : (
+                <table className="w-full min-w-[900px] border-collapse">
                   <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50 text-right">
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                    <tr className="bg-gray-50 text-xs text-gray-600">
+                      <th className="border-b border-gray-200 px-4 py-3 text-right">
                         الفاتورة
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                      <th className="border-b border-gray-200 px-4 py-3 text-right">
                         التاريخ
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                      <th className="border-b border-gray-200 px-4 py-3 text-right">
                         المورد
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
                         الكمية
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
-                        القيمة
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
+                        سعر الوحدة
+                      </th>
+
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
+                        الإجمالي
+                      </th>
+
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
+                        الدفع
                       </th>
                     </tr>
                   </thead>
 
                   <tbody>
-                    {productPurchases.map(({ purchase, quantity, value }) => (
+                    {purchaseMovements.map((movement) => (
                       <tr
-                        key={purchase.id}
-                        className="border-b border-gray-50 last:border-0"
+                        key={movement.id}
+                        className="transition hover:bg-gray-50"
                       >
-                        <td className="px-5 py-4">
-                          <Link
-                            href={`/purchases/${purchase.id}`}
-                            className="font-mono font-semibold text-blue-600 hover:text-blue-700"
-                          >
-                            {purchase.invoiceNumber}
-                          </Link>
+                        <td className="border-b border-gray-100 px-4 py-3 text-sm font-bold text-blue-700">
+                          {movement.invoiceNumber}
                         </td>
 
-                        <td className="px-5 py-4 text-gray-600">
-                          <span className="inline-flex items-center gap-1">
-                            <FiCalendar size={13} />
-                            {formatDate(purchase.date)}
+                        <td className="border-b border-gray-100 px-4 py-3 text-sm text-gray-600">
+                          {movement.date}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-sm font-semibold text-gray-700">
+                          {movement.supplier}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center text-sm font-bold text-gray-800">
+                          {formatNumber(movement.quantity)}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center text-sm text-gray-700">
+                          {formatMoney(movement.price)}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center text-sm font-bold text-gray-800">
+                          {formatMoney(movement.total)}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center">
+                          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">
+                            {getPaymentMethodName(movement.paymentMethod)}
                           </span>
-                        </td>
-
-                        <td className="px-5 py-4 font-medium text-gray-800">
-                          {purchase.supplier || "-"}
-                        </td>
-
-                        <td className="px-5 py-4 font-semibold text-gray-800">
-                          {formatMoney(quantity)}
-                        </td>
-
-                        <td className="px-5 py-4 font-semibold text-gray-900">
-                          {formatMoney(value)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              )}
+            </div>
+          </section>
+
+          {/* =================================================
+              SALES
+          ================================================= */}
+
+          <section className="mb-5 rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-gray-200 p-5">
+              <div className="flex items-center gap-2">
+                <FiShoppingCart className="text-red-600" />
+
+                <div>
+                  <h2 className="font-bold text-gray-800">حركة المبيعات</h2>
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    الفواتير التي خرج منها المنتج من المخزون
+                  </p>
+                </div>
               </div>
-            )}
-          </div>
 
-          {/* Sales */}
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-gray-100 p-5">
-              <div>
-                <h2 className="font-bold text-gray-900">حركة المبيعات</h2>
-
-                <p className="mt-1 text-xs text-gray-500">
-                  الفواتير التي تحتوي على هذا الصنف
-                </p>
-              </div>
-
-              <span className="rounded-lg bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700">
-                {productSales.length} فاتورة
+              <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-bold text-red-700">
+                {saleMovements.length} حركة
               </span>
             </div>
 
-            {productSales.length === 0 ? (
-              <div className="p-10 text-center">
-                <FiTrendingDown className="mx-auto text-gray-300" size={35} />
+            <div className="overflow-x-auto">
+              {saleMovements.length === 0 ? (
+                <div className="p-10 text-center">
+                  <FiShoppingCart size={35} className="mx-auto text-gray-300" />
 
-                <p className="mt-3 text-sm font-semibold text-gray-600">
-                  لا توجد مبيعات
-                </p>
-
-                <p className="mt-1 text-xs text-gray-400">
-                  لم يتم تسجيل مبيعات لهذا الصنف حتى الآن.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[650px] text-sm">
+                  <p className="mt-3 text-sm font-bold text-gray-500">
+                    لا توجد مبيعات لهذا المنتج
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full min-w-[950px] border-collapse">
                   <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50 text-right">
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                    <tr className="bg-gray-50 text-xs text-gray-600">
+                      <th className="border-b border-gray-200 px-4 py-3 text-right">
                         الفاتورة
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                      <th className="border-b border-gray-200 px-4 py-3 text-right">
                         التاريخ
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                      <th className="border-b border-gray-200 px-4 py-3 text-right">
                         العميل
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
                         الكمية
                       </th>
 
-                      <th className="px-5 py-3 text-xs font-semibold text-gray-500">
-                        القيمة
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
+                        سعر البيع
+                      </th>
+
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
+                        الإجمالي
+                      </th>
+
+                      <th className="border-b border-gray-200 px-4 py-3 text-center">
+                        الدفع
                       </th>
                     </tr>
                   </thead>
 
                   <tbody>
-                    {productSales.map(({ sale, quantity, value }) => (
+                    {saleMovements.map((movement) => (
                       <tr
-                        key={sale.id}
-                        className="border-b border-gray-50 last:border-0"
+                        key={movement.id}
+                        className="transition hover:bg-gray-50"
                       >
-                        <td className="px-5 py-4">
-                          <Link
-                            href={`/sales/${sale.id}`}
-                            className="font-mono font-semibold text-blue-600 hover:text-blue-700"
-                          >
-                            {sale.invoiceNumber}
-                          </Link>
+                        <td className="border-b border-gray-100 px-4 py-3 text-sm font-bold text-blue-700">
+                          {movement.invoiceNumber}
                         </td>
 
-                        <td className="px-5 py-4 text-gray-600">
-                          <span className="inline-flex items-center gap-1">
-                            <FiCalendar size={13} />
-                            {formatDate(sale.date)}
+                        <td className="border-b border-gray-100 px-4 py-3 text-sm text-gray-600">
+                          {movement.date}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-sm font-semibold text-gray-700">
+                          {movement.customer}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center text-sm font-bold text-red-700">
+                          -{formatNumber(movement.quantity)}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center text-sm text-gray-700">
+                          {formatMoney(movement.price)}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center text-sm font-bold text-gray-800">
+                          {formatMoney(movement.total)}
+                        </td>
+
+                        <td className="border-b border-gray-100 px-4 py-3 text-center">
+                          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">
+                            {getPaymentMethodName(movement.paymentMethod)}
                           </span>
-                        </td>
-
-                        <td className="px-5 py-4 font-medium text-gray-800">
-                          {sale.customerName || "-"}
-                        </td>
-
-                        <td className="px-5 py-4 font-semibold text-gray-800">
-                          {formatMoney(quantity)}
-                        </td>
-
-                        <td className="px-5 py-4 font-semibold text-gray-900">
-                          {formatMoney(value)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              )}
+            </div>
+          </section>
+
+          {/* =================================================
+              CURRENT STOCK MESSAGE
+          ================================================= */}
+
+          <section
+            className={`mb-5 rounded-xl border p-5 ${stockStatus.className}`}
+          >
+            <div className="flex items-center gap-4">
+              <div
+                className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${stockStatus.iconClass}`}
+              >
+                <stockStatus.Icon size={25} />
               </div>
-            )}
-          </div>
+
+              <div>
+                <h3 className="font-black">{stockStatus.label}</h3>
+
+                <p className="mt-1 text-sm">
+                  الكمية المتبقية من المنتج:{" "}
+                  <strong>{formatNumber(totals.currentQuantity)}</strong>{" "}
+                  {product.unit || "وحدة"}
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* =================================================
+              COMPANY FOOTER
+          ================================================= */}
+
+          <footer className="rounded-xl border border-gray-200 bg-white p-5 text-center">
+            <p className="text-sm font-bold text-gray-700">شركة الجابري</p>
+
+            <p className="mt-1 text-xs text-gray-500">
+              للعسل والزيوت الطبيعة وخدمات العمرة
+            </p>
+
+            <p className="mt-1 text-xs text-gray-400">
+              البيضاء - اليمن | هاتف: 734 434 443
+            </p>
+          </footer>
         </div>
-
-        {/* =================================================
-            Inventory Summary
-        ================================================= */}
-
-        <div className="mt-5 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-bold text-gray-900">ملخص حركة المخزون</h2>
-
-              <p className="mt-1 text-xs text-gray-500">
-                الكمية الحالية محسوبة من إجمالي المشتريات ناقص إجمالي المبيعات.
-              </p>
-            </div>
-
-            <div
-              className={`rounded-xl px-4 py-3 text-center ${
-                statistics.quantity > 0
-                  ? "bg-green-50 text-green-700"
-                  : statistics.quantity === 0
-                    ? "bg-gray-100 text-gray-600"
-                    : "bg-red-50 text-red-700"
-              }`}
-            >
-              <p className="text-[11px]">حالة المخزون</p>
-
-              <p className="mt-1 text-sm font-bold">
-                {statistics.quantity > 0
-                  ? "متوفر"
-                  : statistics.quantity === 0
-                    ? "نفد المخزون"
-                    : "رصيد سالب"}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-xs text-gray-500">المشتريات</p>
-
-              <p className="mt-1 text-lg font-bold text-green-600">
-                +{formatMoney(statistics.purchaseQuantity)}
-              </p>
-            </div>
-
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-xs text-gray-500">المبيعات</p>
-
-              <p className="mt-1 text-lg font-bold text-orange-600">
-                -{formatMoney(statistics.saleQuantity)}
-              </p>
-            </div>
-
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-xs text-gray-500">الرصيد الحالي</p>
-
-              <p className="mt-1 text-lg font-bold text-blue-600">
-                {formatMoney(statistics.quantity)}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }

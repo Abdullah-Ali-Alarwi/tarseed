@@ -15,7 +15,7 @@ import {
 } from "react-icons/fi";
 import { toast } from "sonner";
 
-import { useSuppliersStore } from "@/Store/suppliersStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function EditSupplierPage() {
   const params = useParams();
@@ -24,11 +24,11 @@ export default function EditSupplierPage() {
   const supplierId = String(params.id || "");
 
   // ======================================================
-  // Zustand
+  // ERP Store
   // ======================================================
 
-  const suppliers = useSuppliersStore((state) => state.suppliers);
-  const updateSupplier = useSuppliersStore((state) => state.updateSupplier);
+  const suppliers = useERPStore((state) => state.suppliers);
+  const updateSupplier = useERPStore((state) => state.updateSupplier);
 
   // ======================================================
   // بيانات المورد
@@ -43,8 +43,6 @@ export default function EditSupplierPage() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
-  const [accountCode, setAccountCode] = useState("");
-  const [accountName, setAccountName] = useState("");
   const [notes, setNotes] = useState("");
 
   const [saving, setSaving] = useState(false);
@@ -59,8 +57,6 @@ export default function EditSupplierPage() {
     setName(supplier.name || "");
     setPhone(supplier.phone || "");
     setAddress(supplier.address || "");
-    setAccountCode(supplier.accountCode || "");
-    setAccountName(supplier.accountName || "");
     setNotes(supplier.notes || "");
   }, [supplier]);
 
@@ -92,8 +88,6 @@ export default function EditSupplierPage() {
         name: cleanName,
         phone: phone.trim() || undefined,
         address: address.trim() || undefined,
-        accountCode: accountCode.trim() || undefined,
-        accountName: accountName.trim() || undefined,
         notes: notes.trim() || undefined,
       });
 
@@ -103,10 +97,13 @@ export default function EditSupplierPage() {
 
       router.push(`/suppliers/${supplier.id}`);
     } catch (error) {
-      console.error(error);
+      console.error("Error updating supplier:", error);
+
+      const message =
+        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ البيانات.";
 
       toast.error("تعذر تعديل المورد", {
-        description: "حدث خطأ أثناء حفظ البيانات.",
+        description: message,
       });
     } finally {
       setSaving(false);
@@ -176,8 +173,10 @@ export default function EditSupplierPage() {
             </p>
           </div>
 
+          {/* كود الحساب المحاسبي */}
+
           <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
-            <span className="text-[10px] text-gray-400">كود المورد</span>
+            <span className="text-[10px] text-gray-400">حساب المورد</span>
 
             <p className="text-sm font-semibold text-amber-600">
               {supplier.accountCode || supplier.id}
@@ -257,31 +256,6 @@ export default function EditSupplierPage() {
                   />
                 </FormField>
 
-                {/* رقم الحساب */}
-
-                <FormField label="رقم الحساب" icon={<FiHash size={15} />}>
-                  <input
-                    type="text"
-                    value={accountCode}
-                    onChange={(event) => setAccountCode(event.target.value)}
-                    placeholder="مثال: 2001"
-                    className={inputClass}
-                    dir="ltr"
-                  />
-                </FormField>
-
-                {/* اسم الحساب */}
-
-                <FormField label="اسم الحساب" icon={<FiFileText size={15} />}>
-                  <input
-                    type="text"
-                    value={accountName}
-                    onChange={(event) => setAccountName(event.target.value)}
-                    placeholder="مثال: حساب المورد"
-                    className={inputClass}
-                  />
-                </FormField>
-
                 {/* كود المورد */}
 
                 <FormField label="كود المورد" icon={<FiHash size={15} />}>
@@ -291,6 +265,35 @@ export default function EditSupplierPage() {
                     disabled
                     className={`${inputClass} cursor-not-allowed bg-gray-50 text-gray-400`}
                     dir="ltr"
+                  />
+                </FormField>
+
+                {/* رقم الحساب */}
+
+                <FormField
+                  label="رقم الحساب المحاسبي"
+                  icon={<FiHash size={15} />}
+                >
+                  <input
+                    type="text"
+                    value={supplier.accountCode || ""}
+                    disabled
+                    className={`${inputClass} cursor-not-allowed bg-gray-50 text-gray-400`}
+                    dir="ltr"
+                  />
+                </FormField>
+
+                {/* اسم الحساب */}
+
+                <FormField
+                  label="اسم الحساب المحاسبي"
+                  icon={<FiFileText size={15} />}
+                >
+                  <input
+                    type="text"
+                    value={supplier.accountName || ""}
+                    disabled
+                    className={`${inputClass} cursor-not-allowed bg-gray-50 text-gray-400`}
                   />
                 </FormField>
 
@@ -325,13 +328,29 @@ export default function EditSupplierPage() {
 
                 <div>
                   <p className="text-xs font-semibold text-gray-700">
-                    معلومات الحساب
+                    معلومات الحساب المحاسبي
                   </p>
 
                   <p className="mt-0.5 text-[11px] leading-5 text-gray-500">
-                    رقم واسم الحساب يستخدمان لربط المورد بالحساب المحاسبي الخاص
-                    به.
+                    حساب المورد يتم إنشاؤه وربطه تلقائيًا من النظام. لا يمكن
+                    تعديل رقم الحساب أو اسم الحساب من هذه الصفحة.
                   </p>
+
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className="rounded-md bg-white px-2.5 py-1 text-[11px] text-gray-600">
+                      الحساب:{" "}
+                      <strong className="text-amber-600">
+                        {supplier.accountCode || "-"}
+                      </strong>
+                    </span>
+
+                    <span className="rounded-md bg-white px-2.5 py-1 text-[11px] text-gray-600">
+                      الاسم:{" "}
+                      <strong className="text-gray-700">
+                        {supplier.accountName || "-"}
+                      </strong>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>

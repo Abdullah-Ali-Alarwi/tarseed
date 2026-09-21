@@ -9,12 +9,11 @@ import {
   FiPlus,
   FiTrash2,
   FiDollarSign,
+  FiAlertCircle,
+  FiCheckCircle,
 } from "react-icons/fi";
 
-import { useProductsStore } from "@/Store/productsStore";
-import { useCustomersStore } from "@/Store/customersStore";
-import { useBankAccountsStore } from "@/Store/bankAccountsStore";
-import { useSalesStore } from "@/Store/salesStore";
+import { useERPStore } from "@/Store/erpStore";
 
 /* =========================================================
    الأنواع
@@ -24,10 +23,18 @@ type PaymentMethod = "cash" | "bank" | "credit";
 
 type InvoiceItem = {
   id: number;
+
+  /* مهم جدًا للمخزون */
+  productId: string;
+
   item: string;
+
   quantity: number;
+
   price: number;
+
   discount: number;
+
   total: number;
 };
 
@@ -37,22 +44,26 @@ type InvoiceItem = {
 
 export default function NewSalesPage() {
   /* =======================================================
-     Stores
+     ERP Store
   ======================================================= */
 
-  const products = useProductsStore((state) => state.products);
+  const products = useERPStore((state) => state.products);
 
-  const customers = useCustomersStore((state) => state.customers);
+  const customers = useERPStore((state) => state.customers);
 
-  const bankAccounts = useBankAccountsStore((state) => state.bankAccounts);
+  const bankAccounts = useERPStore((state) => state.bankAccounts);
 
-  const addSale = useSalesStore((state) => state.addSale);
+  const addSale = useERPStore((state) => state.addSale);
+
+  /*
+   * هذه الدالة تحسب المخزون الحقيقي من المشتريات - المبيعات
+   */
+  const getProductStock = useERPStore((state) => state.getProductStock);
 
   /* =======================================================
      بيانات العميل والدفع
   ======================================================= */
 
-  // اسم العميل أصبح إدخالًا نصيًا يدويًا
   const [customerName, setCustomerName] = useState("");
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
@@ -71,6 +82,9 @@ export default function NewSalesPage() {
      إضافة صنف
   ======================================================= */
 
+  /*
+   * الآن نخزن ID المنتج وليس الاسم فقط
+   */
   const [selectedItem, setSelectedItem] = useState("");
 
   const [quantity, setQuantity] = useState("");
@@ -78,6 +92,118 @@ export default function NewSalesPage() {
   const [price, setPrice] = useState("");
 
   const [discount, setDiscount] = useState("");
+
+  /* =======================================================
+     المنتج المحدد
+  ======================================================= */
+
+  const selectedProduct = useMemo(() => {
+    if (!selectedItem) return undefined;
+
+    return products.find((product) => product.id === selectedItem);
+  }, [selectedItem, products]);
+
+  /* =======================================================
+     المخزون الحالي للمنتج المحدد
+  ======================================================= */
+
+  const selectedProductStock = useMemo(() => {
+    if (!selectedProduct) return 0;
+
+    return getProductStock(selectedProduct.id);
+  }, [selectedProduct, getProductStock]);
+
+  /* =======================================================
+     الكمية الموجودة مسبقًا في الفاتورة
+  ======================================================= */
+
+  const selectedProductInvoiceQuantity = useMemo(() => {
+    if (!selectedProduct) return 0;
+
+    return invoiceItems
+      .filter((item) => item.productId === selectedProduct.id)
+      .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  }, [selectedProduct, invoiceItems]);
+
+  /* =======================================================
+     الكمية المتبقية بعد الأصناف الموجودة في الفاتورة
+  ======================================================= */
+
+  const selectedProductRemainingStock = useMemo(() => {
+    if (!selectedProduct) return 0;
+
+    return Math.max(selectedProductStock - selectedProductInvoiceQuantity, 0);
+  }, [selectedProduct, selectedProductStock, selectedProductInvoiceQuantity]);
+
+  /* =======================================================
+     الكمية المطلوبة حاليًا
+  ======================================================= */
+
+  const currentRequestedQuantity = Number(quantity || 0);
+
+  /* =======================================================
+     الكمية المتبقية بعد الإضافة الحالية
+  ======================================================= */
+
+  const remainingAfterCurrentQuantity = useMemo(() => {
+    if (!selectedProduct) return 0;
+
+    return Math.max(
+      selectedProductRemainingStock - currentRequestedQuantity,
+      0,
+    );
+  }, [
+    selectedProduct,
+    selectedProductRemainingStock,
+    currentRequestedQuantity,
+  ]);
+
+  /* =======================================================
+     حالة المخزون
+  ======================================================= */
+
+  const stockStatus = useMemo(() => {
+    if (!selectedProduct) {
+      return {
+        type: "none" as const,
+        text: "اختر الصنف",
+      };
+    }
+
+    if (selectedProductStock <= 0) {
+      return {
+        type: "empty" as const,
+        text: "المخزون نافذ",
+      };
+    }
+
+    if (selectedProductRemainingStock <= 0) {
+      return {
+        type: "empty" as const,
+        text: "تم استنفاد الكمية في الفاتورة",
+      };
+    }
+
+    if (
+      currentRequestedQuantity > 0 &&
+      currentRequestedQuantity > selectedProductRemainingStock
+    ) {
+      return {
+        type: "error" as const,
+        text: "الكمية المطلوبة أكبر من المتاح",
+      };
+    }
+
+    return {
+      type: "available" as const,
+      text: "متوفر",
+    };
+  }, [
+    selectedProduct,
+    selectedProductStock,
+    selectedProductRemainingStock,
+    currentRequestedQuantity,
+  ]);
 
   /* =======================================================
      بيانات الصنف الحالي
@@ -104,7 +230,7 @@ export default function NewSalesPage() {
   }, [customerName, customers]);
 
   /* =======================================================
-     عميل حساب الآجل
+     عميل الحساب الآجل
   ======================================================= */
 
   const selectedCreditCustomer = useMemo(() => {
@@ -134,7 +260,7 @@ export default function NewSalesPage() {
 
     if (paymentMethod === "cash") {
       return {
-        code: "1002",
+        code: "1101",
         name: "الصندوق",
       };
     }
@@ -152,8 +278,9 @@ export default function NewSalesPage() {
       }
 
       return {
-        code: selectedBankAccount.code,
-        name: selectedBankAccount.name,
+        code: selectedBankAccount.accountCode || selectedBankAccount.code || "",
+
+        name: selectedBankAccount.accountName || selectedBankAccount.name || "",
       };
     }
 
@@ -170,6 +297,7 @@ export default function NewSalesPage() {
 
     return {
       code: selectedCreditCustomer.accountCode ?? "",
+
       name: selectedCreditCustomer.accountName ?? selectedCreditCustomer.name,
     };
   }, [paymentMethod, selectedBankAccount, selectedCreditCustomer]);
@@ -179,42 +307,131 @@ export default function NewSalesPage() {
   ======================================================= */
 
   const handleAddItem = () => {
-    if (!selectedItem) {
+    /* -------------------------------------------------------
+       التحقق من اختيار الصنف
+    ------------------------------------------------------- */
+
+    if (!selectedProduct) {
       toast.error("يرجى اختيار الصنف");
+
       return;
     }
+
+    /* -------------------------------------------------------
+       التحقق من نفاد المخزون
+    ------------------------------------------------------- */
+
+    if (selectedProductStock <= 0) {
+      toast.error(`المخزون نافذ للصنف "${selectedProduct.name}"`);
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       التحقق من استنفاد المنتج داخل الفاتورة
+    ------------------------------------------------------- */
+
+    if (selectedProductRemainingStock <= 0) {
+      toast.error(
+        `تم استنفاد الكمية المتاحة للصنف "${selectedProduct.name}" داخل الفاتورة`,
+      );
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       التحقق من الكمية
+    ------------------------------------------------------- */
 
     if (Number(quantity) <= 0) {
       toast.error("يرجى إدخال كمية صحيحة");
+
       return;
     }
+
+    /* -------------------------------------------------------
+       التحقق من الكمية مقابل المخزون
+    ------------------------------------------------------- */
+
+    if (Number(quantity) > selectedProductRemainingStock) {
+      toast.error(`المخزون غير كافٍ للصنف "${selectedProduct.name}"`, {
+        description: `المتاح: ${selectedProductRemainingStock.toLocaleString()} | المطلوب: ${Number(
+          quantity,
+        ).toLocaleString()}`,
+      });
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       التحقق من السعر
+    ------------------------------------------------------- */
 
     if (Number(price) <= 0) {
       toast.error("يرجى إدخال سعر صحيح");
+
       return;
     }
+
+    /* -------------------------------------------------------
+       التحقق من الخصم
+    ------------------------------------------------------- */
 
     if (Number(discount || 0) > currentSubtotal) {
       toast.error("الخصم لا يمكن أن يكون أكبر من إجمالي الصنف");
+
       return;
     }
 
+    /* -------------------------------------------------------
+       إنشاء الصنف
+    ------------------------------------------------------- */
+
     const newItem: InvoiceItem = {
       id: Date.now(),
-      item: selectedItem,
+
+      /*
+       * مهم جدًا:
+       * نحفظ productId حتى يعرف المخزون أي منتج تم بيعه
+       */
+      productId: selectedProduct.id,
+
+      item: selectedProduct.name,
+
       quantity: Number(quantity),
+
       price: Number(price),
+
       discount: Number(discount || 0),
+
       total: currentItemTotal,
     };
 
+    /* -------------------------------------------------------
+       إضافة الصنف
+    ------------------------------------------------------- */
+
     setInvoiceItems((prev) => [...prev, newItem]);
 
-    toast.success(`تمت إضافة "${selectedItem}" إلى الفاتورة`);
+    toast.success(`تمت إضافة "${selectedProduct.name}" إلى الفاتورة`, {
+      description: `الكمية: ${Number(
+        quantity,
+      ).toLocaleString()} | المتبقي بعد الإضافة: ${Math.max(
+        selectedProductRemainingStock - Number(quantity),
+        0,
+      ).toLocaleString()}`,
+    });
+
+    /* -------------------------------------------------------
+       تفريغ حقول الصنف
+    ------------------------------------------------------- */
 
     setSelectedItem("");
+
     setQuantity("");
+
     setPrice("");
+
     setDiscount("");
   };
 
@@ -230,6 +447,30 @@ export default function NewSalesPage() {
     if (deletedItem) {
       toast.success(`تم حذف "${deletedItem.item}" من الفاتورة`);
     }
+  };
+
+  /* =======================================================
+     الحصول على المنتج الخاص بصنف الفاتورة
+  ======================================================= */
+
+  const getInvoiceItemProduct = (item: InvoiceItem) => {
+    return products.find((product) => product.id === item.productId);
+  };
+
+  /* =======================================================
+     حساب المخزون المتبقي لكل صنف في الفاتورة
+  ======================================================= */
+
+  const getInvoiceItemRemainingStock = (item: InvoiceItem) => {
+    const product = getInvoiceItemProduct(item);
+
+    if (!product) return 0;
+
+    const totalInInvoice = invoiceItems
+      .filter((invoiceItem) => invoiceItem.productId === item.productId)
+      .reduce((sum, invoiceItem) => sum + Number(invoiceItem.quantity || 0), 0);
+
+    return Math.max(getProductStock(product.id) - totalInInvoice, 0);
   };
 
   /* =======================================================
@@ -267,6 +508,62 @@ export default function NewSalesPage() {
 
     return selectedCustomer;
   }, [paymentMethod, selectedCustomer, selectedCreditCustomer]);
+
+  /* =======================================================
+     التحقق النهائي من مخزون جميع الأصناف
+  ======================================================= */
+
+  const validateInvoiceStock = () => {
+    /*
+     * تجميع الكميات حسب productId
+     */
+    const requestedByProduct = new Map<string, number>();
+
+    for (const item of invoiceItems) {
+      const current = requestedByProduct.get(item.productId) || 0;
+
+      requestedByProduct.set(
+        item.productId,
+        current + Number(item.quantity || 0),
+      );
+    }
+
+    /* -------------------------------------------------------
+       التحقق من كل منتج
+    ------------------------------------------------------- */
+
+    for (const [productId, requestedQuantity] of requestedByProduct.entries()) {
+      const product = products.find((item) => item.id === productId);
+
+      if (!product) {
+        return {
+          valid: false,
+          message: "يوجد صنف في الفاتورة غير مرتبط بمنتج في المخزون",
+        };
+      }
+
+      const availableStock = getProductStock(product.id);
+
+      if (availableStock <= 0) {
+        return {
+          valid: false,
+          message: `المخزون نافذ للصنف "${product.name}"`,
+        };
+      }
+
+      if (requestedQuantity > availableStock) {
+        return {
+          valid: false,
+          message: `المخزون غير كافٍ للصنف "${product.name}"`,
+          description: `المتاح: ${availableStock.toLocaleString()} | المطلوب: ${requestedQuantity.toLocaleString()}`,
+        };
+      }
+    }
+
+    return {
+      valid: true,
+    };
+  };
 
   /* =======================================================
      سؤال الطباعة
@@ -325,6 +622,7 @@ export default function NewSalesPage() {
 
     if (invoiceItems.length === 0) {
       toast.error("لا يمكن حفظ الفاتورة بدون أصناف");
+
       return;
     }
 
@@ -334,6 +632,7 @@ export default function NewSalesPage() {
 
     if (!customerName.trim()) {
       toast.error("يرجى إدخال اسم العميل");
+
       return;
     }
 
@@ -343,6 +642,7 @@ export default function NewSalesPage() {
 
     if (paymentMethod === "bank" && !bankAccountId) {
       toast.error("يرجى اختيار الحساب البنكي");
+
       return;
     }
 
@@ -353,72 +653,150 @@ export default function NewSalesPage() {
     if (paymentMethod === "credit") {
       if (!creditCustomerId) {
         toast.error("يرجى اختيار حساب العميل");
+
         return;
       }
 
       if (!selectedCreditCustomer?.accountCode) {
         toast.error("العميل المحدد لا يملك حسابًا محاسبيًا مرتبطًا");
+
         return;
       }
     }
 
     /* -------------------------------------------------------
-       بيانات البيع
+       التحقق النهائي من المخزون
     ------------------------------------------------------- */
 
-    const sale = addSale({
-      date: new Date().toISOString().split("T")[0],
+    const stockValidation = validateInvoiceStock();
 
-      customerId: finalCustomer?.id || undefined,
+    if (!stockValidation.valid) {
+      toast.error(stockValidation.message || "تعذر التحقق من المخزون", {
+        description: stockValidation.description,
+      });
 
-      customerName:
-        paymentMethod === "credit"
-          ? selectedCreditCustomer?.name || customerName.trim()
-          : customerName.trim(),
-
-      paymentMethod,
-
-      accountCode: paymentAccount.code || undefined,
-
-      accountName: paymentAccount.name || undefined,
-
-      items: invoiceItems.map((item) => ({
-        id: item.id,
-        item: item.item,
-        quantity: item.quantity,
-        price: item.price,
-        discount: item.discount,
-        total: item.total,
-      })),
-
-      status: paymentMethod === "credit" ? "pending" : "paid",
-    });
+      return;
+    }
 
     /* -------------------------------------------------------
-       إشعار الحفظ
+       محاولة حفظ البيع
+       addSale أيضًا يجب أن يحتوي على حماية المخزون
     ------------------------------------------------------- */
 
-    toast.success(`تم حفظ الفاتورة ${sale.invoiceNumber} بنجاح`);
+    try {
+      // إجمالي الأصناف قبل الخصم
+      const subtotal = invoiceItems.reduce(
+        (sum, item) => sum + item.quantity * item.price,
+        0,
+      );
 
-    /* -------------------------------------------------------
-       سؤال الطباعة باستخدام ID الحقيقي
-    ------------------------------------------------------- */
+      // إجمالي الخصومات
+      const totalDiscount = invoiceItems.reduce(
+        (sum, item) => sum + item.discount,
+        0,
+      );
 
-    askForPrint(sale.id);
+      // الإجمالي النهائي
+      const total = invoiceItems.reduce((sum, item) => sum + item.total, 0);
 
-    /* -------------------------------------------------------
-       تفريغ الصفحة بعد الحفظ
-    ------------------------------------------------------- */
+      const sale = addSale({
+        date: new Date().toISOString().split("T")[0],
 
-    setInvoiceItems([]);
+        customerId: finalCustomer?.id || undefined,
 
-    setCustomerName("");
+        customerName:
+          paymentMethod === "credit"
+            ? selectedCreditCustomer?.name || customerName.trim()
+            : customerName.trim(),
 
-    setCreditCustomerId("");
+        paymentMethod,
 
-    setBankAccountId("");
+        accountCode: paymentAccount.code || undefined,
 
-    setPaymentMethod("cash");
+        accountName: paymentAccount.name || undefined,
+
+        /*
+         * الإجماليات المطلوبة في AddSaleInput
+         */
+        subtotal,
+
+        discount: totalDiscount,
+
+        totalQuantity: invoiceItems.reduce(
+          (sum, item) => sum + item.quantity,
+          0,
+        ),
+
+        total,
+
+        /*
+         * مهم جدًا:
+         * نرسل productId مع كل صنف
+         */
+        items: invoiceItems.map((item) => ({
+          id: item.id,
+
+          productId: item.productId,
+
+          productCode: products.find((product) => product.id === item.productId)
+            ?.code,
+
+          item: item.item,
+
+          quantity: item.quantity,
+
+          price: item.price,
+
+          discount: item.discount,
+
+          total: item.total,
+        })),
+
+        // Store يستخدم:
+        // paid | pending | cancelled
+        status: paymentMethod === "credit" ? "pending" : "paid",
+      });
+
+      /* -----------------------------------------------------
+     إشعار الحفظ
+  ----------------------------------------------------- */
+
+      toast.success(`تم حفظ الفاتورة ${sale.invoiceNumber} بنجاح`);
+
+      /* -----------------------------------------------------
+     سؤال الطباعة
+  ----------------------------------------------------- */
+
+      askForPrint(sale.id);
+
+      /* -----------------------------------------------------
+     تفريغ الصفحة بعد الحفظ
+  ----------------------------------------------------- */
+
+      setInvoiceItems([]);
+
+      setCustomerName("");
+
+      setCreditCustomerId("");
+
+      setBankAccountId("");
+
+      setPaymentMethod("cash");
+
+      setSelectedItem("");
+
+      setQuantity("");
+
+      setPrice("");
+
+      setDiscount("");
+    } catch (error) {
+      console.error("Error while saving sale:", error);
+
+      toast.error(
+        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ الفاتورة",
+      );
+    }
   };
 
   /* =======================================================
@@ -428,6 +806,7 @@ export default function NewSalesPage() {
   const handleClearInvoice = () => {
     if (invoiceItems.length === 0) {
       toast.error("الفاتورة فارغة");
+
       return;
     }
 
@@ -501,9 +880,7 @@ export default function NewSalesPage() {
 
           <div className="p-3">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              {/* -----------------------------------------
-                  اسم العميل
-              ------------------------------------------ */}
+              {/* اسم العميل */}
 
               <div>
                 <label
@@ -523,9 +900,7 @@ export default function NewSalesPage() {
                 />
               </div>
 
-              {/* -----------------------------------------
-                  طريقة الدفع
-              ------------------------------------------ */}
+              {/* طريقة الدفع */}
 
               <div>
                 <label className="mb-1 block text-[10px] font-semibold text-gray-600">
@@ -557,9 +932,7 @@ export default function NewSalesPage() {
                 </select>
               </div>
 
-              {/* -----------------------------------------
-                  الحساب
-              ------------------------------------------ */}
+              {/* الحساب */}
 
               <div>
                 <label className="mb-1 block text-[10px] font-semibold text-gray-600">
@@ -575,7 +948,7 @@ export default function NewSalesPage() {
                 {paymentMethod === "cash" && (
                   <input
                     type="text"
-                    value="1002 - الصندوق"
+                    value="1101 - الصندوق"
                     readOnly
                     className="h-9 w-full rounded-md border border-gray-300 bg-gray-100 px-2 text-xs text-gray-600"
                   />
@@ -593,11 +966,19 @@ export default function NewSalesPage() {
 
                     {bankAccounts
                       .filter((account) => account.isActive !== false)
-                      .map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.code} - {account.name}
-                        </option>
-                      ))}
+                      .map((account) => {
+                        const accountCode =
+                          account.accountCode || account.code || "";
+
+                        const accountName =
+                          account.accountName || account.name || "";
+
+                        return (
+                          <option key={account.id} value={account.id}>
+                            {accountCode} - {accountName}
+                          </option>
+                        );
+                      })}
                   </select>
                 )}
 
@@ -625,9 +1006,7 @@ export default function NewSalesPage() {
               </div>
             </div>
 
-            {/* ---------------------------------------------
-                معلومات الحساب الحالي
-            ---------------------------------------------- */}
+            {/* معلومات الحساب الحالي */}
 
             <div className="mt-3 flex flex-wrap gap-2">
               <div className="rounded-md bg-gray-50 px-3 py-1.5">
@@ -691,19 +1070,91 @@ export default function NewSalesPage() {
                   <select
                     id="item"
                     value={selectedItem}
-                    onChange={(e) => setSelectedItem(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedItem(e.target.value);
+
+                      /*
+                       * عند تغيير الصنف
+                       * نفرغ الكمية والسعر
+                       */
+                      setQuantity("");
+
+                      setDiscount("");
+                    }}
                     className="h-8 w-full rounded-md border border-gray-300 bg-white pr-7 pl-2 text-xs text-gray-700 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
                   >
                     <option value="">اختر الصنف</option>
 
-                    {products.map((product) => (
-                      <option key={product.id} value={product.name}>
-                        {product.name}
-                      </option>
-                    ))}
+                    {products
+                      .filter((product) => product.isActive !== false)
+                      .map((product) => {
+                        const stock = getProductStock(product.id);
+
+                        return (
+                          <option key={product.id} value={product.id}>
+                            {product.name} - المتاح: {stock.toLocaleString()}
+                          </option>
+                        );
+                      })}
                   </select>
                 </div>
               </div>
+
+              {/* =================================================
+                  حالة المخزون
+              ================================================= */}
+
+              {selectedProduct && (
+                <div className="min-w-[190px]">
+                  <label className="mb-1 block text-[10px] font-semibold text-gray-600">
+                    حالة المخزون
+                  </label>
+
+                  <div
+                    className={`flex h-8 items-center justify-between rounded-md border px-2 ${
+                      stockStatus.type === "empty"
+                        ? "border-red-200 bg-red-50"
+                        : stockStatus.type === "error"
+                          ? "border-orange-200 bg-orange-50"
+                          : "border-green-200 bg-green-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {stockStatus.type === "empty" ? (
+                        <FiAlertCircle size={13} className="text-red-600" />
+                      ) : stockStatus.type === "error" ? (
+                        <FiAlertCircle size={13} className="text-orange-600" />
+                      ) : (
+                        <FiCheckCircle size={13} className="text-green-600" />
+                      )}
+
+                      <span
+                        className={`text-[10px] font-bold ${
+                          stockStatus.type === "empty"
+                            ? "text-red-600"
+                            : stockStatus.type === "error"
+                              ? "text-orange-600"
+                              : "text-green-600"
+                        }`}
+                      >
+                        {stockStatus.text}
+                      </span>
+                    </div>
+
+                    <span
+                      className={`text-[10px] font-bold ${
+                        stockStatus.type === "empty"
+                          ? "text-red-600"
+                          : stockStatus.type === "error"
+                            ? "text-orange-600"
+                            : "text-green-600"
+                      }`}
+                    >
+                      المتاح: {selectedProductRemainingStock.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* الكمية */}
 
@@ -769,13 +1220,79 @@ export default function NewSalesPage() {
               </div>
             </div>
 
+            {/* =================================================
+                معلومات المخزون
+            ================================================= */}
+
+            {selectedProduct && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <div className="rounded-md bg-gray-50 px-3 py-1.5">
+                  <span className="text-[9px] text-gray-400">
+                    المخزون الحالي
+                  </span>
+
+                  <span className="mr-2 text-[10px] font-bold text-gray-700">
+                    {selectedProductStock.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="rounded-md bg-yellow-50 px-3 py-1.5">
+                  <span className="text-[9px] text-gray-400">
+                    داخل الفاتورة
+                  </span>
+
+                  <span className="mr-2 text-[10px] font-bold text-yellow-700">
+                    {selectedProductInvoiceQuantity.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="rounded-md bg-green-50 px-3 py-1.5">
+                  <span className="text-[9px] text-gray-400">المتبقي</span>
+
+                  <span className="mr-2 text-[10px] font-bold text-green-700">
+                    {selectedProductRemainingStock.toLocaleString()}
+                  </span>
+                </div>
+
+                {currentRequestedQuantity > 0 && (
+                  <div
+                    className={`rounded-md px-3 py-1.5 ${
+                      currentRequestedQuantity > selectedProductRemainingStock
+                        ? "bg-red-50"
+                        : "bg-blue-50"
+                    }`}
+                  >
+                    <span className="text-[9px] text-gray-400">
+                      المتبقي بعد الإضافة
+                    </span>
+
+                    <span
+                      className={`mr-2 text-[10px] font-bold ${
+                        currentRequestedQuantity > selectedProductRemainingStock
+                          ? "text-red-700"
+                          : "text-blue-700"
+                      }`}
+                    >
+                      {remainingAfterCurrentQuantity.toLocaleString()}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* زر الإضافة */}
 
             <div className="mt-3 flex justify-start">
               <button
                 type="button"
                 onClick={handleAddItem}
-                className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-blue-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.98]"
+                disabled={
+                  !!selectedProduct &&
+                  (selectedProductStock <= 0 ||
+                    selectedProductRemainingStock <= 0 ||
+                    currentRequestedQuantity > selectedProductRemainingStock)
+                }
+                className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-blue-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
               >
                 <FiPlus size={13} />
                 إضافة المنتج
@@ -783,9 +1300,9 @@ export default function NewSalesPage() {
             </div>
           </div>
 
-          {/* -----------------------------------------------
+          {/* =================================================
               ملخص الصنف الحالي
-          ------------------------------------------------ */}
+          ================================================= */}
 
           <div className="flex flex-wrap gap-2 border-t border-gray-100 bg-gray-50/70 px-3 py-2">
             <div className="flex min-w-[145px] items-center justify-between gap-3 rounded-md bg-white px-2.5 py-1.5 shadow-sm">
@@ -841,7 +1358,7 @@ export default function NewSalesPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[650px] text-right text-[11px]">
+              <table className="w-full min-w-[850px] text-right text-[11px]">
                 <thead className="bg-gray-50 text-gray-500">
                   <tr>
                     <th className="w-10 px-2 py-2 font-semibold">#</th>
@@ -849,6 +1366,10 @@ export default function NewSalesPage() {
                     <th className="px-2 py-2 font-semibold">الصنف</th>
 
                     <th className="w-20 px-2 py-2 font-semibold">الكمية</th>
+
+                    <th className="w-24 px-2 py-2 font-semibold">المتاح</th>
+
+                    <th className="w-24 px-2 py-2 font-semibold">المتبقي</th>
 
                     <th className="w-28 px-2 py-2 font-semibold">سعر الوحدة</th>
 
@@ -861,45 +1382,89 @@ export default function NewSalesPage() {
                 </thead>
 
                 <tbody>
-                  {invoiceItems.map((item, index) => (
-                    <tr
-                      key={item.id}
-                      className="border-t border-gray-100 transition hover:bg-gray-50"
-                    >
-                      <td className="px-2 py-1.5 text-gray-400">{index + 1}</td>
+                  {invoiceItems.map((item, index) => {
+                    const product = getInvoiceItemProduct(item);
 
-                      <td className="px-2 py-1.5 font-semibold text-gray-800">
-                        {item.item}
-                      </td>
+                    const availableStock = product
+                      ? getProductStock(product.id)
+                      : 0;
 
-                      <td className="px-2 py-1.5 text-gray-700">
-                        {item.quantity.toLocaleString()}
-                      </td>
+                    const remainingStock = getInvoiceItemRemainingStock(item);
 
-                      <td className="px-2 py-1.5 text-gray-700">
-                        {item.price.toLocaleString()}
-                      </td>
+                    return (
+                      <tr
+                        key={item.id}
+                        className="border-t border-gray-100 transition hover:bg-gray-50"
+                      >
+                        <td className="px-2 py-1.5 text-gray-400">
+                          {index + 1}
+                        </td>
 
-                      <td className="px-2 py-1.5 text-red-600">
-                        {item.discount.toLocaleString()}
-                      </td>
+                        <td className="px-2 py-1.5">
+                          <div className="font-semibold text-gray-800">
+                            {item.item}
+                          </div>
 
-                      <td className="px-2 py-1.5 font-bold text-gray-800">
-                        {item.total.toLocaleString()}
-                      </td>
+                          {product && (
+                            <div className="text-[9px] text-gray-400">
+                              كود: {product.code}
+                            </div>
+                          )}
+                        </td>
 
-                      <td className="px-2 py-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteItem(item.id)}
-                          title="حذف الصنف"
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-red-50 text-red-600 transition hover:bg-red-100"
-                        >
-                          <FiTrash2 size={12} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="px-2 py-1.5 font-bold text-gray-700">
+                          {item.quantity.toLocaleString()}
+                        </td>
+
+                        <td className="px-2 py-1.5">
+                          <span
+                            className={`rounded-md px-2 py-1 text-[10px] font-bold ${
+                              availableStock <= 0
+                                ? "bg-red-50 text-red-600"
+                                : "bg-green-50 text-green-600"
+                            }`}
+                          >
+                            {availableStock.toLocaleString()}
+                          </span>
+                        </td>
+
+                        <td className="px-2 py-1.5">
+                          <span
+                            className={`rounded-md px-2 py-1 text-[10px] font-bold ${
+                              remainingStock <= 0
+                                ? "bg-red-50 text-red-600"
+                                : "bg-blue-50 text-blue-600"
+                            }`}
+                          >
+                            {remainingStock.toLocaleString()}
+                          </span>
+                        </td>
+
+                        <td className="px-2 py-1.5 text-gray-700">
+                          {item.price.toLocaleString()}
+                        </td>
+
+                        <td className="px-2 py-1.5 text-red-600">
+                          {item.discount.toLocaleString()}
+                        </td>
+
+                        <td className="px-2 py-1.5 font-bold text-gray-800">
+                          {item.total.toLocaleString()}
+                        </td>
+
+                        <td className="px-2 py-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteItem(item.id)}
+                            title="حذف الصنف"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-red-50 text-red-600 transition hover:bg-red-100"
+                          >
+                            <FiTrash2 size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

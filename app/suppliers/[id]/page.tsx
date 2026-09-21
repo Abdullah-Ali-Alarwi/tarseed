@@ -18,8 +18,7 @@ import {
   FiCheckCircle,
 } from "react-icons/fi";
 
-import { useSuppliersStore } from "@/Store/suppliersStore";
-import { usePurchasesStore } from "@/Store/purchasesStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function SupplierDetailsPage() {
   const params = useParams();
@@ -27,11 +26,11 @@ export default function SupplierDetailsPage() {
   const supplierId = String(params.id || "");
 
   // ======================================================
-  // Zustand
+  // ERP Store
   // ======================================================
 
-  const suppliers = useSuppliersStore((state) => state.suppliers);
-  const purchases = usePurchasesStore((state) => state.purchases);
+  const suppliers = useERPStore((state) => state.suppliers);
+  const purchases = useERPStore((state) => state.purchases);
 
   // ======================================================
   // المورد
@@ -101,8 +100,7 @@ export default function SupplierDetailsPage() {
       .filter(
         (purchase) =>
           purchase.supplierId === supplier.id &&
-          purchase.status !== "cancelled" &&
-          purchase.status !== "ملغاة",
+          purchase.status !== "cancelled",
       )
       .sort((a, b) => {
         const dateA = new Date(a.date).getTime();
@@ -840,16 +838,19 @@ function SummaryCard({
       icon: "bg-white text-gray-600",
       value: "text-gray-800",
     },
+
     amber: {
       box: "bg-amber-50",
       icon: "bg-white text-amber-600",
       value: "text-amber-700",
     },
+
     green: {
       box: "bg-green-50",
       icon: "bg-white text-green-600",
       value: "text-green-700",
     },
+
     red: {
       box: "bg-red-50",
       icon: "bg-white text-red-600",

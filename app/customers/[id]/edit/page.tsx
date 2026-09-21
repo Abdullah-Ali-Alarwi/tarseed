@@ -16,7 +16,7 @@ import {
 } from "react-icons/fi";
 import { toast } from "sonner";
 
-import { useCustomersStore, CASH_CUSTOMER_ID } from "@/Store/customersStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function EditCustomerPage() {
   const params = useParams();
@@ -25,14 +25,14 @@ export default function EditCustomerPage() {
   const customerId = String(params.id);
 
   // =========================================================
-  // ZUSTAND
+  // ZUSTAND - ERP STORE
   // =========================================================
 
-  const customer = useCustomersStore((state) =>
+  const customer = useERPStore((state) =>
     state.customers.find((item) => item.id === customerId),
   );
 
-  const updateCustomer = useCustomersStore((state) => state.updateCustomer);
+  const updateCustomer = useERPStore((state) => state.updateCustomer);
 
   // =========================================================
   // FORM
@@ -45,6 +45,7 @@ export default function EditCustomerPage() {
   const [accountCode, setAccountCode] = useState("");
   const [accountName, setAccountName] = useState("");
   const [notes, setNotes] = useState("");
+  const [isActive, setIsActive] = useState(true);
 
   const [isSaving, setIsSaving] = useState(false);
 
@@ -59,15 +60,19 @@ export default function EditCustomerPage() {
     setPhone(customer.phone ?? "");
     setAddress(customer.address ?? "");
     setBalance(String(customer.balance ?? 0));
+
     setAccountCode(customer.accountCode ?? "");
     setAccountName(customer.accountName ?? customer.name ?? "");
+
+    setNotes(customer.notes ?? "");
+    setIsActive(customer.isActive ?? true);
   }, [customer]);
 
   // =========================================================
-  // التحقق من العميل
+  // التحقق من العميل النقدي
   // =========================================================
 
-  if (customerId === CASH_CUSTOMER_ID) {
+  if (customerId === "CASH-CUSTOMER") {
     return (
       <main className="min-h-screen bg-gray-50 p-3" dir="rtl">
         <div className="mx-auto max-w-3xl">
@@ -86,7 +91,7 @@ export default function EditCustomerPage() {
 
             <Link
               href="/customers"
-              className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-medium text-white hover:bg-amber-700"
+              className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-medium text-white transition hover:bg-amber-700"
             >
               <FiArrowRight size={15} />
               العودة إلى العملاء
@@ -115,12 +120,12 @@ export default function EditCustomerPage() {
             </h1>
 
             <p className="mt-2 text-sm text-gray-500">
-              لم يتم العثور على العميل المطلوب في Zustand.
+              لم يتم العثور على العميل المطلوب في النظام.
             </p>
 
             <Link
               href="/customers"
-              className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-medium text-white hover:bg-amber-700"
+              className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-medium text-white transition hover:bg-amber-700"
             >
               <FiArrowRight size={15} />
               العودة إلى العملاء
@@ -132,7 +137,7 @@ export default function EditCustomerPage() {
   }
 
   // =========================================================
-  // حفظ
+  // حفظ التعديلات
   // =========================================================
 
   const handleSave = () => {
@@ -143,30 +148,23 @@ export default function EditCustomerPage() {
       return;
     }
 
-    if (!accountCode.trim()) {
-      toast.error("رقم الحساب مطلوب", {
-        description: "يجب ربط العميل بحسابه المحاسبي.",
-      });
+    const numericBalance = Number(balance.replace(/[^\d.-]/g, ""));
+
+    if (Number.isNaN(numericBalance)) {
+      toast.error("الرصيد غير صحيح");
       return;
     }
-
-    if (!accountName.trim()) {
-      toast.error("اسم الحساب مطلوب");
-      return;
-    }
-
-    const numericBalance = Number(balance.replace(/[^\d.-]/g, "")) || 0;
 
     setIsSaving(true);
 
     try {
       updateCustomer(customerId, {
         name: cleanName,
-        phone: phone.trim(),
-        address: address.trim(),
+        phone: phone.trim() || undefined,
+        address: address.trim() || undefined,
         balance: numericBalance,
-        accountCode: accountCode.trim(),
-        accountName: accountName.trim(),
+        notes: notes.trim() || undefined,
+        isActive,
       });
 
       toast.success("تم حفظ بيانات العميل", {
@@ -176,7 +174,9 @@ export default function EditCustomerPage() {
       setTimeout(() => {
         router.push(`/customers/${customerId}`);
       }, 500);
-    } catch {
+    } catch (error) {
+      console.error(error);
+
       toast.error("حدث خطأ أثناء حفظ البيانات");
       setIsSaving(false);
     }
@@ -206,7 +206,7 @@ export default function EditCustomerPage() {
                 </h1>
 
                 <p className="text-[10px] text-gray-400">
-                  تعديل بيانات العميل والحساب المحاسبي
+                  تعديل بيانات العميل المرتبط بحسابه المحاسبي
                 </p>
               </div>
             </div>
@@ -302,10 +302,7 @@ export default function EditCustomerPage() {
 
               {/* الرصيد */}
 
-              <FormField
-                label="الرصيد الحالي"
-                icon={<FiCreditCard size={13} />}
-              >
+              <FormField label="الرصيد" icon={<FiCreditCard size={13} />}>
                 <div className="relative">
                   <input
                     type="text"
@@ -321,6 +318,27 @@ export default function EditCustomerPage() {
                   </span>
                 </div>
               </FormField>
+            </div>
+
+            {/* حالة العميل */}
+
+            <div className="mt-3">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={isActive}
+                  onChange={(e) => setIsActive(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                />
+
+                <span className="text-[11px] font-medium text-gray-700">
+                  العميل نشط
+                </span>
+              </label>
+
+              <p className="mt-1 pr-5 text-[9px] text-gray-400">
+                يمكن إلغاء تنشيط العميل بدلًا من حذفه من النظام.
+              </p>
             </div>
           </div>
         </section>
@@ -342,7 +360,7 @@ export default function EditCustomerPage() {
                 </h2>
 
                 <p className="text-[9px] text-gray-400">
-                  الحساب المرتبط بهذا العميل في النظام المحاسبي
+                  الحساب المرتبط بهذا العميل في شجرة الحسابات
                 </p>
               </div>
             </div>
@@ -350,41 +368,41 @@ export default function EditCustomerPage() {
 
           <div className="p-3">
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              {/* كود الحساب */}
+              {/* رقم الحساب */}
 
-              <FormField label="رقم الحساب" required>
+              <FormField label="رقم الحساب">
                 <input
                   type="text"
                   value={accountCode}
-                  onChange={(e) => setAccountCode(e.target.value)}
-                  placeholder="مثال: 1101"
-                  className={inputClass}
+                  readOnly
+                  className={`${inputClass} cursor-not-allowed bg-gray-50 text-gray-500`}
                   dir="ltr"
                 />
               </FormField>
 
               {/* اسم الحساب */}
 
-              <FormField label="اسم الحساب" required>
+              <FormField label="اسم الحساب">
                 <input
                   type="text"
                   value={accountName}
-                  onChange={(e) => setAccountName(e.target.value)}
-                  placeholder="اسم الحساب المحاسبي"
-                  className={inputClass}
+                  readOnly
+                  className={`${inputClass} cursor-not-allowed bg-gray-50 text-gray-500`}
                 />
               </FormField>
             </div>
 
-            {/* معلومات */}
+            {/* معلومات الحساب */}
 
             <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-2.5 py-2">
               <div className="flex items-start gap-2 text-blue-700">
                 <FiCreditCard size={13} className="mt-0.5 shrink-0" />
 
                 <p className="text-[10px] leading-5">
-                  هذا الحساب هو الحساب المحاسبي المرتبط بالعميل، وسيستخدم عند
-                  تسجيل المبيعات الآجلة والدفعات وكشف الحساب.
+                  هذا الحساب تم إنشاؤه وربطه بالعميل تلقائيًا بواسطة النظام تحت
+                  حساب العملاء والذمم المدينة
+                  <strong className="mx-1">1103</strong>. لا يتم تغيير رقم
+                  الحساب يدويًا من هذه الصفحة.
                 </p>
               </div>
             </div>
@@ -405,7 +423,9 @@ export default function EditCustomerPage() {
               <div>
                 <h2 className="text-xs font-bold text-gray-800">ملاحظات</h2>
 
-                <p className="text-[9px] text-gray-400">معلومات إضافية</p>
+                <p className="text-[9px] text-gray-400">
+                  معلومات إضافية عن العميل
+                </p>
               </div>
             </div>
           </div>
@@ -440,7 +460,8 @@ export default function EditCustomerPage() {
             disabled={isSaving}
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-600 px-4 text-[11px] font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <FiSave size={14} />
+            {isSaving ? <FiCheckCircle size={14} /> : <FiSave size={14} />}
+
             {isSaving ? "جاري الحفظ..." : "حفظ التعديلات"}
           </button>
         </div>

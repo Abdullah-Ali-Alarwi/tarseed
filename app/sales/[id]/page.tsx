@@ -2,29 +2,30 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { useSalesStore } from "@/Store/salesStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function SalesPrintPage() {
   const params = useParams();
   const saleId = String(params.id);
 
-  const sales = useSalesStore((state) => state.sales);
+  const sales = useERPStore((state) => state.sales);
 
   const [hydrated, setHydrated] = useState(false);
 
-  /*
-   * انتظار استعادة بيانات Zustand من LocalStorage
-   */
+  /* =====================================================
+     انتظار استعادة بيانات Zustand من LocalStorage
+  ===================================================== */
+
   useEffect(() => {
     const checkHydration = () => {
-      if (useSalesStore.persist.hasHydrated()) {
+      if (useERPStore.persist.hasHydrated()) {
         setHydrated(true);
       }
     };
 
     checkHydration();
 
-    const unsubscribe = useSalesStore.persist.onFinishHydration(() => {
+    const unsubscribe = useERPStore.persist.onFinishHydration(() => {
       setHydrated(true);
     });
 
@@ -33,14 +34,16 @@ export default function SalesPrintPage() {
     };
   }, []);
 
-  /*
-   * البحث عن الفاتورة بعد اكتمال Hydration
-   */
+  /* =====================================================
+     البحث عن الفاتورة بعد اكتمال Hydration
+  ===================================================== */
+
   const sale = hydrated ? sales.find((item) => item.id === saleId) : undefined;
 
-  /*
-   * الطباعة بعد ظهور الفاتورة
-   */
+  /* =====================================================
+     الطباعة التلقائية بعد ظهور الفاتورة
+  ===================================================== */
+
   useEffect(() => {
     if (!sale) return;
 
@@ -51,9 +54,10 @@ export default function SalesPrintPage() {
     return () => clearTimeout(timer);
   }, [sale]);
 
-  /*
-   * تنسيق المبالغ
-   */
+  /* =====================================================
+     تنسيق المبالغ
+  ===================================================== */
+
   const formatMoney = (value: number) => {
     return Number(value || 0).toLocaleString("ar-YE", {
       minimumFractionDigits: 0,
@@ -61,9 +65,10 @@ export default function SalesPrintPage() {
     });
   };
 
-  /*
-   * اسم طريقة الدفع
-   */
+  /* =====================================================
+     طريقة الدفع
+  ===================================================== */
+
   const getPaymentMethodName = (method: string) => {
     switch (method) {
       case "cash":
@@ -80,9 +85,10 @@ export default function SalesPrintPage() {
     }
   };
 
-  /*
-   * حالة الفاتورة
-   */
+  /* =====================================================
+     حالة الفاتورة
+  ===================================================== */
+
   const getStatusName = (status: string) => {
     switch (status) {
       case "paid":
@@ -95,13 +101,14 @@ export default function SalesPrintPage() {
         return "ملغاة";
 
       default:
-        return status;
+        return status || "-";
     }
   };
 
-  /*
-   * أثناء انتظار LocalStorage
-   */
+  /* =====================================================
+     أثناء انتظار LocalStorage
+  ===================================================== */
+
   if (!hydrated) {
     return (
       <>
@@ -126,9 +133,10 @@ export default function SalesPrintPage() {
     );
   }
 
-  /*
-   * إذا انتهت عملية Hydration ولم توجد الفاتورة
-   */
+  /* =====================================================
+     إذا لم توجد الفاتورة
+  ===================================================== */
+
   if (!sale) {
     return (
       <>
@@ -166,10 +174,31 @@ export default function SalesPrintPage() {
     );
   }
 
-  /*
-   * بيانات الفاتورة
-   */
+  /* =====================================================
+     بيانات الفاتورة
+  ===================================================== */
+
   const items = sale.items || [];
+
+  /* =====================================================
+     معلومات الحساب حسب طريقة الدفع
+  ===================================================== */
+
+  const getPaymentAccountTitle = () => {
+    switch (sale.paymentMethod) {
+      case "cash":
+        return "حساب الدفع";
+
+      case "bank":
+        return "حساب البنك";
+
+      case "credit":
+        return "حساب العميل";
+
+      default:
+        return "الحساب";
+    }
+  };
 
   return (
     <>
@@ -181,23 +210,7 @@ export default function SalesPrintPage() {
             ورقة A4
         ===================================================== */}
 
-        <div
-          className={`
-            mx-auto
-            min-h-[297mm]
-            w-[210mm]
-            border
-            border-gray-300
-            bg-white
-            px-[12mm]
-            py-[10mm]
-            shadow-lg
-            print:min-h-[297mm]
-            print:w-[210mm]
-            print:border-0
-            print:shadow-none
-          `}
-        >
+        <div className="mx-auto min-h-[297mm] w-[210mm] border border-gray-300 bg-white px-[12mm] py-[10mm] shadow-lg print:min-h-[297mm] print:w-[210mm] print:border-0 print:shadow-none">
           {/* =====================================================
               رأس الشركة
           ===================================================== */}
@@ -239,16 +252,20 @@ export default function SalesPrintPage() {
           </div>
 
           {/* =====================================================
-              بيانات العميل
+              بيانات العميل والدفع
           ===================================================== */}
 
           <div className="mt-5 grid grid-cols-2 gap-3">
+            {/* بيانات العميل */}
+
             <div className="rounded-md border border-gray-300 p-3">
               <p className="mb-2 text-[10px] font-bold text-gray-500">
                 بيانات العميل
               </p>
 
-              <p className="text-sm font-bold">{sale.customerName || "-"}</p>
+              <p className="text-sm font-bold">
+                {sale.customerName || "عميل نقدي"}
+              </p>
 
               <p className="mt-2 text-xs">
                 كود الحساب: {sale.accountCode || "-"}
@@ -258,6 +275,8 @@ export default function SalesPrintPage() {
                 اسم الحساب: {sale.accountName || "-"}
               </p>
             </div>
+
+            {/* معلومات الدفع */}
 
             <div className="rounded-md border border-gray-300 p-3">
               <p className="mb-2 text-[10px] font-bold text-gray-500">
@@ -271,8 +290,46 @@ export default function SalesPrintPage() {
               <p className="mt-2 text-xs">
                 الحالة: {getStatusName(sale.status)}
               </p>
+
+              {sale.accountCode && (
+                <p className="mt-1 text-xs">
+                  {getPaymentAccountTitle()}: {sale.accountCode}
+                </p>
+              )}
+
+              {sale.accountName && (
+                <p className="mt-1 text-xs text-gray-600">{sale.accountName}</p>
+              )}
             </div>
           </div>
+
+          {/* =====================================================
+              تنبيه البيع الآجل
+          ===================================================== */}
+
+          {sale.paymentMethod === "credit" && (
+            <div className="mt-4 rounded-md border border-gray-300 bg-gray-50 p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-bold text-gray-500">
+                    نوع العملية
+                  </p>
+
+                  <p className="mt-1 text-xs font-bold text-gray-800">
+                    بيع آجل
+                  </p>
+                </div>
+
+                <div className="text-left">
+                  <p className="text-[10px] text-gray-500">المبلغ المستحق</p>
+
+                  <p className="mt-1 text-sm font-bold">
+                    {formatMoney(Number(sale.total || 0))} ريال
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* =====================================================
               جدول الأصناف
@@ -309,33 +366,50 @@ export default function SalesPrintPage() {
               </thead>
 
               <tbody>
-                {items.map((item, index) => (
-                  <tr key={item.id}>
-                    <td className="border border-gray-300 px-2 py-2 text-center text-xs">
-                      {index + 1}
-                    </td>
-
-                    <td className="border border-gray-300 px-3 py-2 text-xs">
-                      {item.item}
-                    </td>
-
-                    <td className="border border-gray-300 px-2 py-2 text-center text-xs">
-                      {item.quantity}
-                    </td>
-
-                    <td className="border border-gray-300 px-2 py-2 text-center text-xs">
-                      {formatMoney(item.price)}
-                    </td>
-
-                    <td className="border border-gray-300 px-2 py-2 text-center text-xs">
-                      {formatMoney(item.discount)}
-                    </td>
-
-                    <td className="border border-gray-300 px-2 py-2 text-center text-xs font-semibold">
-                      {formatMoney(item.total)}
+                {items.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="border border-gray-300 px-3 py-8 text-center text-xs text-gray-500"
+                    >
+                      لا توجد أصناف في الفاتورة
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  items.map((item, index) => (
+                    <tr key={item.id}>
+                      <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                        {index + 1}
+                      </td>
+
+                      <td className="border border-gray-300 px-3 py-2 text-xs">
+                        <div className="font-semibold">{item.item}</div>
+
+                        {item.productCode && (
+                          <div className="mt-0.5 text-[9px] text-gray-400">
+                            كود الصنف: {item.productCode}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                        {item.quantity}
+                      </td>
+
+                      <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                        {formatMoney(item.price)}
+                      </td>
+
+                      <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                        {formatMoney(item.discount)}
+                      </td>
+
+                      <td className="border border-gray-300 px-2 py-2 text-center text-xs font-semibold">
+                        {formatMoney(item.total)}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -350,20 +424,20 @@ export default function SalesPrintPage() {
                 <span>الإجمالي قبل الخصم</span>
 
                 <span className="font-semibold">
-                  {formatMoney(sale.subtotal)}
+                  {formatMoney(Number(sale.subtotal || 0))}
                 </span>
               </div>
 
               <div className="flex justify-between border-b border-gray-200 px-4 py-2 text-xs">
                 <span>الخصم</span>
 
-                <span>{formatMoney(sale.discount)}</span>
+                <span>{formatMoney(Number(sale.discount || 0))}</span>
               </div>
 
               <div className="flex justify-between bg-gray-100 px-4 py-3 text-sm font-bold">
                 <span>الإجمالي النهائي</span>
 
-                <span>{formatMoney(sale.total)}</span>
+                <span>{formatMoney(Number(sale.total || 0))}</span>
               </div>
             </div>
           </div>

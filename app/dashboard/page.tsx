@@ -16,11 +16,7 @@ import {
   FiUserCheck,
 } from "react-icons/fi";
 
-import { useSalesStore } from "@/Store/salesStore";
-import { usePurchasesStore } from "@/Store/purchasesStore";
-import { useCustomersStore } from "@/Store/customersStore";
-import { useSuppliersStore } from "@/Store/suppliersStore";
-import { useProductsStore } from "@/Store/productsStore";
+import { useERPStore } from "@/Store/erpStore";
 
 /* =========================================================
    DASHBOARD
@@ -28,14 +24,14 @@ import { useProductsStore } from "@/Store/productsStore";
 
 export default function Dashboard() {
   /* =======================================================
-     ZUSTAND STORES
+     ERP STORE
   ======================================================= */
 
-  const sales = useSalesStore((state) => state.sales);
-  const purchases = usePurchasesStore((state) => state.purchases);
-  const customers = useCustomersStore((state) => state.customers);
-  const suppliers = useSuppliersStore((state) => state.suppliers);
-  const products = useProductsStore((state) => state.products);
+  const sales = useERPStore((state) => state.sales);
+  const purchases = useERPStore((state) => state.purchases);
+  const customers = useERPStore((state) => state.customers);
+  const suppliers = useERPStore((state) => state.suppliers);
+  const products = useERPStore((state) => state.products);
 
   /* =======================================================
      HELPERS
@@ -110,9 +106,7 @@ export default function Dashboard() {
       let purchaseValue = 0;
       let purchaseQuantity = 0;
 
-      /* ---------------------------------------------------
-         PURCHASES
-      --------------------------------------------------- */
+      /* PURCHASES */
 
       purchases.forEach((purchase) => {
         purchase.items.forEach((item) => {
@@ -129,12 +123,9 @@ export default function Dashboard() {
         });
       });
 
-      /* ---------------------------------------------------
-         SALES
-      --------------------------------------------------- */
+      /* SALES */
 
       sales.forEach((sale) => {
-        // الفواتير الملغاة لا تؤثر على المخزون
         if (sale.status === "cancelled") {
           return;
         }
@@ -148,22 +139,16 @@ export default function Dashboard() {
         });
       });
 
-      /* ---------------------------------------------------
-         CURRENT QUANTITY
-      --------------------------------------------------- */
+      /* CURRENT QUANTITY */
 
       const quantity = Math.max(purchasedQuantity - soldQuantity, 0);
 
-      /* ---------------------------------------------------
-         AVERAGE PURCHASE PRICE
-      --------------------------------------------------- */
+      /* AVERAGE PURCHASE PRICE */
 
       const averagePurchasePrice =
         purchaseQuantity > 0 ? purchaseValue / purchaseQuantity : 0;
 
-      /* ---------------------------------------------------
-         INVENTORY VALUE
-      --------------------------------------------------- */
+      /* INVENTORY VALUE */
 
       const inventoryValue = quantity * averagePurchasePrice;
 
@@ -273,9 +258,7 @@ export default function Dashboard() {
       title: "إجمالي المشتريات",
       value: formatMoney(totalPurchases),
       currency: "ريال",
-      change: `${
-        purchasesChange >= 0 ? "+" : ""
-      }${purchasesChange.toFixed(1)}%`,
+      change: `${purchasesChange >= 0 ? "+" : ""}${purchasesChange.toFixed(1)}%`,
       icon: FiShoppingCart,
       positive: purchasesChange >= 0,
       href: "/purchases",
@@ -425,17 +408,20 @@ export default function Dashboard() {
   ======================================================= */
 
   return (
-    <div className="min-h-screen bg-slate-50 p-3 sm:p-4 md:p-6" dir="rtl">
+    <div
+      className="min-h-screen bg-slate-50 p-2.5 sm:p-3 md:p-4 lg:p-5"
+      dir="rtl"
+    >
       {/* ===================================================
           HEADER
       =================================================== */}
 
-      <div className="mb-5 sm:mb-8">
-        <h1 className="text-xl font-bold text-slate-800 sm:text-2xl md:text-3xl">
+      <div className="mb-4 sm:mb-5">
+        <h1 className="text-lg font-bold text-slate-800 sm:text-xl md:text-2xl">
           لوحة التحكم
         </h1>
 
-        <p className="mt-1 text-xs text-slate-500 sm:mt-2 sm:text-sm">
+        <p className="mt-0.5 text-[11px] text-slate-500 sm:text-xs">
           مرحباً بك في نظام الإدارة المحاسبية
         </p>
       </div>
@@ -444,7 +430,7 @@ export default function Dashboard() {
           STATISTICS
       =================================================== */}
 
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:mb-8 lg:grid-cols-4 lg:gap-5">
+      <div className="mb-4 grid grid-cols-2 gap-2.5 sm:mb-5 sm:gap-3 lg:grid-cols-4">
         {stats.map((stat) => {
           const Icon = stat.icon;
 
@@ -455,47 +441,48 @@ export default function Dashboard() {
               className="
                 group
                 block
-                rounded-2xl
+                rounded-xl
                 border
                 border-slate-200
                 bg-white
-                p-4
+                p-3
                 shadow-sm
                 transition
                 hover:-translate-y-0.5
                 hover:border-blue-200
                 hover:shadow-md
                 active:scale-[0.99]
-                sm:p-5
+                sm:rounded-2xl
+                sm:p-3.5
               "
             >
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="mb-2 text-xs text-slate-500 sm:text-sm">
+                  <p className="mb-1 text-[10px] text-slate-500 sm:text-xs">
                     {stat.title}
                   </p>
 
-                  <div className="flex items-end gap-2">
-                    <h2 className="truncate text-xl font-bold text-slate-800 sm:text-2xl">
+                  <div className="flex items-end gap-1.5">
+                    <h2 className="truncate text-base font-bold text-slate-800 sm:text-lg">
                       {stat.value}
                     </h2>
 
-                    <span className="mb-1 shrink-0 text-[10px] text-slate-400 sm:text-xs">
+                    <span className="mb-0.5 shrink-0 text-[8px] text-slate-400 sm:text-[10px]">
                       {stat.currency}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 transition group-hover:bg-blue-100 sm:h-12 sm:w-12">
-                  <Icon size={21} />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition group-hover:bg-blue-100 sm:h-9 sm:w-9">
+                  <Icon size={17} />
                 </div>
               </div>
 
-              <div className="mt-3 flex items-center gap-1 text-xs sm:mt-4 sm:text-sm">
+              <div className="mt-2 flex items-center gap-1 text-[9px] sm:text-[10px]">
                 {stat.positive ? (
-                  <FiArrowUpRight className="text-green-500" />
+                  <FiArrowUpRight className="text-green-500" size={12} />
                 ) : (
-                  <FiArrowDownRight className="text-red-500" />
+                  <FiArrowDownRight className="text-red-500" size={12} />
                 )}
 
                 <span
@@ -508,13 +495,9 @@ export default function Dashboard() {
                   {stat.change}
                 </span>
 
-                <span className="mr-1 text-[10px] text-slate-400 sm:text-xs">
+                <span className="mr-0.5 text-[8px] text-slate-400 sm:text-[9px]">
                   من البيانات الحالية
                 </span>
-              </div>
-
-              <div className="mt-3 border-t border-slate-100 pt-2 text-[10px] text-blue-500 opacity-0 transition group-hover:opacity-100">
-                عرض التفاصيل ←
               </div>
             </Link>
           );
@@ -525,31 +508,31 @@ export default function Dashboard() {
           SALES + QUICK ACTIONS
       =================================================== */}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:gap-4">
         {/* SALES */}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 lg:col-span-2">
-          <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-4 lg:col-span-2">
+          <div className="mb-3 flex items-center justify-between gap-2 sm:mb-4">
             <div>
-              <h2 className="text-base font-bold text-slate-800 sm:text-lg">
+              <h2 className="text-sm font-bold text-slate-800 sm:text-base">
                 ملخص المبيعات
               </h2>
 
-              <p className="mt-1 text-xs text-slate-400 sm:text-sm">
+              <p className="mt-0.5 text-[10px] text-slate-400 sm:text-xs">
                 إجمالي المبيعات: {formatMoney(totalSales)} ريال
               </p>
             </div>
 
             <Link
               href="/sales"
-              className="w-fit rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600 transition hover:bg-blue-100"
+              className="shrink-0 rounded-md bg-blue-50 px-2.5 py-1.5 text-[10px] font-medium text-blue-600 transition hover:bg-blue-100 sm:text-xs"
             >
               عرض المبيعات
             </Link>
           </div>
 
-          <div className="h-52 overflow-hidden border-b border-slate-100 sm:h-64">
-            <div className="flex h-full items-end justify-between gap-1.5 sm:gap-2">
+          <div className="h-40 overflow-hidden border-b border-slate-100 sm:h-48">
+            <div className="flex h-full items-end justify-between gap-1">
               {salesChart.map((item, index) => (
                 <div
                   key={index}
@@ -557,7 +540,7 @@ export default function Dashboard() {
                 >
                   <div className="relative flex w-full justify-center">
                     {item.amount > 0 && (
-                      <span className="absolute -top-6 whitespace-nowrap text-[8px] text-slate-400 sm:-top-7 sm:text-[10px]">
+                      <span className="absolute -top-5 whitespace-nowrap text-[7px] text-slate-400 sm:-top-6 sm:text-[9px]">
                         {formatMoney(item.amount)}
                       </span>
                     )}
@@ -565,11 +548,12 @@ export default function Dashboard() {
                     <div
                       className="
                         w-full
-                        max-w-10
-                        rounded-t-lg
+                        max-w-8
+                        rounded-t-md
                         bg-blue-600
                         transition
                         hover:bg-blue-700
+                        sm:max-w-9
                       "
                       style={{
                         height: `${item.height}%`,
@@ -577,7 +561,7 @@ export default function Dashboard() {
                     />
                   </div>
 
-                  <span className="mt-2 text-[9px] text-slate-400 sm:text-xs">
+                  <span className="mt-1.5 text-[8px] text-slate-400 sm:text-[10px]">
                     {item.label}
                   </span>
                 </div>
@@ -585,7 +569,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="mt-4 flex flex-col justify-between gap-2 text-[10px] text-slate-400 sm:flex-row sm:text-xs">
+          <div className="mt-2.5 flex items-center justify-between text-[9px] text-slate-400 sm:text-[10px]">
             <span>{totalSalesInvoices} فاتورة مبيعات</span>
 
             <span>المدفوع: {formatMoney(paidSales)} ريال</span>
@@ -594,12 +578,12 @@ export default function Dashboard() {
 
         {/* QUICK ACTIONS */}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-          <h2 className="mb-4 text-base font-bold text-slate-800 sm:mb-5 sm:text-lg">
+        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-4">
+          <h2 className="mb-2.5 text-sm font-bold text-slate-800 sm:text-base">
             العمليات السريعة
           </h2>
 
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             <QuickAction
               href="/sales/new"
               icon={<FiFileText />}
@@ -656,28 +640,28 @@ export default function Dashboard() {
           PURCHASES OVERVIEW
       =================================================== */}
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:mt-6 sm:p-6">
-        <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:mt-4 sm:rounded-2xl sm:p-4">
+        <div className="mb-3 flex items-center justify-between gap-2 sm:mb-4">
           <div>
-            <h2 className="text-base font-bold text-slate-800 sm:text-lg">
+            <h2 className="text-sm font-bold text-slate-800 sm:text-base">
               ملخص المشتريات
             </h2>
 
-            <p className="mt-1 text-xs text-slate-400 sm:text-sm">
+            <p className="mt-0.5 text-[10px] text-slate-400 sm:text-xs">
               إجمالي المشتريات: {formatMoney(totalPurchases)} ريال
             </p>
           </div>
 
           <Link
             href="/purchases"
-            className="w-fit rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-600 transition hover:bg-emerald-100 sm:px-4 sm:text-sm"
+            className="shrink-0 rounded-md bg-emerald-50 px-2.5 py-1.5 text-[10px] font-medium text-emerald-600 transition hover:bg-emerald-100 sm:text-xs"
           >
             عرض المشتريات
           </Link>
         </div>
 
-        <div className="h-48 overflow-hidden border-b border-slate-100 sm:h-56">
-          <div className="flex h-full items-end justify-between gap-1.5 sm:gap-2">
+        <div className="h-36 overflow-hidden border-b border-slate-100 sm:h-44">
+          <div className="flex h-full items-end justify-between gap-1">
             {purchasesChart.map((item, index) => (
               <div
                 key={index}
@@ -685,7 +669,7 @@ export default function Dashboard() {
               >
                 <div className="relative flex w-full justify-center">
                   {item.amount > 0 && (
-                    <span className="absolute -top-6 whitespace-nowrap text-[8px] text-slate-400 sm:-top-7 sm:text-[10px]">
+                    <span className="absolute -top-5 whitespace-nowrap text-[7px] text-slate-400 sm:-top-6 sm:text-[9px]">
                       {formatMoney(item.amount)}
                     </span>
                   )}
@@ -693,11 +677,12 @@ export default function Dashboard() {
                   <div
                     className="
                       w-full
-                      max-w-10
-                      rounded-t-lg
+                      max-w-8
+                      rounded-t-md
                       bg-emerald-600
                       transition
                       hover:bg-emerald-700
+                      sm:max-w-9
                     "
                     style={{
                       height: `${item.height}%`,
@@ -705,7 +690,7 @@ export default function Dashboard() {
                   />
                 </div>
 
-                <span className="mt-2 text-[9px] text-slate-400 sm:text-xs">
+                <span className="mt-1.5 text-[8px] text-slate-400 sm:text-[10px]">
                   {item.label}
                 </span>
               </div>
@@ -713,7 +698,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="mt-4 flex flex-col justify-between gap-2 text-[10px] text-slate-400 sm:flex-row sm:text-xs">
+        <div className="mt-2.5 flex items-center justify-between text-[9px] text-slate-400 sm:text-[10px]">
           <span>{totalPurchaseInvoices} فاتورة مشتريات</span>
 
           <span>المدفوع: {formatMoney(paidPurchases)} ريال</span>
@@ -724,30 +709,30 @@ export default function Dashboard() {
           RECENT SALES + PURCHASES
       =================================================== */}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:mt-6 lg:grid-cols-2 lg:gap-6">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:mt-4 lg:grid-cols-2 lg:gap-4">
         {/* RECENT SALES */}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-          <div className="mb-4 flex items-center justify-between sm:mb-5">
+        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-4">
+          <div className="mb-3 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-bold text-slate-800 sm:text-lg">
+              <h2 className="text-sm font-bold text-slate-800 sm:text-base">
                 آخر فواتير المبيعات
               </h2>
 
-              <p className="mt-1 text-[10px] text-slate-400 sm:text-xs">
+              <p className="mt-0.5 text-[9px] text-slate-400 sm:text-[10px]">
                 آخر فواتير المبيعات المسجلة
               </p>
             </div>
 
             <Link
               href="/sales"
-              className="text-xs font-medium text-blue-600 hover:text-blue-700 sm:text-sm"
+              className="text-[10px] font-medium text-blue-600 hover:text-blue-700 sm:text-xs"
             >
               عرض الكل
             </Link>
           </div>
 
-          <div className="space-y-3 sm:space-y-4">
+          <div className="space-y-2.5 sm:space-y-3">
             {recentSales.length > 0 ? (
               recentSales.map((invoice) => (
                 <Invoice
@@ -760,7 +745,7 @@ export default function Dashboard() {
                 />
               ))
             ) : (
-              <div className="py-8 text-center text-sm text-slate-400">
+              <div className="py-6 text-center text-xs text-slate-400">
                 لا توجد فواتير مبيعات
               </div>
             )}
@@ -769,27 +754,27 @@ export default function Dashboard() {
 
         {/* RECENT PURCHASES */}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-          <div className="mb-4 flex items-center justify-between sm:mb-5">
+        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-4">
+          <div className="mb-3 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-bold text-slate-800 sm:text-lg">
+              <h2 className="text-sm font-bold text-slate-800 sm:text-base">
                 آخر فواتير المشتريات
               </h2>
 
-              <p className="mt-1 text-[10px] text-slate-400 sm:text-xs">
+              <p className="mt-0.5 text-[9px] text-slate-400 sm:text-[10px]">
                 آخر فواتير المشتريات المسجلة
               </p>
             </div>
 
             <Link
               href="/purchases"
-              className="text-xs font-medium text-emerald-600 hover:text-emerald-700 sm:text-sm"
+              className="text-[10px] font-medium text-emerald-600 hover:text-emerald-700 sm:text-xs"
             >
               عرض الكل
             </Link>
           </div>
 
-          <div className="space-y-3 sm:space-y-4">
+          <div className="space-y-2.5 sm:space-y-3">
             {recentPurchases.length > 0 ? (
               recentPurchases.map((purchase) => (
                 <Purchase
@@ -802,7 +787,7 @@ export default function Dashboard() {
                 />
               ))
             ) : (
-              <div className="py-8 text-center text-sm text-slate-400">
+              <div className="py-6 text-center text-xs text-slate-400">
                 لا توجد فواتير مشتريات
               </div>
             )}
@@ -814,14 +799,14 @@ export default function Dashboard() {
           INVENTORY
       =================================================== */}
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:mt-6 sm:p-6">
-        <div className="mb-5 flex items-center justify-between sm:mb-6">
+      <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:mt-4 sm:rounded-2xl sm:p-4">
+        <div className="mb-3 flex items-center justify-between sm:mb-4">
           <div>
-            <h2 className="text-base font-bold text-slate-800 sm:text-lg">
+            <h2 className="text-sm font-bold text-slate-800 sm:text-base">
               حالة المخزون
             </h2>
 
-            <p className="mt-1 text-xs text-slate-400 sm:text-sm">
+            <p className="mt-0.5 text-[10px] text-slate-400 sm:text-xs">
               مستويات المخزون الحالية
             </p>
           </div>
@@ -830,8 +815,8 @@ export default function Dashboard() {
             href="/inventory"
             className="
               flex
-              h-9
-              w-9
+              h-8
+              w-8
               items-center
               justify-center
               rounded-lg
@@ -839,21 +824,21 @@ export default function Dashboard() {
               text-blue-600
               transition
               hover:bg-blue-100
-              sm:h-10
-              sm:w-10
+              sm:h-9
+              sm:w-9
             "
           >
-            <FiPackage size={20} />
+            <FiPackage size={17} />
           </Link>
         </div>
 
-        <div className="space-y-4 sm:space-y-5">
+        <div className="space-y-3 sm:space-y-4">
           {inventoryDisplay.length > 0 ? (
             inventoryDisplay.map((item, index) => (
               <Link
                 key={`${item.name}-${index}`}
                 href="/inventory"
-                className="block rounded-lg p-2 transition hover:bg-slate-50"
+                className="block rounded-lg p-1.5 transition hover:bg-slate-50"
               >
                 <InventoryItem
                   name={item.name}
@@ -864,14 +849,14 @@ export default function Dashboard() {
               </Link>
             ))
           ) : (
-            <div className="py-8 text-center text-sm text-slate-400">
+            <div className="py-6 text-center text-xs text-slate-400">
               لا توجد بيانات مخزون
             </div>
           )}
         </div>
 
-        <div className="mt-5 border-t border-slate-100 pt-4 sm:mt-6">
-          <div className="flex items-center justify-between text-xs sm:text-sm">
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <div className="flex items-center justify-between text-[10px] sm:text-xs">
             <span className="text-slate-500">إجمالي الأصناف</span>
 
             <Link
@@ -882,7 +867,7 @@ export default function Dashboard() {
             </Link>
           </div>
 
-          <div className="mt-2 flex items-center justify-between text-xs sm:text-sm">
+          <div className="mt-1.5 flex items-center justify-between text-[10px] sm:text-xs">
             <span className="text-slate-500">إجمالي الكميات</span>
 
             <span className="font-bold text-slate-700">
@@ -890,7 +875,7 @@ export default function Dashboard() {
             </span>
           </div>
 
-          <div className="mt-2 flex items-center justify-between text-xs sm:text-sm">
+          <div className="mt-1.5 flex items-center justify-between text-[10px] sm:text-xs">
             <span className="text-slate-500">قيمة المخزون</span>
 
             <span className="font-bold text-slate-700">
@@ -904,7 +889,7 @@ export default function Dashboard() {
           CUSTOMER + SUPPLIER BALANCES
       =================================================== */}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:mt-6 md:grid-cols-2 md:gap-6">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:mt-4 md:grid-cols-2 md:gap-4">
         {/* CUSTOMER BALANCES */}
 
         <Link
@@ -912,38 +897,41 @@ export default function Dashboard() {
           className="
             group
             block
-            rounded-2xl
+            rounded-xl
             border
             border-slate-200
             bg-white
-            p-4
+            p-3
             shadow-sm
             transition
             hover:-translate-y-0.5
             hover:border-blue-200
             hover:shadow-md
-            sm:p-6
+            sm:rounded-2xl
+            sm:p-4
           "
         >
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs text-slate-500 sm:text-sm">أرصدة العملاء</p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] text-slate-500 sm:text-xs">
+                أرصدة العملاء
+              </p>
 
-              <h2 className="mt-2 text-xl font-bold text-slate-800 sm:text-2xl">
+              <h2 className="mt-1 text-lg font-bold text-slate-800 sm:text-xl">
                 {formatMoney(totalCustomerBalances)}
               </h2>
 
-              <p className="mt-1 text-[10px] text-slate-400 sm:text-xs">
+              <p className="mt-0.5 text-[9px] text-slate-400 sm:text-[10px]">
                 إجمالي المبالغ المستحقة على العملاء
               </p>
 
-              <p className="mt-3 text-[10px] font-medium text-blue-500 opacity-0 transition group-hover:opacity-100">
+              <p className="mt-2 text-[9px] font-medium text-blue-500 opacity-0 transition group-hover:opacity-100">
                 عرض العملاء ←
               </p>
             </div>
 
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 transition group-hover:bg-blue-100 sm:h-12 sm:w-12">
-              <FiUsers size={22} />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition group-hover:bg-blue-100 sm:h-10 sm:w-10">
+              <FiUsers size={18} />
             </div>
           </div>
         </Link>
@@ -955,40 +943,41 @@ export default function Dashboard() {
           className="
             group
             block
-            rounded-2xl
+            rounded-xl
             border
             border-slate-200
             bg-white
-            p-4
+            p-3
             shadow-sm
             transition
             hover:-translate-y-0.5
             hover:border-emerald-200
             hover:shadow-md
-            sm:p-6
+            sm:rounded-2xl
+            sm:p-4
           "
         >
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs text-slate-500 sm:text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] text-slate-500 sm:text-xs">
                 أرصدة الموردين
               </p>
 
-              <h2 className="mt-2 text-xl font-bold text-slate-800 sm:text-2xl">
+              <h2 className="mt-1 text-lg font-bold text-slate-800 sm:text-xl">
                 {formatMoney(totalSupplierBalances)}
               </h2>
 
-              <p className="mt-1 text-[10px] text-slate-400 sm:text-xs">
+              <p className="mt-0.5 text-[9px] text-slate-400 sm:text-[10px]">
                 إجمالي المبالغ المستحقة للموردين
               </p>
 
-              <p className="mt-3 text-[10px] font-medium text-emerald-600 opacity-0 transition group-hover:opacity-100">
+              <p className="mt-2 text-[9px] font-medium text-emerald-600 opacity-0 transition group-hover:opacity-100">
                 عرض الموردين ←
               </p>
             </div>
 
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 transition group-hover:bg-emerald-100 sm:h-12 sm:w-12">
-              <FiTruck size={22} />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 transition group-hover:bg-emerald-100 sm:h-10 sm:w-10">
+              <FiTruck size={18} />
             </div>
           </div>
         </Link>
@@ -1185,21 +1174,21 @@ function QuickAction({
         flex
         w-full
         items-center
-        gap-3
-        rounded-xl
-        p-2.5
+        gap-2.5
+        rounded-lg
+        p-2
         text-right
         transition
         hover:bg-blue-50
         active:scale-[0.99]
-        sm:p-3
+        sm:p-2.5
       "
     >
       <div
         className="
           flex
-          h-9
-          w-9
+          h-8
+          w-8
           shrink-0
           items-center
           justify-center
@@ -1208,19 +1197,19 @@ function QuickAction({
           text-blue-600
           transition
           group-hover:bg-blue-100
-          sm:h-10
-          sm:w-10
+          sm:h-9
+          sm:w-9
         "
       >
         {icon}
       </div>
 
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-slate-700 sm:text-sm">
+        <p className="text-[10px] font-semibold text-slate-700 sm:text-xs">
           {title}
         </p>
 
-        <p className="mt-0.5 text-[10px] text-slate-400 sm:mt-1 sm:text-xs">
+        <p className="mt-0.5 truncate text-[8px] text-slate-400 sm:text-[10px]">
           {description}
         </p>
       </div>
@@ -1264,40 +1253,39 @@ function Invoice({
         rounded-lg
         border-b
         border-slate-100
-        px-2
-        pb-3
+        px-1.5
+        pb-2.5
         transition
         hover:bg-slate-50
-        sm:pb-4
+        sm:pb-3
       "
     >
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-slate-700 sm:text-sm">
+        <p className="text-[10px] font-semibold text-slate-700 sm:text-xs">
           {number}
         </p>
 
-        <p className="mt-1 truncate text-[10px] text-slate-400 sm:text-xs">
+        <p className="mt-0.5 truncate text-[9px] text-slate-400 sm:text-[10px]">
           {customer}
         </p>
       </div>
 
       <div className="shrink-0 text-left">
-        <p className="text-xs font-semibold text-slate-700 sm:text-sm">
+        <p className="text-[10px] font-semibold text-slate-700 sm:text-xs">
           {amount}
         </p>
 
         <span
           className={`
-            mt-1
+            mt-0.5
             inline-block
-            rounded-md
-            px-2
+            rounded
+            px-1.5
             py-0.5
-            text-[9px]
+            text-[8px]
             font-medium
-            sm:px-2.5
-            sm:py-1
-            sm:text-xs
+            sm:px-2
+            sm:text-[9px]
             ${statusStyle}
           `}
         >
@@ -1344,40 +1332,39 @@ function Purchase({
         rounded-lg
         border-b
         border-slate-100
-        px-2
-        pb-3
+        px-1.5
+        pb-2.5
         transition
         hover:bg-slate-50
-        sm:pb-4
+        sm:pb-3
       "
     >
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-slate-700 sm:text-sm">
+        <p className="text-[10px] font-semibold text-slate-700 sm:text-xs">
           {number}
         </p>
 
-        <p className="mt-1 truncate text-[10px] text-slate-400 sm:text-xs">
+        <p className="mt-0.5 truncate text-[9px] text-slate-400 sm:text-[10px]">
           {supplier}
         </p>
       </div>
 
       <div className="shrink-0 text-left">
-        <p className="text-xs font-semibold text-slate-700 sm:text-sm">
+        <p className="text-[10px] font-semibold text-slate-700 sm:text-xs">
           {amount}
         </p>
 
         <span
           className={`
-            mt-1
+            mt-0.5
             inline-block
-            rounded-md
-            px-2
+            rounded
+            px-1.5
             py-0.5
-            text-[9px]
+            text-[8px]
             font-medium
-            sm:px-2.5
-            sm:py-1
-            sm:text-xs
+            sm:px-2
+            sm:text-[9px]
             ${statusStyle}
           `}
         >
@@ -1413,17 +1400,17 @@ function InventoryItem({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="truncate text-xs font-medium text-slate-700 sm:text-sm">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="truncate text-[10px] font-medium text-slate-700 sm:text-xs">
           {name}
         </span>
 
-        <span className="shrink-0 text-[10px] text-slate-400 sm:text-xs">
+        <span className="shrink-0 text-[9px] text-slate-400 sm:text-[10px]">
           {quantity.toLocaleString("ar-SA")} {unit}
         </span>
       </div>
 
-      <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 sm:h-2">
+      <div className="h-1 overflow-hidden rounded-full bg-slate-100 sm:h-1.5">
         <div
           className={`h-full ${progressStyle} rounded-full transition-all`}
           style={{

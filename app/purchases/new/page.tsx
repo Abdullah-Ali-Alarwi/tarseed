@@ -9,29 +9,25 @@ import {
   FiSave,
   FiPrinter,
   FiCheckCircle,
+  FiCreditCard,
 } from "react-icons/fi";
+import { toast } from "sonner";
 
-import { useSuppliersStore } from "@/Store/suppliersStore";
-import { useProductsStore } from "@/Store/productsStore";
-import { usePurchasesStore } from "@/Store/purchasesStore";
-import { useCustomersStore } from "@/Store/customersStore";
+import { useERPStore } from "@/Store/erpStore";
 
 import type { PaymentMethod, TaxMode, PurchaseFormItem } from "./types";
 
 export default function NewPurchasePage() {
   /* =========================================================
-     Zustand
+     Zustand - ERP Store
   ========================================================= */
 
-  const products = useProductsStore((state) => state.products);
-
-  const suppliers = useSuppliersStore((state) => state.suppliers);
-
-  const purchases = usePurchasesStore((state) => state.purchases);
-
-  const accounts = useCustomersStore((state) => state.customers);
-
-  const addPurchase = usePurchasesStore((state) => state.addPurchase);
+  const products = useERPStore((state) => state.products);
+  const suppliers = useERPStore((state) => state.suppliers);
+  const purchases = useERPStore((state) => state.purchases);
+  const accounts = useERPStore((state) => state.accounts);
+  const bankAccounts = useERPStore((state) => state.bankAccounts);
+  const addPurchase = useERPStore((state) => state.addPurchase);
 
   /* =========================================================
      الحالات
@@ -44,6 +40,8 @@ export default function NewPurchasePage() {
   const [supplierId, setSupplierId] = useState("");
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+
+  const [bankId, setBankId] = useState("");
 
   const [taxMode, setTaxMode] = useState<TaxMode>("none");
 
@@ -74,6 +72,8 @@ export default function NewPurchasePage() {
     supplierPhone: string;
     supplierAddress: string;
     paymentName: string;
+    accountCode: string;
+    accountName: string;
     items: PurchaseFormItem[];
     subtotal: number;
     totalDiscount: number;
@@ -111,6 +111,22 @@ export default function NewPurchasePage() {
   }, [suppliers, supplierId]);
 
   /* =========================================================
+     البنك المحدد
+  ========================================================= */
+
+  const selectedBank = useMemo(() => {
+    return bankAccounts.find((bank) => bank.id === bankId);
+  }, [bankAccounts, bankId]);
+
+  /* =========================================================
+     حساب الصندوق
+  ========================================================= */
+
+  const cashAccount = useMemo(() => {
+    return accounts.find((account) => account.code === "1101");
+  }, [accounts]);
+
+  /* =========================================================
      حساب المورد
   ========================================================= */
 
@@ -122,6 +138,10 @@ export default function NewPurchasePage() {
       };
     }
 
+    /*
+      الحساب المرتبط بالمورد مباشرة
+    */
+
     if (selectedSupplier.accountCode && selectedSupplier.accountName) {
       return {
         accountCode: selectedSupplier.accountCode,
@@ -129,11 +149,15 @@ export default function NewPurchasePage() {
       };
     }
 
+    /*
+      البحث تحت حساب الموردين 2101
+    */
+
     const supplierName = String(selectedSupplier.name ?? "")
       .trim()
       .toLowerCase();
 
-    const supplierAccount = accounts.find((account: any) => {
+    const supplierAccount = accounts.find((account) => {
       const parentCode = String(account.parentCode ?? "");
 
       const accountName = String(account.name ?? "")
@@ -145,7 +169,7 @@ export default function NewPurchasePage() {
       const level = Number(account.level ?? 2);
 
       return (
-        parentCode === "2001" &&
+        parentCode === "2101" &&
         level > 1 &&
         accountType === "liability" &&
         accountName === supplierName
@@ -154,12 +178,16 @@ export default function NewPurchasePage() {
 
     if (supplierAccount) {
       return {
-        accountCode: String(supplierAccount.accountCode ?? ""),
+        accountCode: String(supplierAccount.code ?? ""),
         accountName: String(supplierAccount.name ?? ""),
       };
     }
 
-    const fallbackAccount = accounts.find((account: any) => {
+    /*
+      احتياط أخير بالاسم
+    */
+
+    const fallbackAccount = accounts.find((account) => {
       const accountName = String(account.name ?? "")
         .trim()
         .toLowerCase();
@@ -169,9 +197,57 @@ export default function NewPurchasePage() {
 
     if (fallbackAccount) {
       return {
-        accountCode: String(fallbackAccount.accountCode ?? ""),
+        accountCode: String(fallbackAccount.code ?? ""),
         accountName: String(fallbackAccount.name ?? ""),
       };
+    }
+
+    return {
+      accountCode: "",
+      accountName: "",
+    };
+  };
+
+  /* =========================================================
+     حساب الدفع المستخدم في الفاتورة
+  ========================================================= */
+
+  const getPaymentAccount = () => {
+    /*
+      شراء نقدي
+      مدين: المخزون
+      دائن: الصندوق 1101
+    */
+
+    if (paymentMethod === "cash") {
+      return {
+        accountCode: String(cashAccount?.code ?? "1101"),
+        accountName: cashAccount?.name ?? "الصندوق",
+      };
+    }
+
+    /*
+      شراء بنكي
+      مدين: المخزون
+      دائن: البنك المختار
+    */
+
+    if (paymentMethod === "bank") {
+      return {
+        accountCode: selectedBank?.accountCode ?? selectedBank?.code ?? "",
+
+        accountName: selectedBank?.accountName ?? selectedBank?.name ?? "",
+      };
+    }
+
+    /*
+      شراء آجل
+      مدين: المخزون
+      دائن: المورد
+    */
+
+    if (paymentMethod === "credit") {
+      return getSupplierAccount();
     }
 
     return {
@@ -251,6 +327,20 @@ export default function NewPurchasePage() {
     const rate = Math.min(100, Math.max(0, Number(value) || 0));
 
     setTaxRate(rate);
+    setIsSaved(false);
+  };
+
+  /* =========================================================
+     تغيير طريقة الدفع
+  ========================================================= */
+
+  const handlePaymentMethodChange = (value: PaymentMethod) => {
+    setPaymentMethod(value);
+
+    if (value !== "bank") {
+      setBankId("");
+    }
+
     setIsSaved(false);
   };
 
@@ -345,23 +435,61 @@ export default function NewPurchasePage() {
 
   const validateInvoice = () => {
     if (!supplierId) {
-      alert("يرجى اختيار المورد");
+      toast.error("يرجى اختيار المورد");
       return false;
     }
 
     if (items.length === 0) {
-      alert("يرجى إضافة صنف واحد على الأقل");
+      toast.error("يرجى إضافة صنف واحد على الأقل");
       return false;
     }
 
+    /*
+      التحقق من البنك
+    */
+
+    if (paymentMethod === "bank") {
+      if (!bankId) {
+        toast.error("يرجى اختيار الحساب البنكي");
+        return false;
+      }
+
+      const bankAccount = getPaymentAccount();
+
+      if (!bankAccount.accountCode || !bankAccount.accountName) {
+        toast.error("الحساب البنكي المحدد غير مرتبط بحساب محاسبي");
+        return false;
+      }
+    }
+
+    /*
+      التحقق من حساب المورد
+      في حالة الآجل
+    */
+
+    if (paymentMethod === "credit") {
+      const supplierAccount = getSupplierAccount();
+
+      if (!supplierAccount.accountCode || !supplierAccount.accountName) {
+        toast.error(
+          "هذا المورد غير مرتبط بحساب محاسبي. يرجى ربط حساب المورد أولاً.",
+        );
+        return false;
+      }
+    }
+
+    /*
+      التحقق من الأصناف
+    */
+
     for (const item of items) {
       if (!item.productId) {
-        alert("يرجى اختيار المنتج لكل صنف");
+        toast.error("يرجى اختيار المنتج لكل صنف");
         return false;
       }
 
       if (Number(item.quantity) <= 0) {
-        alert("يجب أن تكون الكمية أكبر من صفر");
+        toast.error("يجب أن تكون الكمية أكبر من صفر");
         return false;
       }
 
@@ -369,29 +497,14 @@ export default function NewPurchasePage() {
         (Number(item.quantity) || 0) * (Number(item.price) || 0);
 
       if (Number(item.discount) > itemSubtotal) {
-        alert("الخصم لا يمكن أن يكون أكبر من قيمة الصنف");
+        toast.error("الخصم لا يمكن أن يكون أكبر من قيمة الصنف");
         return false;
       }
     }
 
     if (grandTotal <= 0) {
-      alert("إجمالي الفاتورة يجب أن يكون أكبر من صفر");
+      toast.error("إجمالي الفاتورة يجب أن يكون أكبر من صفر");
       return false;
-    }
-
-    /*
-      في حالة الآجل يجب أن يكون للمورد
-      حساب محاسبي مرتبط.
-    */
-
-    if (paymentMethod === "credit") {
-      const account = getSupplierAccount();
-
-      if (!account.accountCode || !account.accountName) {
-        alert("هذا المورد غير مرتبط بحساب محاسبي. يرجى ربط حساب المورد أولاً.");
-
-        return false;
-      }
     }
 
     return true;
@@ -440,7 +553,7 @@ export default function NewPurchasePage() {
       return;
     }
 
-    const supplierAccount = getSupplierAccount();
+    const paymentAccount = getPaymentAccount();
 
     const purchaseItems = items.map((item) => {
       const product = getProduct(item.productId);
@@ -476,13 +589,15 @@ export default function NewPurchasePage() {
 
     const currentInvoiceNumber = invoiceNumber;
 
-    const purchaseId = `purchase-${Date.now()}-${Math.random()
-      .toString(36)
-      .substring(2, 8)}`;
+    /*
+      AddPurchaseInput الحالي لا يستقبل:
+      id
+      itemCount
+
+      الـ Store يقوم بإنشائهما داخليًا.
+    */
 
     addPurchase({
-      id: purchaseId,
-
       invoiceNumber: currentInvoiceNumber,
 
       date,
@@ -492,17 +607,16 @@ export default function NewPurchasePage() {
       supplierId,
 
       /*
-        الحساب يأتي مباشرة من
-        حساب المورد
+        الحساب المقابل للمخزون:
+
+        cash   -> الصندوق 1101
+        bank   -> البنك المختار
+        credit -> حساب المورد
       */
 
-      accountCode:
-        paymentMethod === "credit" ? supplierAccount.accountCode : "",
+      accountCode: paymentAccount.accountCode,
 
-      accountName:
-        paymentMethod === "credit" ? supplierAccount.accountName : "",
-
-      itemCount: purchaseItems.length,
+      accountName: paymentAccount.accountName,
 
       items: purchaseItems,
 
@@ -520,18 +634,24 @@ export default function NewPurchasePage() {
 
       paymentMethodName: paymentName,
 
-      status: paymentMethod === "credit" ? "آجلة" : "مدفوعة",
+      /*
+        القيم الداخلية في Store:
+
+        paid      -> مدفوعة
+        pending   -> آجلة
+        cancelled -> ملغاة
+      */
+
+      status: paymentMethod === "credit" ? "pending" : "paid",
 
       notes,
     });
 
     /*
-      لا يتم استدعاء increaseStock هنا.
+      المخزون لا يتم تعديله مباشرة هنا.
 
-      المخزون في النظام الحالي محسوب تلقائيًا
-      من المشتريات والمبيعات عن طريق Store المخزون
-      المشتق، لذلك مجرد حفظ فاتورة الشراء يكفي
-      لزيادة الكمية في المخزون.
+      getInventory() في ERP Store
+      يحسب المشتريات - المبيعات.
     */
 
     setSavedPurchaseData({
@@ -546,6 +666,10 @@ export default function NewPurchasePage() {
       supplierAddress,
 
       paymentName,
+
+      accountCode: paymentAccount.accountCode,
+
+      accountName: paymentAccount.accountName,
 
       items: items.map((item) => ({
         ...item,
@@ -572,6 +696,8 @@ export default function NewPurchasePage() {
 
     setShowSuccess(true);
 
+    toast.success(`تم حفظ الفاتورة ${currentInvoiceNumber} بنجاح`);
+
     setTimeout(() => {
       setShowSuccess(false);
     }, 3500);
@@ -583,14 +709,14 @@ export default function NewPurchasePage() {
 
   const handlePrint = () => {
     if (!isSaved || !savedPurchaseData) {
-      alert("يرجى حفظ الفاتورة أولًا قبل طباعتها");
+      toast.error("يرجى حفظ الفاتورة أولًا قبل طباعتها");
       return;
     }
 
     const printWindow = window.open("", "_blank", "width=900,height=700");
 
     if (!printWindow) {
-      alert("تعذر فتح نافذة الطباعة. يرجى السماح بالنوافذ المنبثقة.");
+      toast.error("تعذر فتح نافذة الطباعة. يرجى السماح بالنوافذ المنبثقة.");
       return;
     }
 
@@ -713,6 +839,7 @@ export default function NewPurchasePage() {
 
           .invoice-info {
             display: grid;
+
             grid-template-columns:
               1fr 1fr;
 
@@ -724,6 +851,7 @@ export default function NewPurchasePage() {
               1px solid #d1d5db;
 
             padding: 6px;
+
             border-radius: 4px;
           }
 
@@ -740,7 +868,9 @@ export default function NewPurchasePage() {
 
           table {
             width: 100%;
+
             border-collapse: collapse;
+
             margin-top: 12px;
           }
 
@@ -762,13 +892,17 @@ export default function NewPurchasePage() {
 
           .totals {
             width: 300px;
+
             margin-right: auto;
+
             margin-top: 12px;
           }
 
           .total-row {
             display: flex;
-            justify-content: space-between;
+
+            justify-content:
+              space-between;
 
             border-bottom:
               1px solid #e5e7eb;
@@ -786,6 +920,17 @@ export default function NewPurchasePage() {
             font-weight: bold;
 
             padding-top: 7px;
+          }
+
+          .account-box {
+            margin-top: 12px;
+
+            border:
+              1px solid #d1d5db;
+
+            padding: 8px;
+
+            font-size: 10px;
           }
 
           .notes {
@@ -870,6 +1015,7 @@ export default function NewPurchasePage() {
           <div class="invoice-info">
 
             <div class="info-box">
+
               <div class="info-label">
                 رقم الفاتورة
               </div>
@@ -877,9 +1023,11 @@ export default function NewPurchasePage() {
               <div class="info-value">
                 ${savedData.invoiceNumber}
               </div>
+
             </div>
 
             <div class="info-box">
+
               <div class="info-label">
                 التاريخ
               </div>
@@ -887,9 +1035,11 @@ export default function NewPurchasePage() {
               <div class="info-value">
                 ${formatDateForPrint(savedData.date)}
               </div>
+
             </div>
 
             <div class="info-box">
+
               <div class="info-label">
                 المورد
               </div>
@@ -897,9 +1047,11 @@ export default function NewPurchasePage() {
               <div class="info-value">
                 ${savedData.supplierName}
               </div>
+
             </div>
 
             <div class="info-box">
+
               <div class="info-label">
                 طريقة الدفع
               </div>
@@ -907,7 +1059,22 @@ export default function NewPurchasePage() {
               <div class="info-value">
                 ${savedData.paymentName}
               </div>
+
             </div>
+
+          </div>
+
+          <div class="account-box">
+
+            <strong>
+              الحساب المقابل:
+            </strong>
+
+            &nbsp;
+
+            ${savedData.accountCode || "-"}
+            -
+            ${savedData.accountName || "-"}
 
           </div>
 
@@ -916,19 +1083,29 @@ export default function NewPurchasePage() {
             <thead>
 
               <tr>
+
                 <th>#</th>
+
                 <th>الكود</th>
+
                 <th>الصنف</th>
+
                 <th>الكمية</th>
+
                 <th>السعر</th>
+
                 <th>الخصم</th>
+
                 <th>الإجمالي</th>
+
               </tr>
 
             </thead>
 
             <tbody>
+
               ${itemsHtml}
+
             </tbody>
 
           </table>
@@ -936,6 +1113,7 @@ export default function NewPurchasePage() {
           <div class="totals">
 
             <div class="total-row">
+
               <span>
                 الإجمالي قبل الخصم
               </span>
@@ -944,9 +1122,11 @@ export default function NewPurchasePage() {
                 ${formatMoney(savedData.subtotal)}
                 ريال
               </strong>
+
             </div>
 
             <div class="total-row">
+
               <span>
                 الخصم
               </span>
@@ -955,6 +1135,7 @@ export default function NewPurchasePage() {
                 ${formatMoney(savedData.totalDiscount)}
                 ريال
               </strong>
+
             </div>
 
             ${taxRow}
@@ -962,6 +1143,7 @@ export default function NewPurchasePage() {
             <div
               class="total-row grand-total"
             >
+
               <span>
                 الإجمالي النهائي
               </span>
@@ -970,6 +1152,7 @@ export default function NewPurchasePage() {
                 ${formatMoney(savedData.grandTotal)}
                 ريال
               </strong>
+
             </div>
 
           </div>
@@ -978,6 +1161,7 @@ export default function NewPurchasePage() {
             savedData.notes
               ? `
                 <div class="notes">
+
                   <div class="notes-title">
                     ملاحظات
                   </div>
@@ -985,13 +1169,16 @@ export default function NewPurchasePage() {
                   <div class="notes-text">
                     ${savedData.notes}
                   </div>
+
                 </div>
               `
               : ""
           }
 
           <div class="footer">
+
             الجابري للعسل والزيوت الطبيعة وخدمات العمرة
+
           </div>
 
         </div>
@@ -1005,6 +1192,7 @@ export default function NewPurchasePage() {
 
     printWindow.onload = () => {
       printWindow.focus();
+
       printWindow.print();
 
       printWindow.onafterprint = () => {
@@ -1167,11 +1355,11 @@ export default function NewPurchasePage() {
 
                 <select
                   value={paymentMethod}
-                  onChange={(event) => {
-                    setPaymentMethod(event.target.value as PaymentMethod);
-
-                    setIsSaved(false);
-                  }}
+                  onChange={(event) =>
+                    handlePaymentMethodChange(
+                      event.target.value as PaymentMethod,
+                    )
+                  }
                   className="h-8 w-full rounded-md border border-gray-300 bg-white px-2 text-[10px] outline-none focus:border-[#0E1F33]"
                 >
                   <option value="cash">نقدي</option>
@@ -1182,26 +1370,81 @@ export default function NewPurchasePage() {
                 </select>
               </div>
 
-              {/* الحالة + الحساب */}
+              {/* الحساب */}
 
               <div>
                 <label className="mb-1 block text-[9px] font-semibold text-gray-600">
-                  الحالة والحساب
+                  الحساب المقابل
                 </label>
 
-                <div className="flex h-8 items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-2">
+                <div className="flex min-h-8 items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-2">
                   <span className="text-[9px] font-semibold text-gray-600">
-                    {paymentMethod === "credit" ? "آجلة" : "مدفوعة"}
+                    {paymentMethod === "cash"
+                      ? "الصندوق"
+                      : paymentMethod === "bank"
+                        ? "البنك"
+                        : "المورد"}
                   </span>
 
-                  {paymentMethod === "credit" && selectedSupplier && (
-                    <span className="text-[8px] font-bold text-amber-600">
-                      {getSupplierAccount().accountCode || "بدون حساب"}
-                    </span>
-                  )}
+                  <span className="text-[8px] font-bold text-gray-700">
+                    {getPaymentAccount().accountCode || "غير مرتبط"}
+                  </span>
                 </div>
               </div>
             </div>
+
+            {/* حساب البنك */}
+
+            {paymentMethod === "bank" && (
+              <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-2 py-2">
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <FiCreditCard size={13} className="text-blue-600" />
+
+                  <span className="text-[9px] font-bold text-blue-700">
+                    حساب البنك
+                  </span>
+                </div>
+
+                <select
+                  value={bankId}
+                  onChange={(event) => {
+                    setBankId(event.target.value);
+
+                    setIsSaved(false);
+                  }}
+                  className="h-8 w-full rounded-md border border-blue-200 bg-white px-2 text-[10px] outline-none focus:border-blue-500"
+                >
+                  <option value="">اختر الحساب البنكي</option>
+
+                  {bankAccounts
+                    .filter((bank) => bank.isActive !== false)
+                    .map((bank) => (
+                      <option key={bank.id} value={bank.id}>
+                        {bank.code ? `${bank.code} - ` : ""}
+                        {bank.name}
+                      </option>
+                    ))}
+                </select>
+
+                {selectedBank && (
+                  <div className="mt-1 flex flex-wrap gap-x-4 text-[8px] text-blue-700">
+                    <span>
+                      الكود:{" "}
+                      <strong>
+                        {selectedBank.accountCode || selectedBank.code || "-"}
+                      </strong>
+                    </span>
+
+                    <span>
+                      الحساب:{" "}
+                      <strong>
+                        {selectedBank.accountName || selectedBank.name || "-"}
+                      </strong>
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* حساب المورد */}
 

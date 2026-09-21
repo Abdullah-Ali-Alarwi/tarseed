@@ -18,31 +18,28 @@ import {
   FiArrowUp,
 } from "react-icons/fi";
 
-import { useCustomersStore, CASH_CUSTOMER_ID } from "@/Store/customersStore";
-import { useSalesStore } from "@/Store/salesStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function CustomerAccountPage() {
   const params = useParams();
 
   const customerId = String(params.id);
 
-  /* =========================================================
-     بيانات العميل
-  ========================================================= */
+  // =========================================================
+  // ERP STORE
+  // =========================================================
 
-  const customer = useCustomersStore((state) =>
-    state.getCustomerById(customerId),
+  const customer = useERPStore((state) =>
+    state.customers.find((item) => item.id === customerId),
   );
 
-  /* =========================================================
-     بيانات المبيعات من Store المبيعات
-  ========================================================= */
+  const getAccountStatement = useERPStore((state) => state.getAccountStatement);
 
-  const sales = useSalesStore((state) => state.sales);
+  const getAccountBalance = useERPStore((state) => state.getAccountBalance);
 
-  /* =========================================================
-     تنسيق الأرقام
-  ========================================================= */
+  // =========================================================
+  // تنسيق الأرقام
+  // =========================================================
 
   const formatMoney = (value: number) => {
     return new Intl.NumberFormat("ar-SA", {
@@ -51,9 +48,9 @@ export default function CustomerAccountPage() {
     }).format(Number(value || 0));
   };
 
-  /* =========================================================
-     بيانات العميل
-  ========================================================= */
+  // =========================================================
+  // بيانات العميل
+  // =========================================================
 
   const customerName = customer?.name || "العميل";
 
@@ -61,131 +58,88 @@ export default function CustomerAccountPage() {
 
   const accountName = customer?.accountName || customerName;
 
-  const openingBalance = Number(customer?.balance || 0);
+  const accountId = customer?.accountId || "";
 
-  /* =========================================================
-     استخراج حركات العميل
-  ========================================================= */
+  // =========================================================
+  // كشف الحساب من القيود المحاسبية
+  // =========================================================
 
-  const accountMovements = useMemo(() => {
-    if (!customer) return [];
-
-    const movements: {
-      id: string;
-      date: string;
-      description: string;
-      reference: string;
-      debit: number;
-      credit: number;
-      type: "sale" | "payment" | "opening";
-    }[] = [];
-
-    /* =======================================================
-       الرصيد الافتتاحي
-    ======================================================= */
-
-    if (openingBalance !== 0) {
-      movements.push({
-        id: "opening-balance",
-        date: "",
-        description: "الرصيد الافتتاحي",
-        reference: "-",
-        debit: openingBalance > 0 ? openingBalance : 0,
-        credit: openingBalance < 0 ? Math.abs(openingBalance) : 0,
-        type: "opening",
-      });
+  const journalMovements = useMemo(() => {
+    if (!customer || !accountId) {
+      return [];
     }
 
-    /* =======================================================
-       مبيعات العميل
+    const statement = getAccountStatement(accountId);
 
-       يتم الاعتماد على customerId أولاً.
-       وفي السجلات القديمة يمكن الاعتماد على اسم العميل.
-    ======================================================= */
-
-    const customerSales = (sales || []).filter((sale) => {
-      /* -------------------------------------------------------
-         الفواتير الملغاة لا تؤثر على كشف الحساب
-      ------------------------------------------------------- */
-
-      if (sale.status === "cancelled") {
-        return false;
-      }
-
-      const saleCustomerId = String(sale.customerId ?? "");
-
-      const saleCustomerName = String(
-        sale.customerName ?? sale.accountName ?? "",
-      ).trim();
-
-      return (
-        saleCustomerId === customer.id ||
-        (!!saleCustomerName &&
-          saleCustomerName === customer.name &&
-          !saleCustomerId)
-      );
-    });
-
-    /* =======================================================
-       إضافة المبيعات الآجلة فقط
-
-       حسب salesStore:
-       cash  = نقدي
-       bank  = تحويل بنكي
-       credit = آجل
-    ======================================================= */
-
-    customerSales.forEach((sale) => {
-      const paymentMethod = sale.paymentMethod;
-
+    return statement.map((line) => {
       /*
-        Store الحالي يستخدم:
-        "cash" | "bank" | "credit"
+       * getAccountStatement يعيد JournalLine.
+       * بعض الإصدارات من الستور قد تحتوي على date/reference
+       * بينما النوع الأساسي لـ JournalLine لا يعلنهما.
+       *
+       * لذلك نقرأهما بشكل آمن دون تغيير نوع الستور.
+       */
 
-        لذلك لا نستخدم "account" هنا لأنه غير موجود
-        في النوع PaymentMethod.
-      */
+      const rawLine = line as unknown as {
+        id?: string | number;
+        date?: string | Date;
+        reference?: string | number;
+        description?: string;
+        debit?: number;
+        credit?: number;
+        customerId?: string;
+        supplierId?: string;
+        bankId?: string;
+      };
 
-      const isCredit = paymentMethod === "credit";
+      return {
+        id: String(rawLine.id ?? `${accountId}-${Math.random()}`),
 
-      if (!isCredit) return;
+        date: rawLine.date ? String(rawLine.date) : "",
 
-      const total = Number(sale.total || 0);
+        description: rawLine.description?.trim() || "قيد محاسبي",
 
-      if (!total) return;
+        reference:
+          rawLine.reference !== undefined &&
+          rawLine.reference !== null &&
+          String(rawLine.reference).trim() !== ""
+            ? String(rawLine.reference)
+            : "-",
 
-      movements.push({
-        id: String(sale.id ?? sale.invoiceNumber),
-        date: String(sale.date ?? ""),
-        description: "فاتورة مبيعات آجلة",
-        reference: String(sale.invoiceNumber ?? sale.id ?? "-"),
-        debit: total,
-        credit: 0,
-        type: "sale",
-      });
+        debit: Number(rawLine.debit || 0),
+
+        credit: Number(rawLine.credit || 0),
+
+        customerId: rawLine.customerId,
+
+        supplierId: rawLine.supplierId,
+
+        bankId: rawLine.bankId,
+      };
     });
+  }, [customer, accountId, getAccountStatement]);
 
-    /* =======================================================
-       ترتيب الحركات حسب التاريخ
-    ======================================================= */
+  // =========================================================
+  // الرصيد المحاسبي
+  // =========================================================
 
-    return movements.sort((a, b) => {
-      if (!a.date) return -1;
-      if (!b.date) return 1;
+  const accountBalance = useMemo(() => {
+    if (!customer || !accountId) {
+      return 0;
+    }
 
-      return new Date(a.date).getTime() - new Date(b.date).getTime();
-    });
-  }, [customer, sales, openingBalance]);
+    return Number(getAccountBalance(accountId) || 0);
+  }, [customer, accountId, getAccountBalance, journalMovements]);
 
-  /* =========================================================
-     حساب الإجماليات
-  ========================================================= */
+  // =========================================================
+  // الإجماليات
+  // =========================================================
 
   const totals = useMemo(() => {
     let debit = 0;
     let credit = 0;
 
-    accountMovements.forEach((movement) => {
+    journalMovements.forEach((movement) => {
       debit += Number(movement.debit || 0);
       credit += Number(movement.credit || 0);
     });
@@ -193,13 +147,31 @@ export default function CustomerAccountPage() {
     return {
       debit,
       credit,
-      balance: debit - credit,
+      balance: accountBalance || debit - credit,
     };
-  }, [accountMovements]);
+  }, [journalMovements, accountBalance]);
 
-  /* =========================================================
-     عدم وجود العميل
-  ========================================================= */
+  // =========================================================
+  // الرصيد الجاري لكل حركة
+  // =========================================================
+
+  const movementsWithBalance = useMemo(() => {
+    let runningBalance = 0;
+
+    return journalMovements.map((movement) => {
+      runningBalance +=
+        Number(movement.debit || 0) - Number(movement.credit || 0);
+
+      return {
+        ...movement,
+        runningBalance,
+      };
+    });
+  }, [journalMovements]);
+
+  // =========================================================
+  // العميل غير موجود
+  // =========================================================
 
   if (!customer) {
     return (
@@ -231,11 +203,11 @@ export default function CustomerAccountPage() {
     );
   }
 
-  /* =========================================================
-     منع عرض حساب الصندوق كعميل
-  ========================================================= */
+  // =========================================================
+  // منع عرض العميل النقدي
+  // =========================================================
 
-  if (customer.id === CASH_CUSTOMER_ID) {
+  if (customer.id === "CASH-CUSTOMER") {
     return (
       <main dir="rtl" className="min-h-screen bg-gray-50 p-3">
         <div className="mx-auto flex min-h-[70vh] max-w-4xl items-center justify-center">
@@ -252,7 +224,7 @@ export default function CustomerAccountPage() {
 
             <Link
               href="/customers"
-              className="mt-5 inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#0E1F33] px-4 text-[11px] font-medium text-white"
+              className="mt-5 inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#0E1F33] px-4 text-[11px] font-medium text-white transition hover:opacity-90"
             >
               <FiArrowRight size={14} />
               العودة إلى العملاء
@@ -263,13 +235,17 @@ export default function CustomerAccountPage() {
     );
   }
 
-  /* =========================================================
-     الطباعة
-  ========================================================= */
+  // =========================================================
+  // الطباعة
+  // =========================================================
 
   const handlePrint = () => {
     window.print();
   };
+
+  // =========================================================
+  // RENDER
+  // =========================================================
 
   return (
     <main
@@ -278,7 +254,7 @@ export default function CustomerAccountPage() {
     >
       <div className="mx-auto max-w-7xl">
         {/* =====================================================
-            الهيدر
+            HEADER
         ===================================================== */}
 
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 print:hidden">
@@ -297,7 +273,7 @@ export default function CustomerAccountPage() {
               </h1>
 
               <p className="text-[9px] text-gray-500">
-                عرض جميع الحركات المالية على حساب العميل
+                عرض جميع الحركات المالية على الحساب المحاسبي للعميل
               </p>
             </div>
           </div>
@@ -446,7 +422,7 @@ export default function CustomerAccountPage() {
                 <p className="text-[9px] text-gray-500">عدد الحركات</p>
 
                 <p className="mt-1 text-sm font-bold text-gray-800">
-                  {accountMovements.length}
+                  {journalMovements.length}
                 </p>
               </div>
 
@@ -515,18 +491,18 @@ export default function CustomerAccountPage() {
               </h3>
 
               <p className="text-[8px] text-gray-400">
-                الحركات المالية المسجلة على حساب العميل
+                الحركات المالية المسجلة على الحساب المحاسبي للعميل
               </p>
             </div>
 
             <div className="flex items-center gap-1 text-[9px] text-gray-500">
               <FiCalendar size={11} />
-              حتى تاريخ اليوم
+              جميع الحركات
             </div>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] border-collapse text-right text-[10px]">
+            <table className="w-full min-w-[750px] border-collapse text-right text-[10px]">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50 text-gray-500">
                   <th className="whitespace-nowrap px-3 py-2 font-medium">#</th>
@@ -562,7 +538,7 @@ export default function CustomerAccountPage() {
               </thead>
 
               <tbody>
-                {accountMovements.length === 0 ? (
+                {movementsWithBalance.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-3 py-12 text-center">
                       <div className="flex flex-col items-center justify-center">
@@ -575,114 +551,86 @@ export default function CustomerAccountPage() {
                         </p>
 
                         <p className="mt-1 text-[9px] text-gray-400">
-                          لا توجد حركات مسجلة على حساب هذا العميل
+                          لا توجد قيود محاسبية مسجلة على حساب هذا العميل
                         </p>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  accountMovements.map((movement, index) => {
-                    const runningBalance = accountMovements
-                      .slice(0, index + 1)
-                      .reduce(
-                        (sum, item) =>
-                          sum +
-                          Number(item.debit || 0) -
-                          Number(item.credit || 0),
-                        0,
-                      );
+                  movementsWithBalance.map((movement, index) => (
+                    <tr
+                      key={movement.id}
+                      className="border-b border-gray-100 transition hover:bg-gray-50"
+                    >
+                      <td className="whitespace-nowrap px-3 py-2 text-gray-400">
+                        {index + 1}
+                      </td>
 
-                    return (
-                      <tr
-                        key={movement.id}
-                        className="border-b border-gray-100 transition hover:bg-gray-50"
-                      >
-                        <td className="whitespace-nowrap px-3 py-2 text-gray-400">
-                          {index + 1}
-                        </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-gray-600">
+                        {movement.date
+                          ? new Date(movement.date).toLocaleDateString("ar-YE")
+                          : "-"}
+                      </td>
 
-                        <td className="whitespace-nowrap px-3 py-2 text-gray-600">
-                          {movement.date
-                            ? new Date(movement.date).toLocaleDateString(
-                                "ar-YE",
-                              )
-                            : "-"}
-                        </td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        <div className="font-medium text-gray-700">
+                          {movement.description}
+                        </div>
+                      </td>
 
-                        <td className="whitespace-nowrap px-3 py-2">
-                          <div className="font-medium text-gray-700">
-                            {movement.description}
-                          </div>
+                      <td className="whitespace-nowrap px-3 py-2 text-gray-500">
+                        {movement.reference}
+                      </td>
 
-                          {movement.type === "sale" && (
-                            <span className="mt-0.5 inline-block text-[8px] text-red-500">
-                              مبيعات آجلة
-                            </span>
-                          )}
+                      <td className="whitespace-nowrap px-3 py-2 font-medium text-red-600">
+                        {movement.debit ? formatMoney(movement.debit) : "-"}
+                      </td>
 
-                          {movement.type === "opening" && (
-                            <span className="mt-0.5 inline-block text-[8px] text-gray-400">
-                              بداية الحساب
-                            </span>
-                          )}
-                        </td>
+                      <td className="whitespace-nowrap px-3 py-2 font-medium text-green-600">
+                        {movement.credit ? formatMoney(movement.credit) : "-"}
+                      </td>
 
-                        <td className="whitespace-nowrap px-3 py-2 text-gray-500">
-                          {movement.reference}
-                        </td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        <span
+                          className={`font-bold ${
+                            movement.runningBalance > 0
+                              ? "text-red-600"
+                              : movement.runningBalance < 0
+                                ? "text-green-600"
+                                : "text-gray-600"
+                          }`}
+                        >
+                          {formatMoney(Math.abs(movement.runningBalance))}
+                        </span>
 
-                        <td className="whitespace-nowrap px-3 py-2 font-medium text-red-600">
-                          {movement.debit ? formatMoney(movement.debit) : "-"}
-                        </td>
+                        <span className="mr-1 text-[8px] text-gray-400">
+                          {movement.runningBalance > 0
+                            ? "مدين"
+                            : movement.runningBalance < 0
+                              ? "دائن"
+                              : ""}
+                        </span>
+                      </td>
 
-                        <td className="whitespace-nowrap px-3 py-2 font-medium text-green-600">
-                          {movement.credit ? formatMoney(movement.credit) : "-"}
-                        </td>
-
-                        <td className="whitespace-nowrap px-3 py-2">
-                          <span
-                            className={`font-bold ${
-                              runningBalance > 0
-                                ? "text-red-600"
-                                : runningBalance < 0
-                                  ? "text-green-600"
-                                  : "text-gray-600"
-                            }`}
+                      <td className="px-3 py-2 print:hidden">
+                        {movement.reference && movement.reference !== "-" ? (
+                          <Link
+                            href={`/sales/${movement.reference}`}
+                            className="inline-flex h-6 items-center gap-1 rounded-md border border-gray-200 px-2 text-[9px] text-gray-600 hover:bg-gray-50"
                           >
-                            {formatMoney(Math.abs(runningBalance))}
-                          </span>
-
-                          <span className="mr-1 text-[8px] text-gray-400">
-                            {runningBalance > 0
-                              ? "مدين"
-                              : runningBalance < 0
-                                ? "دائن"
-                                : ""}
-                          </span>
-                        </td>
-
-                        <td className="px-3 py-2 print:hidden">
-                          {movement.type === "sale" && (
-                            <Link
-                              href={`/sales/${movement.reference}`}
-                              className="inline-flex h-6 items-center gap-1 rounded-md border border-gray-200 px-2 text-[9px] text-gray-600 hover:bg-gray-50"
-                            >
-                              <FiFileText size={11} />
-                              الفاتورة
-                            </Link>
-                          )}
-
-                          {movement.type === "opening" && (
-                            <span className="text-[9px] text-gray-400">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })
+                            <FiFileText size={11} />
+                            التفاصيل
+                          </Link>
+                        ) : (
+                          <span className="text-[9px] text-gray-400">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
 
-              {accountMovements.length > 0 && (
+              {movementsWithBalance.length > 0 && (
                 <tfoot>
                   <tr className="bg-gray-50 font-bold">
                     <td colSpan={4} className="px-3 py-2 text-gray-700">
@@ -750,7 +698,7 @@ export default function CustomerAccountPage() {
             </div>
 
             <div className="mt-0.5 text-[8px] text-gray-400">
-              حسب آخر حركة مسجلة
+              حسب القيود المحاسبية المسجلة
             </div>
           </div>
         </section>
@@ -773,6 +721,8 @@ export default function CustomerAccountPage() {
           <p className="mt-2 text-[8px] text-gray-400">
             كشف حساب العميل: {customer.name}
           </p>
+
+          <p className="mt-1 text-[8px] text-gray-400">الحساب: {accountCode}</p>
         </div>
       </div>
 

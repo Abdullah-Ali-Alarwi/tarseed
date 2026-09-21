@@ -13,12 +13,20 @@ import {
 } from "react-icons/fi";
 import { toast } from "sonner";
 
-import { useSuppliersStore } from "@/Store/suppliersStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function NewSupplierPage() {
   const router = useRouter();
 
-  const addSupplier = useSuppliersStore((state) => state.addSupplier);
+  // ======================================================
+  // ERP Store
+  // ======================================================
+
+  const addSupplier = useERPStore((state) => state.addSupplier);
+
+  // ======================================================
+  // Form State
+  // ======================================================
 
   const [supplierName, setSupplierName] = useState("");
   const [phone, setPhone] = useState("");
@@ -35,6 +43,7 @@ export default function NewSupplierPage() {
 
     const name = supplierName.trim();
 
+    // التحقق من اسم المورد
     if (!name) {
       toast.error("اسم المورد مطلوب");
       return;
@@ -45,7 +54,15 @@ export default function NewSupplierPage() {
     setIsSaving(true);
 
     try {
-      // الـ Store مسؤول عن إنشاء ID المورد
+      // ==================================================
+      // إضافة المورد
+      // الـ ERP Store يقوم تلقائياً بـ:
+      // 1. إنشاء ID للمورد
+      // 2. إنشاء حساب للمورد
+      // 3. ربط الحساب بالمورد
+      // 4. إنشاء الحساب تحت 2101
+      // ==================================================
+
       const createdSupplier = addSupplier({
         name,
         phone: phone.trim() || undefined,
@@ -58,7 +75,7 @@ export default function NewSupplierPage() {
         description: `تم إضافة المورد ${name}`,
       });
 
-      // الانتقال إلى كشف حساب المورد بعد الإنشاء
+      // الانتقال إلى كشف حساب المورد
       router.push(`/suppliers/${createdSupplier.id}`);
     } catch (error) {
       console.error("Error adding supplier:", error);
@@ -67,9 +84,14 @@ export default function NewSupplierPage() {
         error instanceof Error ? error.message : "حدث خطأ أثناء إضافة المورد";
 
       toast.error(message);
+
       setIsSaving(false);
     }
   };
+
+  // ======================================================
+  // UI
+  // ======================================================
 
   return (
     <main dir="rtl" className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-5">
@@ -221,12 +243,16 @@ export default function NewSupplierPage() {
           {/* Footer */}
 
           <div className="flex flex-col-reverse gap-2 border-t border-gray-100 bg-gray-50/50 px-4 py-3 sm:flex-row sm:justify-end sm:px-5">
+            {/* إلغاء */}
+
             <Link
               href="/suppliers"
               className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
             >
               إلغاء
             </Link>
+
+            {/* حفظ */}
 
             <button
               type="submit"

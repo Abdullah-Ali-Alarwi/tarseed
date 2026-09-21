@@ -12,21 +12,23 @@ import {
   FiMoreVertical,
 } from "react-icons/fi";
 
-import { useProductsStore } from "@/Store/productsStore";
-import { usePurchasesStore } from "@/Store/purchasesStore";
-import { useSalesStore } from "@/Store/salesStore";
+import { useERPStore } from "@/Store/erpStore";
 
 export default function InventoryPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("جميع التصنيفات");
 
   /* =====================================================
-     ZUSTAND
+     ZUSTAND - ERP STORE
   ===================================================== */
 
-  const products = useProductsStore((state) => state.products);
-  const purchases = usePurchasesStore((state) => state.purchases);
-  const sales = useSalesStore((state) => state.sales);
+  const products = useERPStore((state) => state.products);
+
+  /*
+   * نعتمد على دالة المخزون الموجودة داخل Zustand
+   * بدل إعادة حساب الكمية في الصفحة.
+   */
+  const getInventory = useERPStore((state) => state.getInventory);
 
   /* =====================================================
      FORMAT MONEY
@@ -48,7 +50,7 @@ export default function InventoryPage() {
     code: string | number,
   ) => {
     /*
-     * إذا كان المنتج يحتوي على تصنيف محفوظ في productsStore
+     * إذا كان المنتج يحتوي على تصنيف محفوظ
      * نستخدمه مباشرة.
      */
     if (productCategory?.trim()) {
@@ -79,99 +81,60 @@ export default function InventoryPage() {
      STATUS
   ===================================================== */
 
-  const getStatus = (stock: number): "متوفر" | "منخفض" => {
-    return stock <= 10 ? "منخفض" : "متوفر";
+  const getStatus = (stock: number): "متوفر" | "منخفض" | "نافذ" => {
+    if (stock <= 0) {
+      return "نافذ";
+    }
+
+    if (stock <= 10) {
+      return "منخفض";
+    }
+
+    return "متوفر";
   };
 
   /* =====================================================
      INVENTORY DATA
   ===================================================== */
 
+  const inventory = useMemo(() => {
+    return getInventory();
+  }, [getInventory, products]);
+
   const inventoryProducts = useMemo(() => {
     return products.map((product) => {
-      let purchasedQuantity = 0;
-      let soldQuantity = 0;
+      /*
+       * البحث عن بيانات هذا المنتج في المخزون.
+       */
+      const inventoryItem = inventory.find(
+        (item) => item.productId === product.id,
+      );
 
-      let purchaseValue = 0;
-      let purchaseQuantity = 0;
+      /*
+       * إذا لم توجد حركة للمخزون
+       * يكون المخزون صفر.
+       */
+      const purchasedQuantity = Number(inventoryItem?.purchaseQuantity || 0);
 
-      /* ------------------------------------------
-         المشتريات
-      ------------------------------------------ */
+      const soldQuantity = Number(inventoryItem?.saleQuantity || 0);
 
-      purchases.forEach((purchase) => {
-        purchase.items.forEach((item) => {
-          /*
-           * الربط الأساسي بين الصنف وحركة الشراء
-           */
-          if (item.productId !== product.id) {
-            return;
-          }
+      const quantity = Number(inventoryItem?.quantity || 0);
 
-          const quantity = getNumericAmount(item.quantity);
+      const averagePurchasePrice = Number(
+        inventoryItem?.averagePurchasePrice || 0,
+      );
 
-          const price = getNumericAmount(item.price);
+      const total = Number(inventoryItem?.inventoryValue || 0);
 
-          purchasedQuantity += quantity;
-
-          purchaseQuantity += quantity;
-
-          purchaseValue += quantity * price;
-        });
-      });
-
-      /* ------------------------------------------
-         المبيعات
-      ------------------------------------------ */
-
-      sales.forEach((sale) => {
-        /*
-         * الفاتورة الملغاة لا تؤثر على المخزون
-         */
-        if (sale.status === "cancelled") {
-          return;
-        }
-
-        sale.items.forEach((item) => {
-          /*
-           * الربط الأساسي بين الصنف وحركة البيع
-           */
-          if (item.productId !== product.id) {
-            return;
-          }
-
-          soldQuantity += getNumericAmount(item.quantity);
-        });
-      });
-
-      /* ------------------------------------------
-         الكمية الحالية
-      ------------------------------------------ */
-
-      const quantity = Math.max(purchasedQuantity - soldQuantity, 0);
-
-      /* ------------------------------------------
-         متوسط سعر الشراء
-      ------------------------------------------ */
-
-      const averagePurchasePrice =
-        purchaseQuantity > 0 ? purchaseValue / purchaseQuantity : 0;
-
-      /* ------------------------------------------
-         قيمة المخزون
-      ------------------------------------------ */
-
-      const total = quantity * averagePurchasePrice;
-
-      /* ------------------------------------------
-         التصنيف
-      ------------------------------------------ */
-
+      /*
+       * التصنيف
+       */
       const productCategory = getCategory(product.category, product.code);
 
-      /* ------------------------------------------
-         النتيجة
-      ------------------------------------------ */
+      /*
+       * الحالة
+       */
+      const status = getStatus(quantity);
 
       return {
         ...product,
@@ -184,14 +147,14 @@ export default function InventoryPage() {
 
         category: productCategory,
 
-        status: getStatus(quantity),
+        status,
 
         purchasedQuantity,
 
         soldQuantity,
       };
     });
-  }, [products, purchases, sales]);
+  }, [products, inventory]);
 
   /* =====================================================
      FILTER
@@ -228,7 +191,13 @@ export default function InventoryPage() {
   }, [inventoryProducts]);
 
   const lowStockProducts = useMemo(() => {
-    return inventoryProducts.filter((product) => product.quantity <= 10).length;
+    return inventoryProducts.filter(
+      (product) => product.quantity > 0 && product.quantity <= 10,
+    ).length;
+  }, [inventoryProducts]);
+
+  const outOfStockProducts = useMemo(() => {
+    return inventoryProducts.filter((product) => product.quantity <= 0).length;
   }, [inventoryProducts]);
 
   const totalCategories = useMemo(() => {
@@ -317,7 +286,7 @@ export default function InventoryPage() {
           STATISTICS
       ===================================================== */}
 
-      <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-5">
         <StatCard
           title="إجمالي الأصناف"
           value={formatMoney(totalProducts)}
@@ -335,6 +304,14 @@ export default function InventoryPage() {
         <StatCard
           title="الأصناف منخفضة"
           value={formatMoney(lowStockProducts)}
+          subtitle="صنف"
+          icon={FiAlertTriangle}
+          warning
+        />
+
+        <StatCard
+          title="الأصناف النافذة"
+          value={formatMoney(outOfStockProducts)}
           subtitle="صنف"
           icon={FiAlertTriangle}
           warning
@@ -440,7 +417,7 @@ export default function InventoryPage() {
         ===================================================== */}
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[950px] text-right text-xs">
+          <table className="w-full min-w-[1100px] text-right text-xs">
             <thead className="bg-gray-50">
               <tr className="text-[11px] text-gray-500">
                 <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
@@ -456,7 +433,15 @@ export default function InventoryPage() {
                 </th>
 
                 <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
-                  الكمية
+                  المشتريات
+                </th>
+
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
+                  المبيعات
+                </th>
+
+                <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
+                  المتبقي
                 </th>
 
                 <th className="whitespace-nowrap px-3 py-2.5 font-semibold">
@@ -487,10 +472,10 @@ export default function InventoryPage() {
                       <Link
                         href={`/inventory/${product.id}`}
                         className="
-                            font-semibold
-                            text-amber-600
-                            hover:text-amber-700
-                          "
+                          font-semibold
+                          text-amber-600
+                          hover:text-amber-700
+                        "
                       >
                         {product.code}
                       </Link>
@@ -502,10 +487,10 @@ export default function InventoryPage() {
                       <Link
                         href={`/inventory/${product.id}`}
                         className="
-                            font-semibold
-                            text-gray-700
-                            hover:text-amber-600
-                          "
+                          font-semibold
+                          text-gray-700
+                          hover:text-amber-600
+                        "
                       >
                         {product.name}
                       </Link>
@@ -517,17 +502,11 @@ export default function InventoryPage() {
                       {product.category}
                     </td>
 
-                    {/* QUANTITY */}
+                    {/* PURCHASE QUANTITY */}
 
                     <td className="px-3 py-2.5">
-                      <span
-                        className={`font-semibold ${
-                          product.quantity <= 10
-                            ? "text-red-600"
-                            : "text-gray-700"
-                        }`}
-                      >
-                        {product.quantity.toLocaleString("ar-SA")}
+                      <span className="font-medium text-green-600">
+                        {product.purchasedQuantity.toLocaleString("ar-SA")}
                       </span>
 
                       {product.unit && (
@@ -535,6 +514,44 @@ export default function InventoryPage() {
                           {product.unit}
                         </span>
                       )}
+                    </td>
+
+                    {/* SALE QUANTITY */}
+
+                    <td className="px-3 py-2.5">
+                      <span className="font-medium text-blue-600">
+                        {product.soldQuantity.toLocaleString("ar-SA")}
+                      </span>
+
+                      {product.unit && (
+                        <span className="mr-1 text-[10px] text-gray-400">
+                          {product.unit}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* CURRENT QUANTITY */}
+
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1">
+                        <span
+                          className={`font-bold ${
+                            product.quantity <= 0
+                              ? "text-red-600"
+                              : product.quantity <= 10
+                                ? "text-orange-600"
+                                : "text-gray-700"
+                          }`}
+                        >
+                          {product.quantity.toLocaleString("ar-SA")}
+                        </span>
+
+                        {product.unit && (
+                          <span className="text-[10px] text-gray-400">
+                            {product.unit}
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* AVERAGE PURCHASE PRICE */}
@@ -562,13 +579,13 @@ export default function InventoryPage() {
                         <Link
                           href={`/inventory/${product.id}`}
                           className="
-                              rounded-md
-                              p-1.5
-                              text-gray-400
-                              transition
-                              hover:bg-amber-50
-                              hover:text-amber-600
-                            "
+                            rounded-md
+                            p-1.5
+                            text-gray-400
+                            transition
+                            hover:bg-amber-50
+                            hover:text-amber-600
+                          "
                           title="تفاصيل المخزون"
                         >
                           <FiPackage size={15} />
@@ -577,13 +594,13 @@ export default function InventoryPage() {
                         <button
                           type="button"
                           className="
-                              rounded-md
-                              p-1.5
-                              text-gray-400
-                              transition
-                              hover:bg-gray-100
-                              hover:text-gray-600
-                            "
+                            rounded-md
+                            p-1.5
+                            text-gray-400
+                            transition
+                            hover:bg-gray-100
+                            hover:text-gray-600
+                          "
                           title="المزيد"
                         >
                           <FiMoreVertical size={15} />
@@ -595,7 +612,7 @@ export default function InventoryPage() {
               ) : (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={10}
                     className="
                       px-3
                       py-10
@@ -720,10 +737,17 @@ function StatCard({
    STATUS
 ===================================================== */
 
-function Status({ status }: { status: "متوفر" | "منخفض" }) {
+function Status({ status }: { status: "متوفر" | "منخفض" | "نافذ" }) {
   const styles = {
     متوفر: "bg-green-50 text-green-600",
-    منخفض: "bg-red-50 text-red-600",
+    منخفض: "bg-orange-50 text-orange-600",
+    نافذ: "bg-red-50 text-red-600",
+  };
+
+  const labels = {
+    متوفر: "متوفر",
+    منخفض: "منخفض",
+    نافذ: "المخزون نافذ",
   };
 
   return (
@@ -739,23 +763,7 @@ function Status({ status }: { status: "متوفر" | "منخفض" }) {
         ${styles[status]}
       `}
     >
-      {status}
+      {labels[status]}
     </span>
   );
-}
-
-/* =====================================================
-   NUMERIC VALUE
-===================================================== */
-
-function getNumericAmount(value: unknown): number {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  if (typeof value === "string") {
-    return Number(value.replace(/[^\d.-]/g, "")) || 0;
-  }
-
-  return 0;
 }

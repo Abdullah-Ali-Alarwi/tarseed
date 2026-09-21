@@ -17,8 +17,7 @@ import {
   FiUser,
 } from "react-icons/fi";
 
-import { usePurchasesStore } from "@/Store/purchasesStore";
-import { useSuppliersStore } from "@/Store/suppliersStore";
+import { useERPStore } from "@/Store/erpStore";
 
 /* =========================================================
    الأنواع
@@ -54,11 +53,11 @@ const paymentLabels: Record<PaymentMethod, string> = {
 
 export default function PurchasesPage() {
   /* =======================================================
-     Stores
+     ERP STORE
   ======================================================= */
 
-  const purchases = usePurchasesStore((state) => state.purchases);
-  const suppliers = useSuppliersStore((state) => state.suppliers);
+  const purchases = useERPStore((state) => state.purchases);
+  const suppliers = useERPStore((state) => state.suppliers);
 
   /* =======================================================
      States
@@ -70,15 +69,11 @@ export default function PurchasesPage() {
   const [statusFilter, setStatusFilter] = useState("");
 
   const [selectedPurchase, setSelectedPurchase] = useState<any>(null);
-
   const [showDetails, setShowDetails] = useState(false);
-
   const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   /* =======================================================
      خريطة الموردين
-
-     نستخدم useSuppliersStore كمصدر أساسي للموردين
   ======================================================= */
 
   const supplierMap = useMemo(() => {
@@ -93,8 +88,6 @@ export default function PurchasesPage() {
 
   /* =======================================================
      تجهيز المشتريات
-
-     يتم أخذ بيانات المورد من Suppliers Store
   ======================================================= */
 
   const purchasesWithSupplier = useMemo(() => {
@@ -108,7 +101,6 @@ export default function PurchasesPage() {
 
         supplierData: supplier,
 
-        /* المورد من Store هو المصدر الأساسي */
         supplierDisplayName: supplier?.name || purchase.supplier || "غير محدد",
 
         supplierPhone: supplier?.phone || "",
@@ -119,10 +111,6 @@ export default function PurchasesPage() {
         supplierAccountName:
           supplier?.accountName || purchase.accountName || "",
 
-        /*
-          الحساب المحاسبي يستخدم فعلياً
-          في حالة الشراء الآجل
-        */
         linkedAccountCode: isCredit
           ? supplier?.accountCode || purchase.accountCode || ""
           : "",
@@ -217,7 +205,7 @@ export default function PurchasesPage() {
   }, [filteredPurchases]);
 
   /* =======================================================
-     فتح التفاصيل
+     عرض التفاصيل
   ======================================================= */
 
   const handleView = (purchase: any) => {
@@ -282,16 +270,16 @@ export default function PurchasesPage() {
   return (
     <div
       dir="rtl"
-      className="min-h-screen bg-gray-50 text-gray-800 text-[12px]"
+      className="min-h-screen bg-gray-50 text-[12px] text-gray-800"
     >
       {/* ===================================================
           رأس الصفحة
       =================================================== */}
 
-      <div className="px-3 sm:px-4 lg:px-5 pt-3 pb-2">
+      <div className="px-3 pb-2 pt-3 sm:px-4 lg:px-5">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-base sm:text-lg font-bold text-gray-900">
+            <h1 className="text-base font-bold text-gray-900 sm:text-lg">
               المشتريات
             </h1>
 
@@ -316,7 +304,6 @@ export default function PurchasesPage() {
 
       <div className="grid grid-cols-2 gap-2 px-3 sm:grid-cols-4 sm:px-4 lg:px-5">
         {/* عدد الفواتير */}
-
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -334,7 +321,6 @@ export default function PurchasesPage() {
         </div>
 
         {/* إجمالي المشتريات */}
-
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -352,7 +338,6 @@ export default function PurchasesPage() {
         </div>
 
         {/* المدفوع */}
-
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -370,7 +355,6 @@ export default function PurchasesPage() {
         </div>
 
         {/* الآجل */}
-
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -396,7 +380,6 @@ export default function PurchasesPage() {
         <div className="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {/* البحث */}
-
             <div className="relative">
               <FiSearch
                 size={14}
@@ -413,7 +396,6 @@ export default function PurchasesPage() {
             </div>
 
             {/* المورد */}
-
             <select
               value={supplierFilter}
               onChange={(e) => setSupplierFilter(e.target.value)}
@@ -431,7 +413,6 @@ export default function PurchasesPage() {
             </select>
 
             {/* طريقة الدفع */}
-
             <select
               value={paymentFilter}
               onChange={(e) => setPaymentFilter(e.target.value)}
@@ -444,7 +425,6 @@ export default function PurchasesPage() {
             </select>
 
             {/* الحالة */}
-
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -466,7 +446,6 @@ export default function PurchasesPage() {
       <div className="px-3 pb-4 pt-3 sm:px-4 lg:px-5">
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
           {/* رأس الجدول */}
-
           <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
             <div>
               <h2 className="text-[12px] font-bold text-gray-900">
@@ -479,8 +458,7 @@ export default function PurchasesPage() {
             </div>
           </div>
 
-          {/* Scroll أفقي عند الحاجة */}
-
+          {/* الجدول */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse">
               <thead>
@@ -554,13 +532,11 @@ export default function PurchasesPage() {
                         className="border-b border-gray-100 transition hover:bg-gray-50"
                       >
                         {/* الرقم */}
-
                         <td className="whitespace-nowrap px-2.5 py-2 text-[10px] text-gray-400">
                           {index + 1}
                         </td>
 
                         {/* رقم الفاتورة */}
-
                         <td className="whitespace-nowrap px-2.5 py-2">
                           <button
                             type="button"
@@ -572,13 +548,11 @@ export default function PurchasesPage() {
                         </td>
 
                         {/* التاريخ */}
-
                         <td className="whitespace-nowrap px-2.5 py-2 text-[10px] text-gray-600">
                           {purchase.date || "-"}
                         </td>
 
                         {/* المورد */}
-
                         <td className="px-2.5 py-2">
                           <div className="flex items-center gap-1.5">
                             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600">
@@ -600,7 +574,6 @@ export default function PurchasesPage() {
                         </td>
 
                         {/* الحساب المحاسبي */}
-
                         <td className="px-2.5 py-2">
                           {isCredit ? (
                             <div className="min-w-[125px]">
@@ -626,13 +599,11 @@ export default function PurchasesPage() {
                         </td>
 
                         {/* عدد الأصناف */}
-
                         <td className="whitespace-nowrap px-2.5 py-2 text-center text-[10px] text-gray-600">
                           {purchase.itemCount ?? purchase.items?.length ?? 0}
                         </td>
 
                         {/* الإجمالي */}
-
                         <td className="whitespace-nowrap px-2.5 py-2">
                           <span className="text-[10px] font-bold text-gray-900">
                             {formatMoney(purchase.total || 0)}
@@ -640,7 +611,6 @@ export default function PurchasesPage() {
                         </td>
 
                         {/* طريقة الدفع */}
-
                         <td className="whitespace-nowrap px-2.5 py-2 text-center">
                           <span
                             className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-medium ${
@@ -660,7 +630,6 @@ export default function PurchasesPage() {
                         </td>
 
                         {/* الحالة */}
-
                         <td className="whitespace-nowrap px-2.5 py-2 text-center">
                           <span
                             className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-medium ${getStatusClass(
@@ -672,7 +641,6 @@ export default function PurchasesPage() {
                         </td>
 
                         {/* الإجراءات */}
-
                         <td className="relative px-2.5 py-2 text-center">
                           <button
                             type="button"
@@ -732,7 +700,6 @@ export default function PurchasesPage() {
             onClick={(e) => e.stopPropagation()}
           >
             {/* رأس النافذة */}
-
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-4 py-3">
               <div>
                 <h2 className="text-sm font-bold text-gray-900">
@@ -754,7 +721,6 @@ export default function PurchasesPage() {
             </div>
 
             {/* معلومات الفاتورة */}
-
             <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-4">
               <div className="rounded-md bg-gray-50 p-2">
                 <p className="text-[9px] text-gray-400">رقم الفاتورة</p>
@@ -794,7 +760,6 @@ export default function PurchasesPage() {
             </div>
 
             {/* الحساب الآجل */}
-
             {selectedPurchase.paymentMethod === "credit" && (
               <div className="mx-4 mb-3 rounded-md border border-amber-200 bg-amber-50 p-3">
                 <div className="mb-1 flex items-center gap-1.5">
@@ -830,7 +795,6 @@ export default function PurchasesPage() {
             )}
 
             {/* الأصناف */}
-
             <div className="px-4 pb-4">
               <div className="overflow-hidden rounded-md border border-gray-200">
                 <table className="w-full border-collapse">
@@ -880,7 +844,6 @@ export default function PurchasesPage() {
               </div>
 
               {/* الإجماليات */}
-
               <div className="mt-3 mr-auto w-full max-w-xs space-y-1 rounded-md bg-gray-50 p-3">
                 <div className="flex justify-between text-[10px]">
                   <span className="text-gray-500">الإجمالي قبل الخصم</span>
@@ -917,7 +880,6 @@ export default function PurchasesPage() {
             </div>
 
             {/* أسفل النافذة */}
-
             <div className="flex justify-end gap-2 border-t border-gray-100 px-4 py-3">
               <button
                 type="button"
