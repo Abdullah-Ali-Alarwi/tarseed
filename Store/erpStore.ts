@@ -41,12 +41,14 @@ export type AccountEntityType =
 export const CASH_CUSTOMER_ID = "CASH-CUSTOMER";
 
 export const CASH_ACCOUNT_CODE = "1101";
-
 export const CASH_ACCOUNT_NAME = "الصندوق";
 
 export const INVENTORY_ACCOUNT_CODE = "1104";
-
 export const INVENTORY_ACCOUNT_NAME = "المخزون";
+
+export const INPUT_VAT_ACCOUNT_CODE = "1105";
+export const INPUT_VAT_ACCOUNT_NAME =
+  "ضريبة القيمة المضافة - مدخلات";
 
 /* =========================================================
    ACCOUNT
@@ -54,61 +56,37 @@ export const INVENTORY_ACCOUNT_NAME = "المخزون";
 
 export interface Account {
   id: string;
-
   code: string;
-
   name: string;
-
   type: AccountType;
-
   nature: AccountNature;
-
   parentId?: string;
-
   parentCode?: string;
-
   level: number;
-
   isGroup: boolean;
-
   isActive: boolean;
-
   entityType?: AccountEntityType;
-
   entityId?: string;
-
   balance?: number;
-
   description?: string;
-
   isSystem?: boolean;
 }
 
 export interface AddAccountInput {
   name: string;
-
   type: AccountType;
-
   nature?: AccountNature;
-
   parentId?: string;
-
   code?: string;
-
   isGroup?: boolean;
-
   entityType?: AccountEntityType;
-
   entityId?: string;
-
   description?: string;
 }
 
 export interface UpdateAccountInput {
   name?: string;
-
   description?: string;
-
   isActive?: boolean;
 }
 
@@ -118,37 +96,23 @@ export interface UpdateAccountInput {
 
 export interface BankAccount {
   id: string;
-
   code: string;
-
   name: string;
-
   phone?: string;
-
   address?: string;
-
   notes?: string;
-
   balance?: number;
-
   isActive?: boolean;
-
   accountId?: string;
-
   accountCode?: string;
-
   accountName?: string;
 }
 
 export interface AddBankAccountInput {
   name: string;
-
   phone?: string;
-
   address?: string;
-
   notes?: string;
-
   balance?: number;
 }
 
@@ -158,37 +122,23 @@ export interface AddBankAccountInput {
 
 export interface Customer {
   id: string;
-
   name: string;
-
   phone?: string;
-
   address?: string;
-
   balance?: number;
-
   accountCode?: string;
-
   accountName?: string;
-
   accountId?: string;
-
   notes?: string;
-
   isActive?: boolean;
 }
 
 export interface AddCustomerInput {
   name: string;
-
   phone?: string;
-
   address?: string;
-
   balance?: number;
-
   notes?: string;
-
   isActive?: boolean;
 }
 
@@ -198,37 +148,23 @@ export interface AddCustomerInput {
 
 export interface Supplier {
   id: string;
-
   name: string;
-
   phone?: string;
-
   address?: string;
-
   balance?: number;
-
   accountCode?: string;
-
   accountName?: string;
-
   accountId?: string;
-
   notes?: string;
-
   isActive?: boolean;
 }
 
 export interface AddSupplierInput {
   name: string;
-
   phone?: string;
-
   address?: string;
-
   balance?: number;
-
   notes?: string;
-
   isActive?: boolean;
 }
 
@@ -238,29 +174,19 @@ export interface AddSupplierInput {
 
 export interface Product {
   id: string;
-
   code: string;
-
   name: string;
-
   unit?: string;
-
   category?: string;
-
   description?: string;
-
   isActive?: boolean;
 }
 
 export interface AddProductInput {
   name: string;
-
   unit?: string;
-
   category?: string;
-
   description?: string;
-
   isActive?: boolean;
 }
 
@@ -270,98 +196,54 @@ export interface AddProductInput {
 
 export interface PurchaseItem {
   id: number;
-
   productId: string;
-
   productCode?: string;
-
   productName?: string;
-
   name?: string;
-
   quantity: number;
-
   price: number;
-
   discount: number;
-
   total: number;
 }
 
 export interface Purchase {
   id: string;
-
   invoiceNumber: string;
-
   date: string;
-
   supplier: string;
-
   supplierId: string;
-
   accountCode?: string;
-
   accountName?: string;
-
   itemCount: number;
-
   items: PurchaseItem[];
-
   subtotal: number;
-
   discount: number;
-
   tax: number;
-
   taxRate?: number;
-
   total: number;
-
   paymentMethod: PaymentMethod;
-
   paymentMethodName?: string;
-
   status: PurchaseStatus;
-
   notes?: string;
-
   createdAt?: string;
 }
 
 export interface AddPurchaseInput {
   invoiceNumber?: string;
-
   date: string;
-
   supplier: string;
-
   supplierId: string;
-
   items: PurchaseItem[];
-
   subtotal: number;
-
   discount?: number;
-
   tax?: number;
-
   taxRate?: number;
-
   total: number;
-
   paymentMethod: PaymentMethod;
-
   paymentMethodName?: string;
-
   status?: PurchaseStatus;
-
   notes?: string;
-
-  /**
-   * حساب البنك عند الشراء عن طريق البنك.
-   */
   accountCode?: string;
-
   accountName?: string;
 }
 
@@ -371,113 +253,65 @@ export interface AddPurchaseInput {
 
 export interface SaleItem {
   id: number;
-
   productId?: string;
-
   productCode?: string;
-
   item: string;
-
   quantity: number;
-
   price: number;
-
   discount: number;
-
   total: number;
 }
 
 export interface Sale {
   id: string;
-
   invoiceNumber: string;
-
   date: string;
-
   customerId?: string;
-
   customerName?: string;
-
   paymentMethod: PaymentMethod;
-
   accountCode?: string;
-
   accountName?: string;
-
   items: SaleItem[];
-
   subtotal: number;
-
   discount: number;
-
   totalQuantity: number;
-
   total: number;
-
   status: SaleStatus;
-
   notes?: string;
-
   createdAt: string;
 }
 
 export interface AddSaleInput {
   invoiceNumber?: string;
-
   date: string;
-
   customerId?: string;
-
   customerName?: string;
-
   paymentMethod: PaymentMethod;
-
   accountCode?: string;
-
   accountName?: string;
-
   items: SaleItem[];
-
   subtotal: number;
-
   discount?: number;
-
   totalQuantity?: number;
-
   total: number;
-
   status?: SaleStatus;
-
   notes?: string;
 }
 
 export interface UpdateSaleInput {
   invoiceNumber?: string;
-
   date?: string;
-
   customerId?: string;
-
   customerName?: string;
-
   paymentMethod?: PaymentMethod;
-
   accountCode?: string;
-
   accountName?: string;
-
   items?: SaleItem[];
-
   subtotal?: number;
-
   discount?: number;
-
   totalQuantity?: number;
-
   total?: number;
-
   status?: SaleStatus;
-
   notes?: string;
 }
 
@@ -487,21 +321,13 @@ export interface UpdateSaleInput {
 
 export interface InventoryItem {
   productId: string;
-
   productCode: string;
-
   productName: string;
-
   unit: string;
-
   purchaseQuantity: number;
-
   saleQuantity: number;
-
   quantity: number;
-
   averagePurchasePrice: number;
-
   inventoryValue: number;
 }
 
@@ -511,35 +337,22 @@ export interface InventoryItem {
 
 export interface JournalLine {
   id: string;
-
   accountId: string;
-
   accountCode: string;
-
   accountName: string;
-
   debit: number;
-
   credit: number;
-
   description?: string;
-
   customerId?: string;
-
   supplierId?: string;
-
   bankId?: string;
 }
 
 export interface JournalEntry {
   id: string;
-
   entryNumber: string;
-
   date: string;
-
   description: string;
-
   referenceType?:
     | "sale"
     | "purchase"
@@ -547,11 +360,8 @@ export interface JournalEntry {
     | "receipt"
     | "manual"
     | "other";
-
   referenceId?: string;
-
   lines: JournalLine[];
-
   createdAt: string;
 }
 
@@ -645,18 +455,39 @@ const defaultAccounts: Account[] = [
     isSystem: true,
   },
 
+  /*
+   * 1104 أصبح حسابًا تفصيليًا وليس Group.
+   * السبب: نريد أن يحمل رصيد المخزون الناتج من القيود
+   * ويظهر مباشرة ضمن الأصول في الميزانية.
+   */
   {
     id: "account-inventory",
     code: "1104",
-    name: "المخزون",
+    name: INVENTORY_ACCOUNT_NAME,
     type: "asset",
     nature: "debit",
     parentId: "account-current-assets",
     parentCode: "11",
     level: 3,
-    isGroup: true,
+    isGroup: false,
     isActive: true,
     entityType: "inventory",
+    balance: 0,
+    isSystem: true,
+  },
+
+  {
+    id: "account-input-vat",
+    code: INPUT_VAT_ACCOUNT_CODE,
+    name: INPUT_VAT_ACCOUNT_NAME,
+    type: "asset",
+    nature: "debit",
+    parentId: "account-current-assets",
+    parentCode: "11",
+    level: 3,
+    isGroup: false,
+    isActive: true,
+    balance: 0,
     isSystem: true,
   },
 
@@ -967,8 +798,8 @@ const defaultAccounts: Account[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    entityType: "expense",
     isActive: true,
+    entityType: "expense",
     isSystem: true,
   },
 
@@ -982,8 +813,8 @@ const defaultAccounts: Account[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    entityType: "expense",
     isActive: true,
+    entityType: "expense",
     isSystem: true,
   },
 
@@ -997,8 +828,8 @@ const defaultAccounts: Account[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    entityType: "expense",
     isActive: true,
+    entityType: "expense",
     isSystem: true,
   },
 
@@ -1012,8 +843,8 @@ const defaultAccounts: Account[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    entityType: "expense",
     isActive: true,
+    entityType: "expense",
     isSystem: true,
   },
 
@@ -1027,8 +858,8 @@ const defaultAccounts: Account[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    entityType: "expense",
     isActive: true,
+    entityType: "expense",
     isSystem: true,
   },
 ];
@@ -1039,19 +870,12 @@ const defaultAccounts: Account[] = [
 
 export const cashCustomer: Customer = {
   id: CASH_CUSTOMER_ID,
-
   name: "العميل النقدي",
-
   balance: 0,
-
   accountCode: CASH_ACCOUNT_CODE,
-
   accountName: CASH_ACCOUNT_NAME,
-
   accountId: "account-cash",
-
   notes: "عميل نقدي افتراضي لا يمكن حذفه أو تعديله",
-
   isActive: true,
 };
 
@@ -1166,10 +990,6 @@ const generateEntityAccountCode = (
 ========================================================= */
 
 interface ERPStore {
-  /* ============================
-     ACCOUNTS
-  ============================ */
-
   accounts: Account[];
 
   addAccount: (
@@ -1219,10 +1039,6 @@ interface ERPStore {
 
   clearAccounts: () => void;
 
-  /* ============================
-     BANKS
-  ============================ */
-
   bankAccounts: BankAccount[];
 
   addBankAccount: (
@@ -1243,10 +1059,6 @@ interface ERPStore {
   ) => BankAccount | undefined;
 
   clearBankAccounts: () => void;
-
-  /* ============================
-     CUSTOMERS
-  ============================ */
 
   customers: Customer[];
 
@@ -1273,10 +1085,6 @@ interface ERPStore {
 
   clearCustomers: () => void;
 
-  /* ============================
-     SUPPLIERS
-  ============================ */
-
   suppliers: Supplier[];
 
   addSupplier: (
@@ -1301,10 +1109,6 @@ interface ERPStore {
   ) => Supplier | undefined;
 
   clearSuppliers: () => void;
-
-  /* ============================
-     PRODUCTS
-  ============================ */
 
   products: Product[];
 
@@ -1331,10 +1135,6 @@ interface ERPStore {
 
   clearProducts: () => void;
 
-  /* ============================
-     PURCHASES
-  ============================ */
-
   purchases: Purchase[];
 
   addPurchase: (
@@ -1355,10 +1155,6 @@ interface ERPStore {
   ) => Purchase | undefined;
 
   clearPurchases: () => void;
-
-  /* ============================
-     SALES
-  ============================ */
 
   sales: Sale[];
 
@@ -1381,10 +1177,6 @@ interface ERPStore {
 
   clearSales: () => void;
 
-  /* ============================
-     INVENTORY
-  ============================ */
-
   getInventory: () => InventoryItem[];
 
   getInventoryItem: (
@@ -1396,10 +1188,6 @@ interface ERPStore {
   ) => number;
 
   getInventoryValue: () => number;
-
-  /* ============================
-     JOURNAL
-  ============================ */
 
   journalEntries: JournalEntry[];
 
@@ -1432,10 +1220,6 @@ interface ERPStore {
   ) => JournalLine[];
 
   clearJournalEntries: () => void;
-
-  /* ============================
-     GLOBAL
-  ============================ */
 
   clearAll: () => void;
 }
@@ -1506,13 +1290,12 @@ export const useERPStore =
               ? "5"
               : "6");
 
-          const duplicateCode =
-            state.accounts.find(
+          if (
+            state.accounts.some(
               (account) =>
                 account.code === code
-            );
-
-          if (duplicateCode) {
+            )
+          ) {
             throw new Error(
               `كود الحساب ${code} مستخدم بالفعل`
             );
@@ -1530,39 +1313,25 @@ export const useERPStore =
 
           const account: Account = {
             id: createId("account"),
-
             code,
-
             name,
-
             type: accountType,
-
             nature: accountNature,
-
             parentId: parent?.id,
-
             parentCode: parent?.code,
-
             level: parent
               ? parent.level + 1
               : 1,
-
             isGroup:
               data.isGroup ?? false,
-
             isActive: true,
-
             entityType:
               data.entityType,
-
             entityId:
               data.entityId,
-
             balance: 0,
-
             description:
               data.description,
-
             isSystem: false,
           };
 
@@ -1592,19 +1361,16 @@ export const useERPStore =
 
                   return {
                     ...account,
-
                     name:
                       data.name !==
                       undefined
                         ? data.name.trim()
                         : account.name,
-
                     description:
                       data.description !==
                       undefined
                         ? data.description
                         : account.description,
-
                     isActive:
                       data.isActive !==
                       undefined
@@ -1635,7 +1401,6 @@ export const useERPStore =
             if (account.entityId) {
               return {
                 ...state,
-
                 accounts:
                   state.accounts.map(
                     (item) =>
@@ -1658,7 +1423,6 @@ export const useERPStore =
             if (hasChildren) {
               return {
                 ...state,
-
                 accounts:
                   state.accounts.map(
                     (item) =>
@@ -1674,7 +1438,6 @@ export const useERPStore =
 
             return {
               ...state,
-
               accounts:
                 state.accounts.filter(
                   (item) =>
@@ -1684,24 +1447,22 @@ export const useERPStore =
           });
         },
 
-        getAccountById: (id) => {
-          return get().accounts.find(
+        getAccountById: (id) =>
+          get().accounts.find(
             (account) =>
               account.id === id
-          );
-        },
+          ),
 
-        getAccountByCode: (code) => {
-          return get().accounts.find(
+        getAccountByCode: (code) =>
+          get().accounts.find(
             (account) =>
               account.code === code
-          );
-        },
+          ),
 
         getAccountsByParent: (
           parentId
-        ) => {
-          return get()
+        ) =>
+          get()
             .accounts.filter(
               (account) =>
                 account.parentId ===
@@ -1716,13 +1477,12 @@ export const useERPStore =
                   numeric: true,
                 }
               )
-            );
-        },
+            ),
 
         getAccountsByType: (
           type
-        ) => {
-          return get()
+        ) =>
+          get()
             .accounts.filter(
               (account) =>
                 account.type ===
@@ -1737,21 +1497,19 @@ export const useERPStore =
                   numeric: true,
                 }
               )
-            );
-        },
+            ),
 
         getAccountForEntity: (
           entityType,
           entityId
-        ) => {
-          return get().accounts.find(
+        ) =>
+          get().accounts.find(
             (account) =>
               account.entityType ===
                 entityType &&
               account.entityId ===
                 entityId
-          );
-        },
+          ),
 
         getAccountTree: () => {
           const accounts =
@@ -1762,8 +1520,8 @@ export const useERPStore =
 
           const buildTree = (
             parentId?: string
-          ): AccountTreeNode[] => {
-            return accounts
+          ): AccountTreeNode[] =>
+            accounts
               .filter(
                 (account) =>
                   account.parentId ===
@@ -1780,13 +1538,11 @@ export const useERPStore =
               )
               .map((account) => ({
                 ...account,
-
                 children:
                   buildTree(
                     account.id
                   ),
               }));
-          };
 
           return buildTree();
         },
@@ -1889,7 +1645,6 @@ export const useERPStore =
             balance: 0,
             isActive: true,
           },
-
           {
             id: "bank-1002",
             code: "1002",
@@ -1897,7 +1652,6 @@ export const useERPStore =
             balance: 0,
             isActive: true,
           },
-
           {
             id: "bank-1003",
             code: "1003",
@@ -1905,7 +1659,6 @@ export const useERPStore =
             balance: 0,
             isActive: true,
           },
-
           {
             id: "bank-1004",
             code: "1004",
@@ -1913,7 +1666,6 @@ export const useERPStore =
             balance: 0,
             isActive: true,
           },
-
           {
             id: "bank-1005",
             code: "1005",
@@ -1965,78 +1717,51 @@ export const useERPStore =
           const accountId =
             createId("account");
 
-          const bank: BankAccount =
-            {
-              id,
+          const bank: BankAccount = {
+            id,
+            code: String(
+              nextCode
+            ),
+            name:
+              data.name.trim(),
+            phone: data.phone,
+            address: data.address,
+            notes: data.notes,
+            balance:
+              data.balance ?? 0,
+            isActive: true,
+            accountId,
+            accountCode,
+            accountName:
+              data.name.trim(),
+          };
 
-              code: String(
-                nextCode
-              ),
-
-              name:
-                data.name.trim(),
-
-              phone: data.phone,
-
-              address:
-                data.address,
-
-              notes: data.notes,
-
-              balance:
-                data.balance ?? 0,
-
-              isActive: true,
-
-              accountId,
-
-              accountCode,
-
-              accountName:
-                data.name.trim(),
-            };
-
-          const account: Account =
-            {
-              id: accountId,
-
-              code: accountCode,
-
-              name:
-                data.name.trim(),
-
-              type: "asset",
-
-              nature: "debit",
-
-              parentId: parent.id,
-
-              parentCode:
-                parent.code,
-
-              level:
-                parent.level + 1,
-
-              isGroup: false,
-
-              isActive: true,
-
-              entityType: "bank",
-
-              entityId: id,
-
-              balance:
-                data.balance ?? 0,
-
-              isSystem: false,
-            };
+          const account: Account = {
+            id: accountId,
+            code: accountCode,
+            name:
+              data.name.trim(),
+            type: "asset",
+            nature: "debit",
+            parentId: parent.id,
+            parentCode:
+              parent.code,
+            level:
+              parent.level + 1,
+            isGroup: false,
+            isActive: true,
+            entityType: "bank",
+            entityId: id,
+            balance:
+              data.balance ?? 0,
+            isSystem: false,
+          };
 
           set({
             bankAccounts: [
               ...state.bankAccounts,
               bank,
             ],
-
             accounts: [
               ...state.accounts,
               account,
@@ -2130,17 +1855,15 @@ export const useERPStore =
 
         getBankAccountById: (
           id
-        ) => {
-          return get().bankAccounts.find(
+        ) =>
+          get().bankAccounts.find(
             (bank) =>
               bank.id === id
-          );
-        },
+          ),
 
         clearBankAccounts: () => {
           set((state) => ({
             bankAccounts: [],
-
             accounts:
               state.accounts.filter(
                 (account) =>
@@ -2187,77 +1910,49 @@ export const useERPStore =
           const accountId =
             createId("account");
 
-          const customer: Customer =
-            {
-              id,
+          const customer: Customer = {
+            id,
+            name:
+              data.name.trim(),
+            phone: data.phone,
+            address: data.address,
+            balance:
+              data.balance ?? 0,
+            accountCode,
+            accountName:
+              data.name.trim(),
+            accountId,
+            notes: data.notes,
+            isActive:
+              data.isActive ?? true,
+          };
 
-              name:
-                data.name.trim(),
-
-              phone: data.phone,
-
-              address:
-                data.address,
-
-              balance:
-                data.balance ?? 0,
-
-              accountCode,
-
-              accountName:
-                data.name.trim(),
-
-              accountId,
-
-              notes: data.notes,
-
-              isActive:
-                data.isActive ??
-                true,
-            };
-
-          const account: Account =
-            {
-              id: accountId,
-
-              code: accountCode,
-
-              name:
-                data.name.trim(),
-
-              type: "asset",
-
-              nature: "debit",
-
-              parentId: parent.id,
-
-              parentCode:
-                parent.code,
-
-              level:
-                parent.level + 1,
-
-              isGroup: false,
-
-              isActive: true,
-
-              entityType:
-                "customer",
-
-              entityId: id,
-
-              balance:
-                data.balance ?? 0,
-
-              isSystem: false,
-            };
+          const account: Account = {
+            id: accountId,
+            code: accountCode,
+            name:
+              data.name.trim(),
+            type: "asset",
+            nature: "debit",
+            parentId: parent.id,
+            parentCode:
+              parent.code,
+            level:
+              parent.level + 1,
+            isGroup: false,
+            isActive: true,
+            entityType: "customer",
+            entityId: id,
+            balance:
+              data.balance ?? 0,
+            isSystem: false,
+          };
 
           set({
             customers: [
               ...state.customers,
               customer,
             ],
-
             accounts: [
               ...state.accounts,
               account,
@@ -2365,22 +2060,20 @@ export const useERPStore =
 
         getCustomerById: (
           id
-        ) => {
-          return get().customers.find(
+        ) =>
+          get().customers.find(
             (customer) =>
               customer.id === id
-          );
-        },
+          ),
 
         getCustomerByAccountCode: (
           accountCode
-        ) => {
-          return get().customers.find(
+        ) =>
+          get().customers.find(
             (customer) =>
               customer.accountCode ===
               accountCode
-          );
-        },
+          ),
 
         clearCustomers: () => {
           set((state) => ({
@@ -2433,77 +2126,49 @@ export const useERPStore =
           const accountId =
             createId("account");
 
-          const supplier: Supplier =
-            {
-              id,
+          const supplier: Supplier = {
+            id,
+            name:
+              data.name.trim(),
+            phone: data.phone,
+            address: data.address,
+            balance:
+              data.balance ?? 0,
+            accountCode,
+            accountName:
+              data.name.trim(),
+            accountId,
+            notes: data.notes,
+            isActive:
+              data.isActive ?? true,
+          };
 
-              name:
-                data.name.trim(),
-
-              phone: data.phone,
-
-              address:
-                data.address,
-
-              balance:
-                data.balance ?? 0,
-
-              accountCode,
-
-              accountName:
-                data.name.trim(),
-
-              accountId,
-
-              notes: data.notes,
-
-              isActive:
-                data.isActive ??
-                true,
-            };
-
-          const account: Account =
-            {
-              id: accountId,
-
-              code: accountCode,
-
-              name:
-                data.name.trim(),
-
-              type: "liability",
-
-              nature: "credit",
-
-              parentId: parent.id,
-
-              parentCode:
-                parent.code,
-
-              level:
-                parent.level + 1,
-
-              isGroup: false,
-
-              isActive: true,
-
-              entityType:
-                "supplier",
-
-              entityId: id,
-
-              balance:
-                data.balance ?? 0,
-
-              isSystem: false,
-            };
+          const account: Account = {
+            id: accountId,
+            code: accountCode,
+            name:
+              data.name.trim(),
+            type: "liability",
+            nature: "credit",
+            parentId: parent.id,
+            parentCode:
+              parent.code,
+            level:
+              parent.level + 1,
+            isGroup: false,
+            isActive: true,
+            entityType: "supplier",
+            entityId: id,
+            balance:
+              data.balance ?? 0,
+            isSystem: false,
+          };
 
           set({
             suppliers: [
               ...state.suppliers,
               supplier,
             ],
-
             accounts: [
               ...state.accounts,
               account,
@@ -2597,22 +2262,20 @@ export const useERPStore =
 
         getSupplierById: (
           id
-        ) => {
-          return get().suppliers.find(
+        ) =>
+          get().suppliers.find(
             (supplier) =>
               supplier.id === id
-          );
-        },
+          ),
 
         getSupplierByAccountCode: (
           accountCode
-        ) => {
-          return get().suppliers.find(
+        ) =>
+          get().suppliers.find(
             (supplier) =>
               supplier.accountCode ===
               accountCode
-          );
-        },
+          ),
 
         clearSuppliers: () => {
           set((state) => ({
@@ -2648,29 +2311,21 @@ export const useERPStore =
               ...usedCodes
             ) + 1;
 
-          const product: Product =
-            {
-              id: createId("product"),
-
-              code: String(
-                nextCode
-              ),
-
-              name:
-                data.name.trim(),
-
-              unit: data.unit,
-
-              category:
-                data.category,
-
-              description:
-                data.description,
-
-              isActive:
-                data.isActive ??
-                true,
-            };
+          const product: Product = {
+            id: createId("product"),
+            code: String(
+              nextCode
+            ),
+            name:
+              data.name.trim(),
+            unit: data.unit,
+            category:
+              data.category,
+            description:
+              data.description,
+            isActive:
+              data.isActive ?? true,
+          };
 
           set((state) => ({
             products: [
@@ -2714,21 +2369,19 @@ export const useERPStore =
 
         getProductById: (
           id
-        ) => {
-          return get().products.find(
+        ) =>
+          get().products.find(
             (product) =>
               product.id === id
-          );
-        },
+          ),
 
         getProductByCode: (
           code
-        ) => {
-          return get().products.find(
+        ) =>
+          get().products.find(
             (product) =>
               product.code === code
-          );
-        },
+          ),
 
         clearProducts: () => {
           set({
@@ -2744,6 +2397,12 @@ export const useERPStore =
 
         addPurchase: (data) => {
           const state = get();
+
+          if (!data.items.length) {
+            throw new Error(
+              "يجب إضافة صنف واحد على الأقل إلى الفاتورة"
+            );
+          }
 
           const supplier =
             state.suppliers.find(
@@ -2772,118 +2431,93 @@ export const useERPStore =
             }
           }
 
-          if (!data.items.length) {
-            throw new Error(
-              "يجب إضافة صنف واحد على الأقل إلى الفاتورة"
+          for (const item of data.items) {
+            validatePurchaseItem(
+              state,
+              item
             );
           }
 
-          for (const item of data.items) {
-            if (
-              !item.productId
-            ) {
-              throw new Error(
-                `الصنف ${item.name || item.productName || ""} غير مرتبط بمنتج`
-              );
-            }
+          const purchase: Purchase = {
+            id: createId("purchase"),
 
-            const product =
-              state.products.find(
-                (p) =>
-                  p.id ===
-                  item.productId
-              );
+            invoiceNumber:
+              data.invoiceNumber ||
+              `PUR-${
+                state.purchases.length +
+                1001
+              }`,
 
-            if (!product) {
-              throw new Error(
-                `المنتج غير موجود: ${item.productName || item.name || item.productId}`
-              );
-            }
+            date: data.date,
 
-            if (
+            supplier:
+              supplier?.name ||
+              data.supplier,
+
+            supplierId:
+              data.supplierId,
+
+            accountCode:
+              supplier?.accountCode,
+
+            accountName:
+              supplier?.accountName,
+
+            itemCount:
+              data.items.length,
+
+            items: data.items,
+
+            subtotal:
               Number(
-                item.quantity
-              ) <= 0
-            ) {
-              throw new Error(
-                `كمية المنتج ${product.name} يجب أن تكون أكبر من صفر`
-              );
-            }
-          }
-
-          const purchase: Purchase =
-            {
-              id: createId(
-                "purchase"
+                data.subtotal || 0
               ),
 
-              invoiceNumber:
-                data.invoiceNumber ||
-                `PUR-${
-                  state.purchases.length +
-                  1001
-                }`,
+            discount:
+              Number(
+                data.discount || 0
+              ),
 
-              date: data.date,
+            tax:
+              Number(
+                data.tax || 0
+              ),
 
-              supplier:
-                supplier?.name ||
-                data.supplier,
+            taxRate:
+              Number(
+                data.taxRate || 0
+              ),
 
-              supplierId:
-                data.supplierId,
+            total:
+              Number(
+                data.total || 0
+              ),
 
-              accountCode:
-                supplier?.accountCode,
+            paymentMethod:
+              data.paymentMethod,
 
-              accountName:
-                supplier?.accountName,
+            paymentMethodName:
+              data.paymentMethodName ||
+              formatPaymentMethod(
+                data.paymentMethod
+              ),
 
-              itemCount:
-                data.items.length,
+            status:
+              data.status ?? "paid",
 
-              items: data.items,
+            notes: data.notes,
 
-              subtotal:
-                data.subtotal,
-
-              discount:
-                data.discount ?? 0,
-
-              tax:
-                data.tax ?? 0,
-
-              taxRate:
-                data.taxRate ?? 0,
-
-              total:
-                data.total,
-
-              paymentMethod:
-                data.paymentMethod,
-
-              paymentMethodName:
-                data.paymentMethodName ||
-                formatPaymentMethod(
-                  data.paymentMethod
-                ),
-
-              status:
-                data.status ??
-                "paid",
-
-              notes: data.notes,
-
-              createdAt:
-                new Date().toISOString(),
-            };
+            createdAt:
+              new Date().toISOString(),
+          };
 
           const shouldPostJournal =
             purchase.status !==
             "cancelled";
 
           let paymentAccount:
-            Account | undefined;
+            | Account
+            | undefined;
 
           if (
             purchase.paymentMethod ===
@@ -2965,7 +2599,8 @@ export const useERPStore =
                   purchase,
                   state.accounts,
                   supplier,
-                  paymentAccount
+                  paymentAccount,
+                  state.journalEntries
                 )
               : undefined;
 
@@ -3021,11 +2656,10 @@ export const useERPStore =
           }
 
           for (const item of updatedPurchase.items) {
-            if (!item.productId) {
-              throw new Error(
-                `الصنف ${item.name || item.productName || ""} غير مرتبط بمنتج`
-              );
-            }
+            validatePurchaseItem(
+              state,
+              item
+            );
           }
 
           const supplier =
@@ -3095,15 +2729,12 @@ export const useERPStore =
           if (
             shouldPostJournal &&
             updatedPurchase.paymentMethod ===
-              "credit"
+              "credit" &&
+            !supplier?.accountId
           ) {
-            if (
-              !supplier?.accountId
-            ) {
-              throw new Error(
-                "المورد لا يملك حسابًا محاسبيًا مرتبطًا"
-              );
-            }
+            throw new Error(
+              "المورد لا يملك حسابًا محاسبيًا مرتبطًا"
+            );
           }
 
           if (
@@ -3117,13 +2748,25 @@ export const useERPStore =
             );
           }
 
+          const remainingEntries =
+            state.journalEntries.filter(
+              (entry) =>
+                !(
+                  entry.referenceType ===
+                    "purchase" &&
+                  entry.referenceId ===
+                    id
+                )
+            );
+
           const newJournal =
             shouldPostJournal
               ? buildPurchaseJournalEntry(
                   updatedPurchase,
                   state.accounts,
                   supplier,
-                  paymentAccount
+                  paymentAccount,
+                  remainingEntries
                 )
               : undefined;
 
@@ -3137,16 +2780,7 @@ export const useERPStore =
               ),
 
             journalEntries: [
-              ...state.journalEntries.filter(
-                (entry) =>
-                  !(
-                    entry.referenceType ===
-                      "purchase" &&
-                    entry.referenceId ===
-                      id
-                  )
-              ),
-
+              ...remainingEntries,
               ...(newJournal
                 ? [newJournal]
                 : []),
@@ -3179,12 +2813,11 @@ export const useERPStore =
 
         getPurchaseById: (
           id
-        ) => {
-          return get().purchases.find(
+        ) =>
+          get().purchases.find(
             (purchase) =>
               purchase.id === id
-          );
-        },
+          ),
 
         clearPurchases: () => {
           set((state) => ({
@@ -3214,12 +2847,6 @@ export const useERPStore =
             );
           }
 
-          /*
-           * =================================================
-           * فحص المخزون قبل البيع
-           * =================================================
-           */
-
           const requestedByProduct =
             new Map<
               string,
@@ -3238,33 +2865,22 @@ export const useERPStore =
                 item.quantity || 0
               );
 
-            if (
-              quantity <= 0
-            ) {
+            if (quantity <= 0) {
               throw new Error(
                 `كمية الصنف ${item.item} يجب أن تكون أكبر من صفر`
               );
             }
 
-            const oldQuantity =
-              requestedByProduct.get(
-                item.productId
-              ) ?? 0;
-
             requestedByProduct.set(
               item.productId,
-              oldQuantity +
-                quantity
+              (requestedByProduct.get(
+                item.productId
+              ) ?? 0) + quantity
             );
           }
 
-          /*
-           * الفاتورة الملغاة لا تحتاج فحص مخزون.
-           */
-
           const saleStatus =
-            data.status ??
-            "paid";
+            data.status ?? "paid";
 
           if (
             saleStatus !==
@@ -3294,14 +2910,6 @@ export const useERPStore =
                 );
 
               if (
-                available <= 0
-              ) {
-                throw new Error(
-                  `المخزون نافذ للمنتج: ${product.name} — الكمية المتاحة: 0`
-                );
-              }
-
-              if (
                 requestedQuantity >
                 available
               ) {
@@ -3318,10 +2926,6 @@ export const useERPStore =
                 item.id ===
                 data.customerId
             );
-
-          /*
-           * البيع الآجل يحتاج حساب عميل.
-           */
 
           if (
             data.paymentMethod ===
@@ -3342,10 +2946,6 @@ export const useERPStore =
               );
             }
           }
-
-          /*
-           * تحديد حساب الدفع.
-           */
 
           let paymentAccount:
             | Account
@@ -3468,10 +3068,14 @@ export const useERPStore =
             items: data.items,
 
             subtotal:
-              data.subtotal,
+              Number(
+                data.subtotal || 0
+              ),
 
             discount:
-              data.discount ?? 0,
+              Number(
+                data.discount || 0
+              ),
 
             totalQuantity:
               data.totalQuantity ??
@@ -3479,14 +3083,15 @@ export const useERPStore =
                 (sum, item) =>
                   sum +
                   Number(
-                    item.quantity ||
-                      0
+                    item.quantity || 0
                   ),
                 0
               ),
 
             total:
-              data.total,
+              Number(
+                data.total || 0
+              ),
 
             status:
               saleStatus,
@@ -3504,7 +3109,8 @@ export const useERPStore =
                   sale,
                   state,
                   customer,
-                  paymentAccount
+                  paymentAccount,
+                  state.journalEntries
                 )
               : undefined;
 
@@ -3559,13 +3165,6 @@ export const useERPStore =
             );
           }
 
-          /*
-           * عند تعديل فاتورة موجودة:
-           *
-           * نعيد حساب المخزون وكأن الفاتورة القديمة
-           * غير موجودة، ثم نضيف الكمية الجديدة.
-           */
-
           if (
             updatedSale.status !==
             "cancelled"
@@ -3577,9 +3176,7 @@ export const useERPStore =
               >();
 
             for (const item of updatedSale.items) {
-              if (
-                !item.productId
-              ) {
+              if (!item.productId) {
                 throw new Error(
                   `الصنف ${item.item} غير مرتبط بمنتج`
                 );
@@ -3587,13 +3184,10 @@ export const useERPStore =
 
               const quantity =
                 Number(
-                  item.quantity ||
-                    0
+                  item.quantity || 0
                 );
 
-              if (
-                quantity <= 0
-              ) {
+              if (quantity <= 0) {
                 throw new Error(
                   `كمية الصنف ${item.item} يجب أن تكون أكبر من صفر`
                 );
@@ -3603,8 +3197,7 @@ export const useERPStore =
                 item.productId,
                 (requestedByProduct.get(
                   item.productId
-                ) ?? 0) +
-                  quantity
+                ) ?? 0) + quantity
               );
             }
 
@@ -3624,11 +3217,6 @@ export const useERPStore =
                   "المنتج غير موجود"
                 );
               }
-
-              /*
-               * نضيف كمية الفاتورة القديمة للمخزون
-               * مؤقتًا حتى لا تمنع عملية التعديل نفسها.
-               */
 
               let available =
                 calculateProductStock(
@@ -3659,14 +3247,6 @@ export const useERPStore =
                         ),
                       0
                     );
-              }
-
-              if (
-                available <= 0
-              ) {
-                throw new Error(
-                  `المخزون نافذ للمنتج: ${product.name} — الكمية المتاحة: 0`
-                );
               }
 
               if (
@@ -3757,6 +3337,27 @@ export const useERPStore =
                   );
               }
             }
+
+            if (!paymentAccount) {
+              const firstBank =
+                state.bankAccounts.find(
+                  (bank) =>
+                    bank.isActive !==
+                      false &&
+                    bank.accountCode
+                );
+
+              if (
+                firstBank?.accountCode
+              ) {
+                paymentAccount =
+                  state.accounts.find(
+                    (account) =>
+                      account.code ===
+                      firstBank.accountCode
+                  );
+              }
+            }
           }
 
           if (
@@ -3771,6 +3372,17 @@ export const useERPStore =
             );
           }
 
+          const remainingEntries =
+            state.journalEntries.filter(
+              (entry) =>
+                !(
+                  entry.referenceType ===
+                    "sale" &&
+                  entry.referenceId ===
+                    id
+                )
+            );
+
           const newJournal =
             updatedSale.status !==
             "cancelled"
@@ -3778,7 +3390,8 @@ export const useERPStore =
                   updatedSale,
                   state,
                   customer,
-                  paymentAccount
+                  paymentAccount,
+                  remainingEntries
                 )
               : undefined;
 
@@ -3792,16 +3405,7 @@ export const useERPStore =
               ),
 
             journalEntries: [
-              ...state.journalEntries.filter(
-                (entry) =>
-                  !(
-                    entry.referenceType ===
-                      "sale" &&
-                    entry.referenceId ===
-                      id
-                  )
-              ),
-
+              ...remainingEntries,
               ...(newJournal
                 ? [newJournal]
                 : []),
@@ -3834,12 +3438,11 @@ export const useERPStore =
 
         getSaleById: (
           id
-        ) => {
-          return get().sales.find(
+        ) =>
+          get().sales.find(
             (sale) =>
               sale.id === id
-          );
-        },
+          ),
 
         clearSales: () => {
           set((state) => ({
@@ -3872,85 +3475,61 @@ export const useERPStore =
               let saleQuantity =
                 0;
 
-              /*
-               * المشتريات
-               */
+              for (const purchase of state.purchases) {
+                if (
+                  purchase.status ===
+                  "cancelled"
+                ) {
+                  continue;
+                }
 
-              state.purchases.forEach(
-                (purchase) => {
+                for (const item of purchase.items) {
                   if (
-                    purchase.status ===
-                    "cancelled"
+                    item.productId !==
+                    product.id
                   ) {
-                    return;
+                    continue;
                   }
 
-                  purchase.items.forEach(
-                    (item) => {
-                      if (
-                        item.productId ===
-                        product.id
-                      ) {
-                        const quantity =
-                          Number(
-                            item.quantity ||
-                              0
-                          );
+                  const quantity =
+                    Number(
+                      item.quantity || 0
+                    );
 
-                        /*
-                         * نستخدم total إذا كان موجودًا،
-                         * وإلا نستخدم quantity * price.
-                         */
-                        const itemValue =
-                          Number(
-                            item.total
-                          ) ||
-                          quantity *
-                            Number(
-                              item.price ||
-                                0
-                            );
+                  const itemValue =
+                    getPurchaseItemInventoryValue(
+                      item
+                    );
 
-                        purchaseQuantity +=
-                          quantity;
+                  purchaseQuantity +=
+                    quantity;
 
-                        purchaseValue +=
-                          itemValue;
-                      }
-                    }
-                  );
+                  purchaseValue +=
+                    itemValue;
                 }
-              );
+              }
 
-              /*
-               * المبيعات
-               */
+              for (const sale of state.sales) {
+                if (
+                  sale.status ===
+                  "cancelled"
+                ) {
+                  continue;
+                }
 
-              state.sales.forEach(
-                (sale) => {
+                for (const item of sale.items) {
                   if (
-                    sale.status ===
-                    "cancelled"
+                    item.productId ===
+                    product.id
                   ) {
-                    return;
+                    saleQuantity +=
+                      Number(
+                        item.quantity ||
+                          0
+                      );
                   }
-
-                  sale.items.forEach(
-                    (item) => {
-                      if (
-                        item.productId ===
-                        product.id
-                      ) {
-                        saleQuantity +=
-                          Number(
-                            item.quantity ||
-                              0
-                          );
-                      }
-                    }
-                  );
                 }
-              );
+              }
 
               const quantity =
                 purchaseQuantity -
@@ -3998,38 +3577,35 @@ export const useERPStore =
 
         getInventoryItem: (
           productId
-        ) => {
-          return get()
+        ) =>
+          get()
             .getInventory()
             .find(
               (item) =>
                 item.productId ===
                 productId
-            );
-        },
+            ),
 
         getProductStock: (
           productId
-        ) => {
-          return calculateProductStock(
+        ) =>
+          calculateProductStock(
             get(),
             productId
-          );
-        },
+          ),
 
-        getInventoryValue: () => {
-          return get()
+        getInventoryValue: () =>
+          get()
             .getInventory()
             .reduce(
               (sum, item) =>
                 sum +
                 item.inventoryValue,
               0
-            );
-        },
+            ),
 
         /* =====================================================
-           JOURNAL ENTRIES
+           JOURNAL
         ===================================================== */
 
         journalEntries: [],
@@ -4037,9 +3613,17 @@ export const useERPStore =
         addJournalEntry: (
           data
         ) => {
+          const state = get();
+
           const entry: JournalEntry =
             {
               ...data,
+
+              entryNumber:
+                data.entryNumber ||
+                generateJournalEntryNumber(
+                  state.journalEntries
+                ),
 
               id: createId(
                 "journal"
@@ -4091,18 +3675,19 @@ export const useERPStore =
 
         getJournalEntryById: (
           id
-        ) => {
-          return get().journalEntries.find(
+        ) =>
+          get().journalEntries.find(
             (entry) =>
               entry.id === id
-          );
-        },
+          ),
 
         getAccountBalance: (
           accountId
         ) => {
+          const state = get();
+
           const account =
-            get().accounts.find(
+            state.accounts.find(
               (item) =>
                 item.id === accountId
             );
@@ -4112,7 +3697,7 @@ export const useERPStore =
           }
 
           const lines =
-            get().journalEntries.flatMap(
+            state.journalEntries.flatMap(
               (entry) =>
                 entry.lines
             );
@@ -4135,8 +3720,7 @@ export const useERPStore =
                       line.debit || 0
                     ) -
                     Number(
-                      line.credit ||
-                        0
+                      line.credit || 0
                     )
                   );
                 }
@@ -4144,12 +3728,10 @@ export const useERPStore =
                 return (
                   sum +
                   Number(
-                    line.credit ||
-                      0
+                    line.credit || 0
                   ) -
                   Number(
-                    line.debit ||
-                      0
+                    line.debit || 0
                   )
                 );
               },
@@ -4159,8 +3741,8 @@ export const useERPStore =
 
         getAccountStatement: (
           accountId
-        ) => {
-          return get()
+        ) =>
+          get()
             .journalEntries
             .flatMap(
               (entry) =>
@@ -4170,8 +3752,7 @@ export const useERPStore =
               (line) =>
                 line.accountId ===
                 accountId
-            );
-        },
+            ),
 
         clearJournalEntries: () => {
           set({
@@ -4210,66 +3791,279 @@ export const useERPStore =
       {
         name: "erp-storage",
 
-        version: 1,
+        version: 2,
 
-        merge: (
-          persistedState,
-          currentState
-        ) => {
-          const persisted =
-            persistedState as
-              | Partial<ERPStore>
-              | undefined;
+       merge: (
+  persistedState,
+  currentState
+): ERPStore => {
+  const persisted =
+    persistedState as
+      | Partial<ERPStore>
+      | undefined;
 
-          return {
-            ...currentState,
+  /*
+   * تصحيح الحسابات المحفوظة في localStorage
+   */
+  let persistedAccounts: Account[] =
+    persisted?.accounts &&
+    persisted.accounts.length > 0
+      ? persisted.accounts.map(
+          (account): Account =>
+            account.code ===
+            INVENTORY_ACCOUNT_CODE
+              ? {
+                  ...account,
 
-            ...persisted,
+                  name:
+                    INVENTORY_ACCOUNT_NAME,
 
-            accounts:
-              persisted?.accounts &&
-              persisted.accounts
-                .length > 0
-                ? persisted.accounts
-                : defaultAccounts,
+                  type: "asset",
 
-            customers:
-              persisted?.customers &&
-              persisted.customers
-                .length > 0
-                ? persisted.customers
-                : [
-                    cashCustomer,
-                  ],
+                  nature: "debit",
 
-            bankAccounts:
-              persisted?.bankAccounts ??
-              currentState.bankAccounts,
+                  parentId:
+                    "account-current-assets",
 
-            suppliers:
-              persisted?.suppliers ??
-              currentState.suppliers,
+                  parentCode: "11",
 
-            products:
-              persisted?.products ??
-              currentState.products,
+                  level: 3,
 
-            purchases:
-              persisted?.purchases ??
-              currentState.purchases,
+                  isGroup: false,
 
-            sales:
-              persisted?.sales ??
-              currentState.sales,
+                  isActive: true,
 
-            journalEntries:
-              persisted?.journalEntries ??
-              currentState.journalEntries,
-          };
-        },
+                  entityType:
+                    "inventory",
+
+                  isSystem: true,
+                }
+              : account
+        )
+      : [...defaultAccounts];
+
+  /*
+   * التأكد من وجود حساب ضريبة
+   * القيمة المضافة - مدخلات 1105
+   */
+  const hasInputVat =
+    persistedAccounts.some(
+      (account) =>
+        account.code ===
+        INPUT_VAT_ACCOUNT_CODE
+    );
+
+  if (!hasInputVat) {
+    persistedAccounts.push({
+      id: "account-input-vat",
+
+      code: INPUT_VAT_ACCOUNT_CODE,
+
+      name: INPUT_VAT_ACCOUNT_NAME,
+
+      type: "asset",
+
+      nature: "debit",
+
+      parentId:
+        "account-current-assets",
+
+      parentCode: "11",
+
+      level: 3,
+
+      isGroup: false,
+
+      isActive: true,
+
+      balance: 0,
+
+      isSystem: true,
+
+      entityType: "other",
+    });
+  }
+
+  /*
+   * التأكد من أن 1104 موجود كحساب مخزون
+   */
+  const inventoryIndex =
+    persistedAccounts.findIndex(
+      (account) =>
+        account.code ===
+        INVENTORY_ACCOUNT_CODE
+    );
+
+  if (inventoryIndex === -1) {
+    persistedAccounts.push({
+      id: "account-inventory",
+
+      code: INVENTORY_ACCOUNT_CODE,
+
+      name: INVENTORY_ACCOUNT_NAME,
+
+      type: "asset",
+
+      nature: "debit",
+
+      parentId:
+        "account-current-assets",
+
+      parentCode: "11",
+
+      level: 3,
+
+      isGroup: false,
+
+      isActive: true,
+
+      balance: 0,
+
+      isSystem: true,
+
+      entityType: "inventory",
+    });
+  }
+
+  return {
+    ...currentState,
+
+    ...persisted,
+
+    accounts: persistedAccounts,
+
+    customers:
+      persisted?.customers &&
+      persisted.customers.length > 0
+        ? persisted.customers
+        : [cashCustomer],
+
+    bankAccounts:
+      persisted?.bankAccounts ??
+      currentState.bankAccounts,
+
+    suppliers:
+      persisted?.suppliers ??
+      currentState.suppliers,
+
+    products:
+      persisted?.products ??
+      currentState.products,
+
+    purchases:
+      persisted?.purchases ??
+      currentState.purchases,
+
+    sales:
+      persisted?.sales ??
+      currentState.sales,
+
+    journalEntries:
+      persisted?.journalEntries ??
+      currentState.journalEntries,
+  };
+},
       }
     )
   );
+
+/* =========================================================
+   VALIDATE PURCHASE ITEM
+========================================================= */
+
+function validatePurchaseItem(
+  state: Pick<
+    ERPStore,
+    "products"
+  >,
+  item: PurchaseItem
+) {
+  if (!item.productId) {
+    throw new Error(
+      `الصنف ${item.name || item.productName || ""} غير مرتبط بمنتج`
+    );
+  }
+
+  const product =
+    state.products.find(
+      (p) =>
+        p.id === item.productId
+    );
+
+  if (!product) {
+    throw new Error(
+      `المنتج غير موجود: ${
+        item.productName ||
+        item.name ||
+        item.productId
+      }`
+    );
+  }
+
+  if (
+    Number(item.quantity || 0) <=
+    0
+  ) {
+    throw new Error(
+      `كمية المنتج ${product.name} يجب أن تكون أكبر من صفر`
+    );
+  }
+
+  if (
+    Number(item.price || 0) < 0
+  ) {
+    throw new Error(
+      `سعر شراء المنتج ${product.name} لا يمكن أن يكون سالبًا`
+    );
+  }
+}
+
+/* =========================================================
+   INVENTORY VALUE OF PURCHASE ITEM
+========================================================= */
+
+/**
+ * قيمة الصنف التي تدخل إلى المخزون.
+ *
+ * مهم جدًا:
+ *
+ * item.total يجب أن يمثل قيمة الصنف بعد الخصم
+ * وقبل ضريبة القيمة المضافة.
+ *
+ * ضريبة الشراء لا تدخل في تكلفة المخزون.
+ */
+function getPurchaseItemInventoryValue(
+  item: PurchaseItem
+) {
+  const quantity =
+    Number(
+      item.quantity || 0
+    );
+
+  const total =
+    Number(item.total);
+
+  if (
+    Number.isFinite(total) &&
+    total >= 0
+  ) {
+    return total;
+  }
+
+  const gross =
+    quantity *
+    Number(
+      item.price || 0
+    );
+
+  return Math.max(
+    0,
+    gross -
+      Number(
+        item.discount || 0
+      )
+  );
+}
 
 /* =========================================================
    INVENTORY CALCULATOR
@@ -4283,58 +4077,49 @@ function calculateProductStock(
   productId: string
 ) {
   let purchaseQuantity = 0;
-
   let saleQuantity = 0;
 
-  state.purchases.forEach(
-    (purchase) => {
-      if (
-        purchase.status ===
-        "cancelled"
-      ) {
-        return;
-      }
-
-      purchase.items.forEach(
-        (item) => {
-          if (
-            item.productId ===
-            productId
-          ) {
-            purchaseQuantity +=
-              Number(
-                item.quantity || 0
-              );
-          }
-        }
-      );
+  for (const purchase of state.purchases) {
+    if (
+      purchase.status ===
+      "cancelled"
+    ) {
+      continue;
     }
-  );
 
-  state.sales.forEach(
-    (sale) => {
+    for (const item of purchase.items) {
       if (
-        sale.status ===
-        "cancelled"
+        item.productId ===
+        productId
       ) {
-        return;
+        purchaseQuantity +=
+          Number(
+            item.quantity || 0
+          );
       }
-
-      sale.items.forEach(
-        (item) => {
-          if (
-            item.productId ===
-            productId
-          ) {
-            saleQuantity +=
-              Number(
-                item.quantity || 0
-              );
-          }
-        }
-      );
     }
-  );
+  }
+
+  for (const sale of state.sales) {
+    if (
+      sale.status ===
+      "cancelled"
+    ) {
+      continue;
+    }
+
+    for (const item of sale.items) {
+      if (
+        item.productId ===
+        productId
+      ) {
+        saleQuantity +=
+          Number(
+            item.quantity || 0
+          );
+      }
+    }
+  }
 
   return (
     purchaseQuantity -
@@ -4346,9 +4131,6 @@ function calculateProductStock(
    JOURNAL HELPERS
 ========================================================= */
 
-/**
- * الحصول على حساب معين بالكود.
- */
 function findAccountByCode(
   accounts: Account[],
   code: string
@@ -4359,9 +4141,6 @@ function findAccountByCode(
   );
 }
 
-/**
- * إنشاء رقم قيد جديد.
- */
 function generateJournalEntryNumber(
   journalEntries: JournalEntry[]
 ) {
@@ -4387,14 +4166,17 @@ function generateJournalEntryNumber(
   return `JE-${max + 1}`;
 }
 
-/**
- * تحديد حساب الإيراد حسب المنتج.
- */
+/* =========================================================
+   REVENUE ACCOUNT
+========================================================= */
+
 function getRevenueAccountCode(
   product?: Product
 ) {
   const text =
-    `${product?.category || ""} ${product?.name || ""}`.toLowerCase();
+    `${product?.category || ""} ${
+      product?.name || ""
+    }`.toLowerCase();
 
   if (
     text.includes("زيت") ||
@@ -4415,14 +4197,17 @@ function getRevenueAccountCode(
   return "4101";
 }
 
-/**
- * تحديد حساب تكلفة المبيعات حسب المنتج.
- */
+/* =========================================================
+   COGS ACCOUNT
+========================================================= */
+
 function getCogsAccountCode(
   product?: Product
 ) {
   const text =
-    `${product?.category || ""} ${product?.name || ""}`.toLowerCase();
+    `${product?.category || ""} ${
+      product?.name || ""
+    }`.toLowerCase();
 
   if (
     text.includes("زيت") ||
@@ -4434,9 +4219,70 @@ function getCogsAccountCode(
   return "5101";
 }
 
-/**
- * حساب تكلفة صنف مباع بالمتوسط.
- */
+/* =========================================================
+   AVERAGE COST
+========================================================= */
+
+function calculateAveragePurchaseCost(
+  state: Pick<
+    ERPStore,
+    "products" | "purchases" | "sales"
+  >,
+  productId: string
+) {
+  let purchaseQuantity = 0;
+  let purchaseValue = 0;
+
+  for (const purchase of state.purchases) {
+    if (
+      purchase.status ===
+      "cancelled"
+    ) {
+      continue;
+    }
+
+    for (const item of purchase.items) {
+      if (
+        item.productId !==
+        productId
+      ) {
+        continue;
+      }
+
+      const quantity =
+        Number(
+          item.quantity || 0
+        );
+
+      const value =
+        getPurchaseItemInventoryValue(
+          item
+        );
+
+      purchaseQuantity +=
+        quantity;
+
+      purchaseValue +=
+        value;
+    }
+  }
+
+  if (
+    purchaseQuantity <= 0
+  ) {
+    return 0;
+  }
+
+  return (
+    purchaseValue /
+    purchaseQuantity
+  );
+}
+
+/* =========================================================
+   ITEM COST
+========================================================= */
+
 function calculateItemCost(
   state: Pick<
     ERPStore,
@@ -4445,89 +4291,48 @@ function calculateItemCost(
   productId: string,
   quantity: number
 ) {
-  let purchaseQuantity = 0;
-
-  let purchaseValue = 0;
-
-  state.purchases.forEach(
-    (purchase) => {
-      if (
-        purchase.status ===
-        "cancelled"
-      ) {
-        return;
-      }
-
-      purchase.items.forEach(
-        (item) => {
-          if (
-            item.productId ===
-            productId
-          ) {
-            const qty =
-              Number(
-                item.quantity || 0
-              );
-
-            const value =
-              Number(
-                item.total
-              ) ||
-              qty *
-                Number(
-                  item.price || 0
-                );
-
-            purchaseQuantity +=
-              qty;
-
-            purchaseValue +=
-              value;
-          }
-        }
-      );
-    }
-  );
-
-  if (
-    purchaseQuantity <= 0
-  ) {
-    return 0;
-  }
-
   const averageCost =
-    purchaseValue /
-    purchaseQuantity;
+    calculateAveragePurchaseCost(
+      state,
+      productId
+    );
 
   return (
-    quantity *
-    averageCost
+    Math.max(
+      0,
+      quantity
+    ) * averageCost
   );
 }
 
+/* =========================================================
+   PURCHASE JOURNAL
+========================================================= */
+
 /**
- * إنشاء قيد الشراء.
+ * القيد الصحيح للشراء:
  *
- * شراء نقدي:
+ * مثال:
  *
- * مدين المخزون
- * دائن الصندوق
+ * البضاعة       1,000
+ * الضريبة         150
+ * الإجمالي      1,150
  *
- * شراء بنكي:
+ * القيد:
  *
- * مدين المخزون
- * دائن البنك
+ * 1104 المخزون                 مدين 1,000
+ * 1105 ضريبة المدخلات          مدين   150
+ * الصندوق/البنك/المورد        دائن 1,150
  *
- * شراء آجل:
- *
- * مدين المخزون
- * دائن المورد
+ * مهم:
+ * الضريبة لا تدخل في المخزون.
  */
 function buildPurchaseJournalEntry(
   purchase: Purchase,
   accounts: Account[],
   supplier: Supplier | undefined,
-  paymentAccount: Account | undefined
+  paymentAccount: Account | undefined,
+  journalEntries: JournalEntry[]
 ): JournalEntry {
   const inventoryAccount =
     findAccountByCode(
@@ -4544,69 +4349,146 @@ function buildPurchaseJournalEntry(
   const lines: JournalLine[] =
     [];
 
+  /*
+   * ==========================================
+   * قيمة المخزون قبل الضريبة
+   * ==========================================
+   */
+
   let inventoryTotal = 0;
 
-  purchase.items.forEach(
-    (item) => {
-      const quantity =
-        Number(
-          item.quantity || 0
-        );
-
-      const itemTotal =
-        Number(item.total) ||
-        quantity *
-          Number(
-            item.price || 0
-          );
-
-      inventoryTotal +=
-        itemTotal;
-    }
-  );
+  for (const item of purchase.items) {
+    inventoryTotal +=
+      getPurchaseItemInventoryValue(
+        item
+      );
+  }
 
   /*
-   * إذا كانت هناك ضريبة شراء،
-   * نضيفها إلى المخزون في هذه
-   * النسخة التجريبية حتى يبقى
-   * القيد متوازنًا دون إنشاء
-   * حساب ضريبة مدخلات جديد.
+   * إذا لم تكن قيمة العناصر موجودة بشكل صحيح،
+   * نستخدم subtotal - discount.
+   *
+   * ولا نضيف الضريبة.
    */
-  inventoryTotal +=
-    Number(
-      purchase.tax || 0
-    );
 
   if (
     inventoryTotal <= 0
   ) {
     inventoryTotal =
-      Number(
-        purchase.total || 0
+      Math.max(
+        0,
+        Number(
+          purchase.subtotal || 0
+        ) -
+          Number(
+            purchase.discount || 0
+          )
       );
   }
 
-  lines.push({
-    id: createId("line"),
+  const taxAmount = Math.max(
+    0,
+    Number(
+      purchase.tax || 0
+    )
+  );
 
-    accountId:
-      inventoryAccount.id,
+  const invoiceTotal = Math.max(
+    0,
+    Number(
+      purchase.total || 0
+    )
+  );
 
-    accountCode:
-      inventoryAccount.code,
+  /*
+   * ==========================================
+   * 1104 المخزون
+   * ==========================================
+   */
 
-    accountName:
-      inventoryAccount.name,
+  if (
+    inventoryTotal > 0
+  ) {
+    lines.push({
+      id: createId("line"),
 
-    debit: inventoryTotal,
+      accountId:
+        inventoryAccount.id,
 
-    credit: 0,
+      accountCode:
+        inventoryAccount.code,
 
-    description: `إضافة مخزون من فاتورة الشراء ${purchase.invoiceNumber}`,
+      accountName:
+        inventoryAccount.name,
 
-    supplierId:
-      supplier?.id,
-  });
+      debit:
+        roundMoney(
+          inventoryTotal
+        ),
+
+      credit: 0,
+
+      description:
+        `إضافة مخزون من فاتورة الشراء ${purchase.invoiceNumber}`,
+
+      supplierId:
+        supplier?.id,
+    });
+  }
+
+  /*
+   * ==========================================
+   * 1105 ضريبة المدخلات
+   * ==========================================
+   */
+
+  if (
+    taxAmount > 0
+  ) {
+    const inputVatAccount =
+      findAccountByCode(
+        accounts,
+        INPUT_VAT_ACCOUNT_CODE
+      );
+
+    if (!inputVatAccount) {
+      throw new Error(
+        "حساب ضريبة القيمة المضافة - مدخلات 1105 غير موجود"
+      );
+    }
+
+    lines.push({
+      id: createId("line"),
+
+      accountId:
+        inputVatAccount.id,
+
+      accountCode:
+        inputVatAccount.code,
+
+      accountName:
+        inputVatAccount.name,
+
+      debit:
+        roundMoney(
+          taxAmount
+        ),
+
+      credit: 0,
+
+      description:
+        `ضريبة مدخلات لفاتورة الشراء ${purchase.invoiceNumber}`,
+
+      supplierId:
+        supplier?.id,
+    });
+  }
+
+  /*
+   * ==========================================
+   * الطرف الدائن
+   * ==========================================
+   */
 
   if (
     purchase.paymentMethod ===
@@ -4637,11 +4519,12 @@ function buildPurchaseJournalEntry(
       debit: 0,
 
       credit:
-        Number(
-          purchase.total || 0
+        roundMoney(
+          invoiceTotal
         ),
 
-      description: `شراء آجل من ${supplier.name} - ${purchase.invoiceNumber}`,
+      description:
+        `شراء آجل من ${supplier.name} - ${purchase.invoiceNumber}`,
 
       supplierId:
         supplier.id,
@@ -4668,18 +4551,21 @@ function buildPurchaseJournalEntry(
       debit: 0,
 
       credit:
-        Number(
-          purchase.total || 0
+        roundMoney(
+          invoiceTotal
         ),
 
-      description: `دفع قيمة فاتورة الشراء ${purchase.invoiceNumber}`,
+      description:
+        `دفع قيمة فاتورة الشراء ${purchase.invoiceNumber}`,
     });
   }
 
   /*
-   * في حالة وجود فرق بسبب تقريب
-   * الحسابات، نضمن أن القيد متوازن.
+   * ==========================================
+   * التحقق من توازن القيد
+   * ==========================================
    */
+
   const debitTotal =
     lines.reduce(
       (sum, line) =>
@@ -4700,27 +4586,27 @@ function buildPurchaseJournalEntry(
       0
     );
 
+  /*
+   * لا نقوم بتعديل المخزون لإجبار القيد على التوازن.
+   *
+   * إذا كان هناك فرق فهذا خطأ في بيانات الفاتورة:
+   *
+   * المخزون + الضريبة يجب أن = إجمالي الفاتورة.
+   */
+
   if (
     Math.abs(
       debitTotal -
         creditTotal
     ) > 0.01
   ) {
-    /*
-     * نعيد قيمة المخزون إلى إجمالي الفاتورة
-     * إذا كانت الضريبة أو الخصم أحدثت فرقًا.
-     */
-    const inventoryLine =
-      lines.find(
-        (line) =>
-          line.accountCode ===
-          INVENTORY_ACCOUNT_CODE
-      );
-
-    if (inventoryLine) {
-      inventoryLine.debit =
-        creditTotal;
-    }
+    throw new Error(
+      `قيد الشراء غير متوازن. المدين: ${debitTotal.toFixed(
+        2
+      )} — الدائن: ${creditTotal.toFixed(
+        2
+      )}. يجب أن تكون قيمة المخزون + الضريبة مساوية لإجمالي الفاتورة.`
+    );
   }
 
   return {
@@ -4728,12 +4614,13 @@ function buildPurchaseJournalEntry(
 
     entryNumber:
       generateJournalEntryNumber(
-        []
+        journalEntries
       ),
 
     date: purchase.date,
 
-    description: `فاتورة شراء ${purchase.invoiceNumber}`,
+    description:
+      `فاتورة شراء ${purchase.invoiceNumber}`,
 
     referenceType:
       "purchase",
@@ -4748,28 +4635,22 @@ function buildPurchaseJournalEntry(
   };
 }
 
+/* =========================================================
+   SALE JOURNAL
+========================================================= */
+
 /**
- * إنشاء قيد البيع.
+ * قيد البيع:
  *
- * البيع النقدي:
+ * أولًا قيد الإيراد:
  *
- * مدين الصندوق
- * دائن المبيعات
+ * الصندوق/البنك/العميل       مدين
+ * المبيعات                   دائن
  *
- * البيع البنكي:
+ * ثانيًا قيد تكلفة المخزون:
  *
- * مدين البنك
- * دائن المبيعات
- *
- * البيع الآجل:
- *
- * مدين العميل
- * دائن المبيعات
- *
- * ثم قيد التكلفة:
- *
- * مدين تكلفة المبيعات
- * دائن المخزون
+ * تكلفة المبيعات              مدين
+ * 1104 المخزون                دائن
  */
 function buildSaleJournalEntry(
   sale: Sale,
@@ -4781,15 +4662,16 @@ function buildSaleJournalEntry(
     | "sales"
   >,
   customer: Customer | undefined,
-  paymentAccount: Account | undefined
+  paymentAccount: Account | undefined,
+  journalEntries: JournalEntry[]
 ): JournalEntry {
   const lines: JournalLine[] =
     [];
 
   /*
-   * ==============================
-   * قيد الإيراد / التحصيل
-   * ==============================
+   * ==========================================
+   * حساب التحصيل
+   * ==========================================
    */
 
   if (
@@ -4819,13 +4701,14 @@ function buildSaleJournalEntry(
         customer.name,
 
       debit:
-        Number(
-          sale.total || 0
+        roundMoney(
+          sale.total
         ),
 
       credit: 0,
 
-      description: `بيع آجل للعميل ${customer.name} - ${sale.invoiceNumber}`,
+      description:
+        `بيع آجل للعميل ${customer.name} - ${sale.invoiceNumber}`,
 
       customerId:
         customer.id,
@@ -4850,105 +4733,99 @@ function buildSaleJournalEntry(
         paymentAccount.name,
 
       debit:
-        Number(
-          sale.total || 0
+        roundMoney(
+          sale.total
         ),
 
       credit: 0,
 
-      description: `تحصيل قيمة فاتورة البيع ${sale.invoiceNumber}`,
+      description:
+        `تحصيل قيمة فاتورة البيع ${sale.invoiceNumber}`,
     });
   }
 
   /*
-   * ==============================
-   * المبيعات حسب المنتجات
-   * ==============================
+   * ==========================================
+   * المبيعات
+   * ==========================================
    */
 
-  sale.items.forEach(
-    (item) => {
-      if (!item.productId) {
-        return;
-      }
+  const revenueLines: JournalLine[] =
+    [];
 
-      const product =
-        state.products.find(
-          (p) =>
-            p.id ===
-            item.productId
-        );
-
-      if (!product) {
-        return;
-      }
-
-      const itemTotal =
-        Number(item.total) ||
-        Number(
-          item.quantity || 0
-        ) *
-          Number(
-            item.price || 0
-          );
-
-      const revenueCode =
-        getRevenueAccountCode(
-          product
-        );
-
-      const revenueAccount =
-        findAccountByCode(
-          state.accounts,
-          revenueCode
-        );
-
-      if (!revenueAccount) {
-        throw new Error(
-          `حساب المبيعات ${revenueCode} غير موجود`
-        );
-      }
-
-      lines.push({
-        id: createId("line"),
-
-        accountId:
-          revenueAccount.id,
-
-        accountCode:
-          revenueAccount.code,
-
-        accountName:
-          revenueAccount.name,
-
-        debit: 0,
-
-        credit:
-          itemTotal,
-
-        description: `${product.name} - فاتورة ${sale.invoiceNumber}`,
-      });
+  for (const item of sale.items) {
+    if (!item.productId) {
+      continue;
     }
-  );
+
+    const product =
+      state.products.find(
+        (p) =>
+          p.id ===
+          item.productId
+      );
+
+    if (!product) {
+      continue;
+    }
+
+    const itemTotal =
+      getSaleItemRevenueValue(
+        item
+      );
+
+    if (
+      itemTotal <= 0
+    ) {
+      continue;
+    }
+
+    const revenueCode =
+      getRevenueAccountCode(
+        product
+      );
+
+    const revenueAccount =
+      findAccountByCode(
+        state.accounts,
+        revenueCode
+      );
+
+    if (!revenueAccount) {
+      throw new Error(
+        `حساب المبيعات ${revenueCode} غير موجود`
+      );
+    }
+
+    revenueLines.push({
+      id: createId("line"),
+
+      accountId:
+        revenueAccount.id,
+
+      accountCode:
+        revenueAccount.code,
+
+      accountName:
+        revenueAccount.name,
+
+      debit: 0,
+
+      credit:
+        roundMoney(
+          itemTotal
+        ),
+
+      description:
+        `${product.name} - فاتورة ${sale.invoiceNumber}`,
+    });
+  }
 
   /*
-   * إذا كانت الفاتورة فيها خصم،
-   * فقد يكون مجموع أسطر المبيعات أقل
-   * أو أكبر من إجمالي الفاتورة.
-   *
-   * لذلك نعيد توزيع الإيراد على إجمالي
-   * الفاتورة في حالة وجود فرق.
+   * توزيع إجمالي البيع على أسطر الإيرادات.
    */
 
-  const revenueLines =
-    lines.filter(
-      (line) =>
-        line.credit > 0 &&
-        line.accountCode !==
-          CASH_ACCOUNT_CODE
-    );
-
-  const revenueTotal =
+  const calculatedRevenue =
     revenueLines.reduce(
       (sum, line) =>
         sum +
@@ -4959,30 +4836,44 @@ function buildSaleJournalEntry(
     );
 
   const saleTotal =
-    Number(
-      sale.total || 0
+    roundMoney(
+      sale.total
     );
 
-  const revenueDifference =
-    saleTotal -
-    revenueTotal;
-
   if (
-    Math.abs(
-      revenueDifference
-    ) > 0.01 &&
     revenueLines.length > 0
   ) {
-    revenueLines[
-      revenueLines.length - 1
-    ].credit +=
-      revenueDifference;
+    const difference =
+      roundMoney(
+        saleTotal -
+          calculatedRevenue
+      );
+
+    if (
+      Math.abs(
+        difference
+      ) > 0.01
+    ) {
+      revenueLines[
+        revenueLines.length - 1
+      ].credit =
+        roundMoney(
+          revenueLines[
+            revenueLines.length - 1
+          ].credit +
+            difference
+        );
+    }
+
+    lines.push(
+      ...revenueLines
+    );
   }
 
   /*
-   * ==============================
-   * قيد تكلفة المبيعات والمخزون
-   * ==============================
+   * ==========================================
+   * المخزون وتكلفة المبيعات
+   * ==========================================
    */
 
   const inventoryAccount =
@@ -5006,76 +4897,90 @@ function buildSaleJournalEntry(
       }
     >();
 
-  sale.items.forEach(
-    (item) => {
-      if (!item.productId) {
-        return;
-      }
-
-      const product =
-        state.products.find(
-          (p) =>
-            p.id ===
-            item.productId
-        );
-
-      if (!product) {
-        return;
-      }
-
-      const quantity =
-        Number(
-          item.quantity || 0
-        );
-
-      const cost =
-        calculateItemCost(
-          state,
-          item.productId,
-          quantity
-        );
-
-      if (cost <= 0) {
-        return;
-      }
-
-      const cogsCode =
-        getCogsAccountCode(
-          product
-        );
-
-      const cogsAccount =
-        findAccountByCode(
-          state.accounts,
-          cogsCode
-        );
-
-      if (!cogsAccount) {
-        throw new Error(
-          `حساب تكلفة المبيعات ${cogsCode} غير موجود`
-        );
-      }
-
-      const existing =
-        cogsByAccount.get(
-          cogsCode
-        );
-
-      if (existing) {
-        existing.amount +=
-          cost;
-      } else {
-        cogsByAccount.set(
-          cogsCode,
-          {
-            account:
-              cogsAccount,
-            amount: cost,
-          }
-        );
-      }
+  for (const item of sale.items) {
+    if (!item.productId) {
+      continue;
     }
-  );
+
+    const product =
+      state.products.find(
+        (p) =>
+          p.id ===
+          item.productId
+      );
+
+    if (!product) {
+      continue;
+    }
+
+    const quantity =
+      Number(
+        item.quantity || 0
+      );
+
+    if (
+      quantity <= 0
+    ) {
+      continue;
+    }
+
+    const cost =
+      calculateItemCost(
+        state,
+        item.productId,
+        quantity
+      );
+
+    /*
+     * خدمة العمرة لا يفترض أن تسحب
+     * من المخزون إذا لم تكن لها مشتريات.
+     *
+     * لذلك إذا لم توجد تكلفة شراء
+     * فلن يتم إنشاء قيد COGS.
+     */
+
+    if (
+      cost <= 0
+    ) {
+      continue;
+    }
+
+    const cogsCode =
+      getCogsAccountCode(
+        product
+      );
+
+    const cogsAccount =
+      findAccountByCode(
+        state.accounts,
+        cogsCode
+      );
+
+    if (!cogsAccount) {
+      throw new Error(
+        `حساب تكلفة المبيعات ${cogsCode} غير موجود`
+      );
+    }
+
+    const existing =
+      cogsByAccount.get(
+        cogsCode
+      );
+
+    if (existing) {
+      existing.amount +=
+        cost;
+    } else {
+      cogsByAccount.set(
+        cogsCode,
+        {
+          account:
+            cogsAccount,
+          amount: cost,
+        }
+      );
+    }
+  }
 
   let totalCogs = 0;
 
@@ -5084,7 +4989,19 @@ function buildSaleJournalEntry(
       account,
       amount,
     }) => {
-      totalCogs += amount;
+      const roundedAmount =
+        roundMoney(
+          amount
+        );
+
+      if (
+        roundedAmount <= 0
+      ) {
+        return;
+      }
+
+      totalCogs +=
+        roundedAmount;
 
       lines.push({
         id: createId("line"),
@@ -5098,17 +5015,21 @@ function buildSaleJournalEntry(
         accountName:
           account.name,
 
-        debit: amount,
+        debit:
+          roundedAmount,
 
         credit: 0,
 
-        description: `تكلفة المبيعات - ${sale.invoiceNumber}`,
+        description:
+          `تكلفة المبيعات - ${sale.invoiceNumber}`,
       });
     }
   );
 
   /*
-   * دائن المخزون بتكلفة البضاعة المباعة.
+   * ==========================================
+   * تخفيض المخزون 1104
+   * ==========================================
    */
 
   if (
@@ -5128,10 +5049,55 @@ function buildSaleJournalEntry(
 
       debit: 0,
 
-      credit: totalCogs,
+      credit:
+        roundMoney(
+          totalCogs
+        ),
 
-      description: `خروج البضاعة من المخزون - ${sale.invoiceNumber}`,
+      description:
+        `خروج البضاعة من المخزون - ${sale.invoiceNumber}`,
     });
+  }
+
+  /*
+   * ==========================================
+   * التحقق من توازن القيد
+   * ==========================================
+   */
+
+  const debitTotal =
+    lines.reduce(
+      (sum, line) =>
+        sum +
+        Number(
+          line.debit || 0
+        ),
+      0
+    );
+
+  const creditTotal =
+    lines.reduce(
+      (sum, line) =>
+        sum +
+        Number(
+          line.credit || 0
+        ),
+      0
+    );
+
+  if (
+    Math.abs(
+      debitTotal -
+        creditTotal
+    ) > 0.01
+  ) {
+    throw new Error(
+      `قيد البيع غير متوازن. المدين: ${debitTotal.toFixed(
+        2
+      )} — الدائن: ${creditTotal.toFixed(
+        2
+      )}`
+    );
   }
 
   return {
@@ -5139,12 +5105,13 @@ function buildSaleJournalEntry(
 
     entryNumber:
       generateJournalEntryNumber(
-        []
+        journalEntries
       ),
 
     date: sale.date,
 
-    description: `فاتورة بيع ${sale.invoiceNumber}`,
+    description:
+      `فاتورة بيع ${sale.invoiceNumber}`,
 
     referenceType:
       "sale",
@@ -5157,6 +5124,58 @@ function buildSaleJournalEntry(
     createdAt:
       new Date().toISOString(),
   };
+}
+
+/* =========================================================
+   SALE ITEM VALUE
+========================================================= */
+
+function getSaleItemRevenueValue(
+  item: SaleItem
+) {
+  const total =
+    Number(
+      item.total
+    );
+
+  if (
+    Number.isFinite(total) &&
+    total >= 0
+  ) {
+    return total;
+  }
+
+  const quantity =
+    Number(
+      item.quantity || 0
+    );
+
+  const gross =
+    quantity *
+    Number(
+      item.price || 0
+    );
+
+  return Math.max(
+    0,
+    gross -
+      Number(
+        item.discount || 0
+      )
+  );
+}
+
+/* =========================================================
+   MONEY
+========================================================= */
+
+function roundMoney(
+  value: number
+) {
+  return Math.round(
+    (Number(value) || 0) *
+      100
+  ) / 100;
 }
 
 export default useERPStore;
