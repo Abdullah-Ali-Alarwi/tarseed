@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import {
   FiActivity,
@@ -17,6 +18,7 @@ import {
   FiPieChart,
   FiShoppingBag,
   FiTruck,
+  FiTrash2,
   FiUsers,
   FiX,
 } from "react-icons/fi";
@@ -113,6 +115,33 @@ export default function TopNave() {
   ===================================================== */
   const closeMenu = () => {
     setMenuOpen(false);
+  };
+  const handleClearStorage = () => {
+    toast("تأكيد مسح البيانات", {
+      description:
+        "سيتم حذف جميع البيانات المحفوظة في هذا المتصفح، ولا يمكن التراجع عن هذا الإجراء.",
+      action: {
+        label: "مسح البيانات",
+        onClick: () => {
+          try {
+            localStorage.clear();
+            setMenuOpen(false);
+            toast.success("تم مسح جميع بيانات النظام");
+            setTimeout(() => {
+              window.location.href = "/";
+            }, 700);
+          } catch (error) {
+            console.error("حدث خطأ أثناء مسح البيانات:", error);
+            toast.error("تعذر مسح البيانات");
+          }
+        },
+      },
+      cancel: {
+        label: "إلغاء",
+        onClick: () => {},
+      },
+      duration: 10000,
+    });
   };
 
   return (
@@ -319,6 +348,16 @@ export default function TopNave() {
           {/* =================================================
               معلومات الشركة
           ================================================= */}
+
+          <button
+            type="button"
+            onClick={handleClearStorage}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200 transition hover:bg-red-500/20"
+          >
+            <FiTrash2 />
+            <span>مسح جميع البيانات</span>
+          </button>
+
           <div className="mt-5 border-t border-white/10 pt-4">
             <div className="rounded-xl bg-white/5 p-4 text-center">
               <div className="text-sm font-bold">شركة الجابري</div>

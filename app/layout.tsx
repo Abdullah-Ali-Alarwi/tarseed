@@ -19,7 +19,7 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body className="min-h-screen bg-gray-50">
-        <Toaster position="top-center" richColors closeButton duration={4000} />
+        <Toaster position="top-left" richColors closeButton duration={4000} />
 
         <div className="flex min-h-screen w-full">
           <div className="hidden lg:block lg:w-64 lg:shrink-0">
