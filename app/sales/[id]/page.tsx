@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -59,7 +59,7 @@ export default function SalesPrintPage() {
   ===================================================== */
 
   const formatMoney = (value: number) => {
-    return Number(value || 0).toLocaleString("ar-YE", {
+    return Number(value || 0).toLocaleString("ar-YE-u-nu-latn", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
@@ -544,3 +544,4 @@ export default function SalesPrintPage() {
     </>
   );
 }
+

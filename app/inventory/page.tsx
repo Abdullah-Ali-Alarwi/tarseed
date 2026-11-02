@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -35,7 +35,7 @@ export default function InventoryPage() {
   ===================================================== */
 
   const formatMoney = (value: number) => {
-    return Number(value || 0).toLocaleString("ar-SA", {
+    return Number(value || 0).toLocaleString("ar-SA-u-nu-latn", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
@@ -506,7 +506,7 @@ export default function InventoryPage() {
 
                     <td className="px-3 py-2.5">
                       <span className="font-medium text-green-600">
-                        {product.purchasedQuantity.toLocaleString("ar-SA")}
+                        {product.purchasedQuantity.toLocaleString("ar-SA-u-nu-latn")}
                       </span>
 
                       {product.unit && (
@@ -520,7 +520,7 @@ export default function InventoryPage() {
 
                     <td className="px-3 py-2.5">
                       <span className="font-medium text-blue-600">
-                        {product.soldQuantity.toLocaleString("ar-SA")}
+                        {product.soldQuantity.toLocaleString("ar-SA-u-nu-latn")}
                       </span>
 
                       {product.unit && (
@@ -543,7 +543,7 @@ export default function InventoryPage() {
                                 : "text-gray-700"
                           }`}
                         >
-                          {product.quantity.toLocaleString("ar-SA")}
+                          {product.quantity.toLocaleString("ar-SA-u-nu-latn")}
                         </span>
 
                         {product.unit && (
@@ -767,3 +767,4 @@ function Status({ status }: { status: "متوفر" | "منخفض" | "نافذ" }
     </span>
   );
 }
+

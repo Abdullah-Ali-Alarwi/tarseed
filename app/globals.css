@@ -1,3 +1,32 @@
 @import "tailwindcss";
 
 
+@media print {
+  /* أخفِ محتوى الصفحة */
+  body * {
+    visibility: hidden;
+  }
+
+  /* أظهر الفاتورة فقط */
+  #invoice,
+  #invoice * {
+    visibility: visible;
+  }
+
+  /* ضع الفاتورة في أعلى ورقة الطباعة */
+  #invoice {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  /* استخدم ألوان الفاتورة عند الطباعة */
+  #invoice {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}

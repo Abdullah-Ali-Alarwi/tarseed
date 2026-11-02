@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -52,7 +52,7 @@ export default function JournalPage() {
   ===================================================== */
 
   const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("ar-SA", {
+    return new Intl.NumberFormat("ar-SA-u-nu-latn", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     }).format(value || 0);
@@ -71,7 +71,7 @@ export default function JournalPage() {
       return date;
     }
 
-    return new Intl.DateTimeFormat("ar-SA", {
+    return new Intl.DateTimeFormat("ar-SA-u-nu-latn", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -1046,3 +1046,4 @@ export default function JournalPage() {
     </div>
   );
 }
+

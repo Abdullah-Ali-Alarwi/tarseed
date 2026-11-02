@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo } from "react";
@@ -61,7 +61,7 @@ export default function SupplierDetailsPage() {
   // ======================================================
 
   const formatMoney = (value: number) => {
-    return value.toLocaleString("ar-SA", {
+    return value.toLocaleString("ar-SA-u-nu-latn", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
@@ -80,7 +80,7 @@ export default function SupplierDetailsPage() {
       return date;
     }
 
-    return parsedDate.toLocaleDateString("ar-SA", {
+    return parsedDate.toLocaleDateString("ar-SA-u-nu-latn", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -935,8 +935,9 @@ function getPaymentMethodLabel(method?: string) {
 // ======================================================
 
 function formatSummaryMoney(value: number) {
-  return value.toLocaleString("ar-SA", {
+  return value.toLocaleString("ar-SA-u-nu-latn", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
 }
+

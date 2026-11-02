@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -63,7 +63,7 @@ export default function CustomersPage() {
   // =========================================================
 
   const formatMoney = (amount: number) => {
-    return Number(amount || 0).toLocaleString("ar-SA", {
+    return Number(amount || 0).toLocaleString("ar-SA-u-nu-latn", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
@@ -270,7 +270,7 @@ export default function CustomersPage() {
         <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
           <StatCard
             title="إجمالي العملاء"
-            value={statistics.totalCustomers.toLocaleString("ar-SA")}
+            value={statistics.totalCustomers.toLocaleString("ar-SA-u-nu-latn")}
             subtitle="عميل"
             icon={FiUsers}
           />
@@ -763,3 +763,4 @@ function Status({ status }: { status: string }) {
     </span>
   );
 }
+

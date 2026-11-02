@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
@@ -104,7 +104,7 @@ export default function SalesPrintPage() {
   const items = sale.items || [];
 
   const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("ar-YE").format(Number(value || 0));
+    return new Intl.NumberFormat("ar-YE-u-nu-latn").format(Number(value || 0));
   };
 
   const paymentMethodLabel =
@@ -431,3 +431,4 @@ export default function SalesPrintPage() {
     </>
   );
 }
+

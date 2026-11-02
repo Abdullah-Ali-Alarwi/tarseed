@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -56,7 +56,7 @@ const createEmptyLine = (): JournalLineForm => ({
 });
 
 const formatMoney = (value: number) =>
-  new Intl.NumberFormat("ar-YE", {
+  new Intl.NumberFormat("ar-YE-u-nu-latn", {
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
 
@@ -1549,3 +1549,4 @@ export default function NewJournalEntryPage() {
     </div>
   );
 }
+

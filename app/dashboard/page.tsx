@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo } from "react";
@@ -38,7 +38,7 @@ export default function Dashboard() {
   ======================================================= */
 
   const formatMoney = (value: number) => {
-    return Number(value || 0).toLocaleString("ar-SA", {
+    return Number(value || 0).toLocaleString("ar-SA-u-nu-latn", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
@@ -265,7 +265,7 @@ export default function Dashboard() {
     },
     {
       title: "العملاء",
-      value: totalCustomers.toLocaleString("ar-SA"),
+      value: totalCustomers.toLocaleString("ar-SA-u-nu-latn"),
       currency: "عميل",
       change: `+${totalCustomers}`,
       icon: FiUsers,
@@ -274,7 +274,7 @@ export default function Dashboard() {
     },
     {
       title: "الموردين",
-      value: totalSuppliers.toLocaleString("ar-SA"),
+      value: totalSuppliers.toLocaleString("ar-SA-u-nu-latn"),
       currency: "مورد",
       change: `+${totalSuppliers}`,
       icon: FiTruck,
@@ -1406,7 +1406,7 @@ function InventoryItem({
         </span>
 
         <span className="shrink-0 text-[9px] text-slate-400 sm:text-[10px]">
-          {quantity.toLocaleString("ar-SA")} {unit}
+          {quantity.toLocaleString("ar-SA-u-nu-latn")} {unit}
         </span>
       </div>
 
@@ -1421,3 +1421,4 @@ function InventoryItem({
     </div>
   );
 }
+

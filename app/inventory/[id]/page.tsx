@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo } from "react";
@@ -24,13 +24,13 @@ import {
 ========================================================= */
 
 const formatMoney = (value: number) => {
-  return new Intl.NumberFormat("ar-YE", {
+  return new Intl.NumberFormat("ar-YE-u-nu-latn", {
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
 };
 
 const formatNumber = (value: number) => {
-  return new Intl.NumberFormat("ar-YE", {
+  return new Intl.NumberFormat("ar-YE-u-nu-latn", {
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
 };
@@ -932,3 +932,4 @@ export default function ProductDetailsPage() {
     </>
   );
 }
+

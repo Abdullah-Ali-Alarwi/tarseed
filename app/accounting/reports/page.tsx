@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useMemo, useState } from "react";
 import { useERPStore } from "@/Store/erpStore";
@@ -309,7 +309,7 @@ export default function AccountingReportsPage() {
   ===================================================== */
 
   const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("ar-YE", {
+    return new Intl.NumberFormat("ar-YE-u-nu-latn", {
       maximumFractionDigits: 2,
     }).format(Number(value || 0));
   };
@@ -967,3 +967,4 @@ export default function AccountingReportsPage() {
     </>
   );
 }
+

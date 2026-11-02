@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -408,7 +408,7 @@ export default function NewCustomerPage() {
                         <span className="text-gray-500">الرصيد الافتتاحي</span>
 
                         <span className="font-semibold text-gray-900">
-                          {numericPreviewBalance.toLocaleString("ar-SA")}
+                          {numericPreviewBalance.toLocaleString("ar-SA-u-nu-latn")}
                         </span>
                       </div>
                     </div>
@@ -468,3 +468,4 @@ export default function NewCustomerPage() {
     </main>
   );
 }
+

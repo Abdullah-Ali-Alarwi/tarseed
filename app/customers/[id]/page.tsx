@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo } from "react";
@@ -42,7 +42,7 @@ export default function CustomerAccountPage() {
   // =========================================================
 
   const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("ar-SA", {
+    return new Intl.NumberFormat("ar-SA-u-nu-latn", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     }).format(Number(value || 0));
@@ -568,7 +568,7 @@ export default function CustomerAccountPage() {
 
                       <td className="whitespace-nowrap px-3 py-2 text-gray-600">
                         {movement.date
-                          ? new Date(movement.date).toLocaleDateString("ar-YE")
+                          ? new Date(movement.date).toLocaleDateString("ar-YE-u-nu-latn")
                           : "-"}
                       </td>
 
@@ -766,3 +766,4 @@ export default function CustomerAccountPage() {
     </main>
   );
 }
+

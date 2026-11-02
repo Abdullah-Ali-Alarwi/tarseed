@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -57,7 +57,7 @@ const natureLabels: Record<AccountNature, string> = {
 };
 
 function formatMoney(value: number) {
-  return new Intl.NumberFormat("ar-SA", {
+  return new Intl.NumberFormat("ar-SA-u-nu-latn", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(value || 0);
@@ -1094,3 +1094,4 @@ export default function AccountsPage() {
     </main>
   );
 }
+

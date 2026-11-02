@@ -137,7 +137,7 @@ export default function AccountingPage() {
   };
 
   return (
-    <main dir="rtl" className="min-h-screen bg-gray-50 p-2.5 sm:p-3 md:p-4">
+    <main dir="rtl" className="min-h-screen bg-gray-50 p-2.5 sm:p-3 md:p-4 ">
       <div className="mx-auto max-w-7xl">
         {/* =====================================================
             HEADER

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -18,7 +18,7 @@ import {
 } from "react-icons/fi";
 
 function formatMoney(value: number) {
-  return new Intl.NumberFormat("ar-SA", {
+  return new Intl.NumberFormat("ar-SA-u-nu-latn", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value || 0);
@@ -988,3 +988,4 @@ export default function IncomeStatementPage() {
     </main>
   );
 }
+

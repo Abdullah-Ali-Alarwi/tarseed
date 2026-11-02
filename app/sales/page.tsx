@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -93,7 +93,7 @@ export default function SalesPage() {
   ===================================================== */
 
   const formatMoney = (value: number) => {
-    return Number(value || 0).toLocaleString("ar-YE");
+    return Number(value || 0).toLocaleString("ar-YE-u-nu-latn");
   };
 
   /* =====================================================
@@ -463,3 +463,4 @@ export default function SalesPage() {
     </main>
   );
 }
+

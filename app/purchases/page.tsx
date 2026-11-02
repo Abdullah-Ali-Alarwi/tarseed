@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -32,7 +32,7 @@ type PurchaseStatus = "paid" | "pending" | "cancelled" | string;
 ========================================================= */
 
 const formatMoney = (value: number = 0) => {
-  return new Intl.NumberFormat("ar-SA", {
+  return new Intl.NumberFormat("ar-SA-u-nu-latn", {
     maximumFractionDigits: 0,
   }).format(Number(value) || 0);
 };
@@ -933,3 +933,4 @@ export default function PurchasesPage() {
     </div>
   );
 }
+

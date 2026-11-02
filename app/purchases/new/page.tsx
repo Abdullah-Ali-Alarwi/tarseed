@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useMemo, useState } from "react";
 import {
@@ -311,7 +311,7 @@ export default function NewPurchasePage() {
   ========================================================= */
 
   const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("ar-SA").format(Number(value) || 0);
+    return new Intl.NumberFormat("ar-SA-u-nu-latn").format(Number(value) || 0);
   };
 
   /* =========================================================
@@ -1825,3 +1825,4 @@ export default function NewPurchasePage() {
     </main>
   );
 }
+

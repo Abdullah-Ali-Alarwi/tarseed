@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useMemo, useState } from "react";
 import { toast, Toaster } from "sonner";
@@ -355,9 +355,9 @@ export default function NewSalesPage() {
 
     if (Number(quantity) > selectedProductRemainingStock) {
       toast.error(`المخزون غير كافٍ للصنف "${selectedProduct.name}"`, {
-        description: `المتاح: ${selectedProductRemainingStock.toLocaleString()} | المطلوب: ${Number(
+        description: `المتاح: ${selectedProductRemainingStock.toLocaleString("en-US")} | المطلوب: ${Number(
           quantity,
-        ).toLocaleString()}`,
+        ).toLocaleString("en-US")}`,
       });
 
       return;
@@ -416,10 +416,10 @@ export default function NewSalesPage() {
     toast.success(`تمت إضافة "${selectedProduct.name}" إلى الفاتورة`, {
       description: `الكمية: ${Number(
         quantity,
-      ).toLocaleString()} | المتبقي بعد الإضافة: ${Math.max(
+      ).toLocaleString("en-US")} | المتبقي بعد الإضافة: ${Math.max(
         selectedProductRemainingStock - Number(quantity),
         0,
-      ).toLocaleString()}`,
+      ).toLocaleString("en-US")}`,
     });
 
     /* -------------------------------------------------------
@@ -555,7 +555,7 @@ export default function NewSalesPage() {
         return {
           valid: false,
           message: `المخزون غير كافٍ للصنف "${product.name}"`,
-          description: `المتاح: ${availableStock.toLocaleString()} | المطلوب: ${requestedQuantity.toLocaleString()}`,
+          description: `المتاح: ${availableStock.toLocaleString("en-US")} | المطلوب: ${requestedQuantity.toLocaleString("en-US")}`,
         };
       }
     }
@@ -1092,7 +1092,7 @@ export default function NewSalesPage() {
 
                         return (
                           <option key={product.id} value={product.id}>
-                            {product.name} - المتاح: {stock.toLocaleString()}
+                            {product.name} - المتاح: {stock.toLocaleString("en-US")}
                           </option>
                         );
                       })}
@@ -1150,7 +1150,7 @@ export default function NewSalesPage() {
                             : "text-green-600"
                       }`}
                     >
-                      المتاح: {selectedProductRemainingStock.toLocaleString()}
+                      المتاح: {selectedProductRemainingStock.toLocaleString("en-US")}
                     </span>
                   </div>
                 </div>
@@ -1232,7 +1232,7 @@ export default function NewSalesPage() {
                   </span>
 
                   <span className="mr-2 text-[10px] font-bold text-gray-700">
-                    {selectedProductStock.toLocaleString()}
+                    {selectedProductStock.toLocaleString("en-US")}
                   </span>
                 </div>
 
@@ -1242,7 +1242,7 @@ export default function NewSalesPage() {
                   </span>
 
                   <span className="mr-2 text-[10px] font-bold text-yellow-700">
-                    {selectedProductInvoiceQuantity.toLocaleString()}
+                    {selectedProductInvoiceQuantity.toLocaleString("en-US")}
                   </span>
                 </div>
 
@@ -1250,7 +1250,7 @@ export default function NewSalesPage() {
                   <span className="text-[9px] text-gray-400">المتبقي</span>
 
                   <span className="mr-2 text-[10px] font-bold text-green-700">
-                    {selectedProductRemainingStock.toLocaleString()}
+                    {selectedProductRemainingStock.toLocaleString("en-US")}
                   </span>
                 </div>
 
@@ -1273,7 +1273,7 @@ export default function NewSalesPage() {
                           : "text-blue-700"
                       }`}
                     >
-                      {remainingAfterCurrentQuantity.toLocaleString()}
+                      {remainingAfterCurrentQuantity.toLocaleString("en-US")}
                     </span>
                   </div>
                 )}
@@ -1309,7 +1309,7 @@ export default function NewSalesPage() {
               <span className="text-[10px] text-gray-500">قبل الخصم</span>
 
               <span className="text-xs font-bold text-gray-700">
-                {currentSubtotal.toLocaleString()}
+                {currentSubtotal.toLocaleString("en-US")}
               </span>
             </div>
 
@@ -1317,7 +1317,7 @@ export default function NewSalesPage() {
               <span className="text-[10px] text-gray-500">إجمالي الصنف</span>
 
               <span className="text-xs font-bold text-blue-600">
-                {currentItemTotal.toLocaleString()}
+                {currentItemTotal.toLocaleString("en-US")}
               </span>
             </div>
 
@@ -1325,7 +1325,7 @@ export default function NewSalesPage() {
               <span className="text-[10px] text-gray-500">الخصم</span>
 
               <span className="text-xs font-bold text-red-600">
-                {currentDiscount.toLocaleString()}
+                {currentDiscount.toLocaleString("en-US")}
               </span>
             </div>
 
@@ -1413,7 +1413,7 @@ export default function NewSalesPage() {
                         </td>
 
                         <td className="px-2 py-1.5 font-bold text-gray-700">
-                          {item.quantity.toLocaleString()}
+                          {item.quantity.toLocaleString("en-US")}
                         </td>
 
                         <td className="px-2 py-1.5">
@@ -1424,7 +1424,7 @@ export default function NewSalesPage() {
                                 : "bg-green-50 text-green-600"
                             }`}
                           >
-                            {availableStock.toLocaleString()}
+                            {availableStock.toLocaleString("en-US")}
                           </span>
                         </td>
 
@@ -1436,20 +1436,20 @@ export default function NewSalesPage() {
                                 : "bg-blue-50 text-blue-600"
                             }`}
                           >
-                            {remainingStock.toLocaleString()}
+                            {remainingStock.toLocaleString("en-US")}
                           </span>
                         </td>
 
                         <td className="px-2 py-1.5 text-gray-700">
-                          {item.price.toLocaleString()}
+                          {item.price.toLocaleString("en-US")}
                         </td>
 
                         <td className="px-2 py-1.5 text-red-600">
-                          {item.discount.toLocaleString()}
+                          {item.discount.toLocaleString("en-US")}
                         </td>
 
                         <td className="px-2 py-1.5 font-bold text-gray-800">
-                          {item.total.toLocaleString()}
+                          {item.total.toLocaleString("en-US")}
                         </td>
 
                         <td className="px-2 py-1.5">
@@ -1489,7 +1489,7 @@ export default function NewSalesPage() {
               <span className="text-[10px] text-gray-500">إجمالي الكمية</span>
 
               <span className="text-sm font-bold text-gray-800">
-                {totalQuantity.toLocaleString()}
+                {totalQuantity.toLocaleString("en-US")}
               </span>
             </div>
 
@@ -1499,7 +1499,7 @@ export default function NewSalesPage() {
               <span className="text-[10px] text-gray-500">إجمالي الخصم</span>
 
               <span className="text-sm font-bold text-red-600">
-                {totalDiscount.toLocaleString()}
+                {totalDiscount.toLocaleString("en-US")}
               </span>
             </div>
 
@@ -1509,7 +1509,7 @@ export default function NewSalesPage() {
               <span className="text-[10px] text-gray-500">عدد الأصناف</span>
 
               <span className="text-sm font-bold text-gray-800">
-                {invoiceItems.length.toLocaleString()}
+                {invoiceItems.length.toLocaleString("en-US")}
               </span>
             </div>
 
@@ -1519,7 +1519,7 @@ export default function NewSalesPage() {
               <span className="text-[10px] text-gray-500">إجمالي الفاتورة</span>
 
               <span className="text-sm font-bold text-blue-600">
-                {invoiceTotal.toLocaleString()}
+                {invoiceTotal.toLocaleString("en-US")}
 
                 <span className="mr-1 text-[9px] font-normal">ريال</span>
               </span>
@@ -1552,3 +1552,5 @@ export default function NewSalesPage() {
     </main>
   );
 }
+
+

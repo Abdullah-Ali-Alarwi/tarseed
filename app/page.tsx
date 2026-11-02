@@ -37,7 +37,7 @@ export default function Home() {
   return (
     <main
       dir="rtl"
-      className="min-h-screen bg-slate-50 px-5 py-12 md:px-10 md:py-16"
+      className="min-h-screen bg-slate-50 px-5 py-12 md:px-10 md:py-16 "
     >
       <div className="mx-auto max-w-6xl">
         <header className="mb-10 text-center">
