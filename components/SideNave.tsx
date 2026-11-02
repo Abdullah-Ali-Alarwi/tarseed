@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
+import "./nav.css";
 
 import {
   FiHome,
@@ -165,7 +166,7 @@ export default function Sidebar() {
 
       {/* Navigation */}
 
-      <nav className="flex-1 overflow-y-auto flex flex-col gap-1">
+      <nav className="flex-1 overflow-y-auto hide-scrollbar flex flex-col gap-1">
         {menus.map((menu) => {
           const Icon = menu.icon;
           const isOpen = open === menu.title;

@@ -1,0 +1,25 @@
+/* Scrollbar Design */
+
+::-webkit-scrollbar {
+  width: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0E1F33;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #36536F;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #527797;
+}
+
+/* Firefox */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #293a4b #0E1F33;
+}
