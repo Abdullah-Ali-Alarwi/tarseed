@@ -1,14 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
-
-import TopNav from "@/components/TopNave";
-import SideNave from "@/components/SideNave";
-
 import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
-  title: "نظام الإدارة المحاسبية",
-  description: "نظام إدارة ومحاسبة",
+  title: "Wazan ERP",
+  description: "نظام وزان لإدارة الشركات",
 };
 
 export default function RootLayout({
@@ -21,17 +17,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-gray-50">
         <Toaster position="top-left" richColors closeButton duration={4000} />
 
-        <div className="flex min-h-screen w-full">
-          <div className="hidden lg:block lg:w-64 lg:shrink-0">
-            <SideNave />
-          </div>
-
-          <div className="block lg:hidden">
-            <TopNav />
-          </div>
-
-          <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
-        </div>
+        {children}
       </body>
     </html>
   );
