@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import axios from "axios";
+
 import {
   FiRefreshCw,
   FiPrinter,
@@ -67,12 +69,28 @@ type JournalLine = {
   companyId: string;
 };
 
+type DirectBalance = {
+  debit: number;
+  credit: number;
+};
+
 type AccountBalance = {
   account: Account;
   debit: number;
   credit: number;
   balance: number;
   children: AccountBalance[];
+};
+
+type FinancialTotals = {
+  assets: number;
+  liabilities: number;
+  equity: number;
+  revenue: number;
+  expenses: number;
+  netProfit: number;
+  totalLiabilitiesEquity: number;
+  difference: number;
 };
 
 /* =========================================================
@@ -88,21 +106,9 @@ const api = axios.create({
   },
 });
 
-const formatMoney = (value: number) => {
-  return new Intl.NumberFormat("ar-YE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Math.abs(value));
-};
-
-const getToday = () => {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-};
+/* =========================================================
+   HELPERS
+========================================================= */
 
 const normalizeId = (value: string | number | null | undefined) =>
   String(value ?? "");
@@ -113,10 +119,71 @@ const normalizeDate = (value?: string) => {
   return String(value).substring(0, 10);
 };
 
+const toNumber = (value: unknown) => {
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : 0;
+};
+
+const formatMoney = (value: number) => {
+  return new Intl.NumberFormat("ar-YE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(value));
+};
+
+const getToday = () => {
+  const date = new Date();
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+/* =========================================================
+   ACCOUNT HELPERS
+========================================================= */
+
+const isGroupAccount = (account: Account) => {
+  return account.isGroup === true;
+};
+
+const isDebitNature = (type: AccountType) => {
+  return type === "asset" || type === "expense";
+};
+
+const getAccountDisplayBalance = (
+  debit: number,
+  credit: number,
+  type: AccountType,
+) => {
+  const balance = debit - credit;
+
+  return isDebitNature(type) ? balance : -balance;
+};
+
+/* =========================================================
+   JOURNAL STATUS
+========================================================= */
+
 const isPostedJournal = (status?: string) => {
   if (!status) return false;
 
-  return ["posted", "approved", "مُرحّل", "مرحل", "معتمد"].includes(status);
+  const normalizedStatus = status.trim().toLowerCase();
+
+  const postedStatuses = [
+    "posted",
+    "approved",
+    "مُرحّل",
+    "مرحل",
+    "مُعتمد",
+    "معتمد",
+    "مرحّل",
+  ];
+
+  return postedStatuses.includes(normalizedStatus);
 };
 
 /* =========================================================
@@ -125,8 +192,11 @@ const isPostedJournal = (status?: string) => {
 
 export default function BalanceSheetPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+
   const [openingEntries, setOpeningEntries] = useState<OpeningEntry[]>([]);
+
   const [journals, setJournals] = useState<Journal[]>([]);
+
   const [journalLines, setJournalLines] = useState<JournalLine[]>([]);
 
   const [companyId, setCompanyId] = useState("");
@@ -134,6 +204,7 @@ export default function BalanceSheetPage() {
   const [asOfDate, setAsOfDate] = useState(getToday());
 
   const [loading, setLoading] = useState(true);
+
   const [error, setError] = useState("");
 
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(
@@ -144,7 +215,7 @@ export default function BalanceSheetPage() {
      LOAD DATA
   ========================================================= */
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
@@ -196,10 +267,12 @@ export default function BalanceSheetPage() {
         api.get("/journalLines"),
       ]);
 
+      /* -----------------------------------------
+         COMPANY FILTER
+      ----------------------------------------- */
+
       const companyAccounts: Account[] = accountsResponse.data.filter(
-        (item: Account) =>
-          String(item.companyId) === currentCompanyId &&
-          item.isActive !== false,
+        (item: Account) => String(item.companyId) === currentCompanyId,
       );
 
       const companyOpeningEntries: OpeningEntry[] = openingResponse.data.filter(
@@ -215,53 +288,79 @@ export default function BalanceSheetPage() {
       );
 
       setAccounts(companyAccounts);
+
       setOpeningEntries(companyOpeningEntries);
+
       setJournals(companyJournals);
+
       setJournalLines(companyJournalLines);
 
-      // فتح جميع الحسابات الرئيسية بشكل افتراضي
+      /* -----------------------------------------
+         DEFAULT EXPANDED ACCOUNTS
+      ----------------------------------------- */
+
       setExpandedAccounts(
         new Set(
           companyAccounts
-            .filter((account) => account.isGroup)
+            .filter((account) => isGroupAccount(account))
             .map((account) => normalizeId(account.id)),
         ),
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Balance Sheet Error:", err);
 
-      setError(
-        err.response?.data?.message ||
-          err.message ||
-          "حدث خطأ أثناء تحميل بيانات الميزانية.",
-      );
+      if (axios.isAxiosError(err)) {
+        setError(
+          err.response?.data?.message ||
+            err.message ||
+            "حدث خطأ أثناء تحميل بيانات الميزانية.",
+        );
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "حدث خطأ أثناء تحميل بيانات الميزانية.",
+        );
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   /* =========================================================
      CALCULATE ACCOUNT BALANCES
   ========================================================= */
 
   const calculatedData = useMemo(() => {
+    const emptyResult = {
+      tree: [] as AccountBalance[],
+
+      assets: 0,
+      liabilities: 0,
+      equity: 0,
+      revenue: 0,
+      expenses: 0,
+      netProfit: 0,
+
+      totalLiabilitiesEquity: 0,
+
+      difference: 0,
+
+      totalDebit: 0,
+      totalCredit: 0,
+    };
+
     if (!asOfDate) {
-      return {
-        tree: [],
-        assets: 0,
-        liabilities: 0,
-        equity: 0,
-        revenue: 0,
-        expenses: 0,
-        netProfit: 0,
-        totalLiabilitiesEquity: 0,
-        difference: 0,
-      };
+      return emptyResult;
     }
+
+    /* =========================================
+       1. ACCOUNT MAP
+    ========================================= */
 
     const accountMap = new Map<string, Account>();
 
@@ -269,91 +368,90 @@ export default function BalanceSheetPage() {
       accountMap.set(normalizeId(account.id), account);
     });
 
-    const debitMap = new Map<string, number>();
-    const creditMap = new Map<string, number>();
+    /* =========================================
+       2. DIRECT BALANCES
+    ========================================= */
+
+    const directBalances = new Map<string, DirectBalance>();
+
+    accounts.forEach((account) => {
+      directBalances.set(normalizeId(account.id), {
+        debit: 0,
+        credit: 0,
+      });
+    });
 
     const addAmount = (
-      map: Map<string, number>,
       accountId: string | number,
-      amount: number,
+      debit: number,
+      credit: number,
     ) => {
       const key = normalizeId(accountId);
 
-      map.set(key, (map.get(key) || 0) + (Number(amount) || 0));
+      if (!accountMap.has(key)) return;
+
+      const current = directBalances.get(key) || {
+        debit: 0,
+        credit: 0,
+      };
+
+      directBalances.set(key, {
+        debit: current.debit + toNumber(debit),
+        credit: current.credit + toNumber(credit),
+      });
     };
 
-    /* -----------------------------------------
-       1. OPENING ENTRIES
-    ----------------------------------------- */
+    /* =========================================
+       3. OPENING ENTRIES
+    ========================================= */
 
     openingEntries.forEach((entry) => {
       const entryDate = normalizeDate(entry.date);
 
-      if (!entryDate || entryDate > asOfDate) return;
+      if (!entryDate || entryDate > asOfDate) {
+        return;
+      }
 
-      const accountId = normalizeId(entry.accountId);
-
-      if (!accountMap.has(accountId)) return;
-
-      addAmount(debitMap, entry.accountId, Number(entry.debit) || 0);
-      addAmount(creditMap, entry.accountId, Number(entry.credit) || 0);
+      addAmount(entry.accountId, entry.debit, entry.credit);
     });
 
-    /* -----------------------------------------
-       2. POSTED JOURNALS
-    ----------------------------------------- */
+    /* =========================================
+       4. POSTED JOURNALS
+    ========================================= */
 
-    const journalMap = new Map<string, Journal>();
+    const validJournals = new Set<string>();
 
     journals.forEach((journal) => {
-      if (!isPostedJournal(journal.status)) return;
-
       const journalDate = normalizeDate(journal.date);
 
-      if (!journalDate || journalDate > asOfDate) return;
+      if (!journalDate || journalDate > asOfDate) {
+        return;
+      }
 
-      journalMap.set(normalizeId(journal.id), journal);
+      if (!isPostedJournal(journal.status)) {
+        return;
+      }
+
+      validJournals.add(normalizeId(journal.id));
     });
+
+    /* =========================================
+       5. JOURNAL LINES
+    ========================================= */
 
     journalLines.forEach((line) => {
       const journalId = normalizeId(line.journalId);
 
-      const journal = journalMap.get(journalId);
-
-      if (!journal) return;
-
-      const accountId = normalizeId(line.accountId);
-
-      if (!accountMap.has(accountId)) return;
-
-      addAmount(debitMap, line.accountId, Number(line.debit) || 0);
-      addAmount(creditMap, line.accountId, Number(line.credit) || 0);
-    });
-
-    /* -----------------------------------------
-       3. DIRECT ACCOUNT BALANCES
-    ----------------------------------------- */
-
-    const directBalances = new Map<
-      string,
-      {
-        debit: number;
-        credit: number;
+      if (!validJournals.has(journalId)) {
+        return;
       }
-    >();
 
-    accounts.forEach((account) => {
-      const id = normalizeId(account.id);
-
-      directBalances.set(id, {
-        debit: debitMap.get(id) || 0,
-        credit: creditMap.get(id) || 0,
-      });
+      addAmount(line.accountId, line.debit, line.credit);
     });
 
-    /* -----------------------------------------
-       4. BUILD ACCOUNT TREE
-    ----------------------------------------- */
+    /* =========================================
+       6. ACCOUNT CHILDREN
+    ========================================= */
 
     const childrenMap = new Map<string, Account[]>();
 
@@ -370,6 +468,10 @@ export default function BalanceSheetPage() {
 
       childrenMap.set(parentId, children);
     });
+
+    /* =========================================
+       7. BUILD ACCOUNT TREE
+    ========================================= */
 
     const buildTree = (
       account: Account,
@@ -388,6 +490,7 @@ export default function BalanceSheetPage() {
       }
 
       const nextVisited = new Set(visited);
+
       nextVisited.add(id);
 
       const direct = directBalances.get(id) || {
@@ -396,23 +499,43 @@ export default function BalanceSheetPage() {
       };
 
       const children = (childrenMap.get(id) || [])
-        .sort((a, b) => a.code.localeCompare(b.code))
+        .sort((a, b) =>
+          a.code.localeCompare(b.code, "en", {
+            numeric: true,
+          }),
+        )
         .map((child) => buildTree(child, nextVisited));
 
-      const totalDebit =
-        direct.debit + children.reduce((sum, child) => sum + child.debit, 0);
+      const childrenDebit = children.reduce(
+        (sum, child) => sum + child.debit,
+        0,
+      );
 
-      const totalCredit =
-        direct.credit + children.reduce((sum, child) => sum + child.credit, 0);
+      const childrenCredit = children.reduce(
+        (sum, child) => sum + child.credit,
+        0,
+      );
+
+      const totalDebit = direct.debit + childrenDebit;
+
+      const totalCredit = direct.credit + childrenCredit;
 
       return {
         account,
+
         debit: totalDebit,
+
         credit: totalCredit,
+
         balance: totalDebit - totalCredit,
+
         children,
       };
     };
+
+    /* =========================================
+       8. ROOT ACCOUNTS
+    ========================================= */
 
     const rootAccounts = accounts
       .filter((account) => {
@@ -420,60 +543,98 @@ export default function BalanceSheetPage() {
 
         return !parentId || !accountMap.has(parentId);
       })
-      .sort((a, b) => a.code.localeCompare(b.code));
+      .sort((a, b) =>
+        a.code.localeCompare(b.code, "en", {
+          numeric: true,
+        }),
+      );
 
     const tree = rootAccounts.map((account) => buildTree(account));
 
-    /* -----------------------------------------
-       5. CALCULATE TOTALS
-    ----------------------------------------- */
+    /* =========================================
+       9. CALCULATE ACCOUNT TYPE TOTALS
 
-    const getAccountTotal = (type: AccountType) => {
-      return tree
-        .filter((item) => item.account.type === type)
-        .reduce((sum, item) => {
-          return sum + item.debit - item.credit;
-        }, 0);
+       IMPORTANT:
+       We sum direct balances of each account
+       exactly once to avoid double counting
+       parent and child accounts.
+    ========================================= */
+
+    const getAccountTypeTotal = (type: AccountType) => {
+      return accounts.reduce((total, account) => {
+        if (account.type !== type) {
+          return total;
+        }
+
+        const direct = directBalances.get(normalizeId(account.id));
+
+        if (!direct) return total;
+
+        return (
+          total + getAccountDisplayBalance(direct.debit, direct.credit, type)
+        );
+      }, 0);
     };
 
-    // الأصول: المدين - الدائن
-    const assets = getAccountTotal("asset");
+    /* =========================================
+       10. FINANCIAL TOTALS
+    ========================================= */
 
-    // الالتزامات: الدائن - المدين
-    const liabilities = -getAccountTotal("liability");
+    const assets = getAccountTypeTotal("asset");
 
-    // حقوق الملكية: الدائن - المدين
-    const equity = -getAccountTotal("equity");
+    const liabilities = getAccountTypeTotal("liability");
 
-    // الإيرادات: الدائن - المدين
-    const revenue = -getAccountTotal("revenue");
+    const equity = getAccountTypeTotal("equity");
 
-    // المصروفات: المدين - الدائن
-    const expenses = getAccountTotal("expense");
+    const revenue = getAccountTypeTotal("revenue");
 
-    // صافي الربح أو الخسارة
+    const expenses = getAccountTypeTotal("expense");
+
     const netProfit = revenue - expenses;
 
-    // إجمالي الالتزامات وحقوق الملكية
     const totalLiabilitiesEquity = liabilities + equity + netProfit;
 
     const difference = assets - totalLiabilitiesEquity;
 
+    /* =========================================
+       11. TRIAL BALANCE TOTALS
+    ========================================= */
+
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    directBalances.forEach((balance) => {
+      totalDebit += balance.debit;
+      totalCredit += balance.credit;
+    });
+
     return {
       tree,
+
       assets,
+
       liabilities,
+
       equity,
+
       revenue,
+
       expenses,
+
       netProfit,
+
       totalLiabilitiesEquity,
+
       difference,
+
+      totalDebit,
+
+      totalCredit,
     };
   }, [accounts, openingEntries, journals, journalLines, asOfDate]);
 
   /* =========================================================
-     ACCOUNT DISPLAY
+     EXPAND / COLLAPSE
   ========================================================= */
 
   const toggleAccount = (id: string) => {
@@ -490,30 +651,29 @@ export default function BalanceSheetPage() {
     });
   };
 
+  /* =========================================================
+     RENDER ACCOUNT
+  ========================================================= */
+
   const renderAccount = (
     item: AccountBalance,
     depth = 0,
     sectionType: AccountType,
-  ): React.ReactNode => {
+  ): ReactNode => {
     const accountId = normalizeId(item.account.id);
 
     const isExpanded = expandedAccounts.has(accountId);
 
     const hasChildren = item.children.length > 0;
 
-    let balance = item.balance;
+    const balance = getAccountDisplayBalance(
+      item.debit,
+      item.credit,
+      sectionType,
+    );
 
-    // عرض الرصيد بالطبيعة المناسبة لكل نوع
-    if (
-      sectionType === "liability" ||
-      sectionType === "equity" ||
-      sectionType === "revenue"
-    ) {
-      balance = -item.balance;
-    }
-
-    // لا نعرض الحسابات ذات الرصيد الصفري إذا لم تكن مجموعة
-    if (!item.account.isGroup && Math.abs(balance) < 0.000001) {
+    // إخفاء الحسابات الصفرية غير المجموعة
+    if (!isGroupAccount(item.account) && Math.abs(balance) < 0.000001) {
       return null;
     }
 
@@ -521,7 +681,9 @@ export default function BalanceSheetPage() {
       <div key={accountId}>
         <div
           className={`grid grid-cols-12 items-center border-b border-slate-100 px-3 py-3 text-sm transition hover:bg-slate-50 ${
-            item.account.isGroup ? "bg-slate-50/70 font-semibold" : "bg-white"
+            isGroupAccount(item.account)
+              ? "bg-slate-50/70 font-semibold"
+              : "bg-white"
           }`}
         >
           <div
@@ -570,13 +732,13 @@ export default function BalanceSheetPage() {
   };
 
   /* =========================================================
-     SECTION
+     RENDER SECTION
   ========================================================= */
 
   const renderSection = (
     title: string,
     type: AccountType,
-    icon: React.ReactNode,
+    icon: ReactNode,
     total: number,
     description: string,
   ) => {
@@ -586,6 +748,8 @@ export default function BalanceSheetPage() {
 
     return (
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        {/* HEADER */}
+
         <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm">
@@ -608,10 +772,15 @@ export default function BalanceSheetPage() {
           </div>
         </div>
 
+        {/* TABLE HEADER */}
+
         <div className="grid grid-cols-12 border-b border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500">
           <div className="col-span-7">الحساب</div>
+
           <div className="col-span-5 text-left">الرصيد</div>
         </div>
+
+        {/* ACCOUNTS */}
 
         {sectionAccounts.length > 0 ? (
           sectionAccounts.map((item) => renderAccount(item, 0, type))
@@ -620,6 +789,8 @@ export default function BalanceSheetPage() {
             لا توجد حسابات ضمن هذا القسم.
           </div>
         )}
+
+        {/* FOOTER */}
 
         <div className="flex items-center justify-between bg-slate-50 px-4 py-3">
           <span className="font-bold text-slate-700">إجمالي {title}</span>
@@ -686,10 +857,17 @@ export default function BalanceSheetPage() {
   }
 
   /* =========================================================
-     MAIN UI
+     BALANCE STATUS
   ========================================================= */
 
   const isBalanced = Math.abs(calculatedData.difference) < 0.01;
+
+  const isTrialBalanceBalanced =
+    Math.abs(calculatedData.totalDebit - calculatedData.totalCredit) < 0.01;
+
+  /* =========================================================
+     MAIN UI
+  ========================================================= */
 
   return (
     <div dir="rtl" className="space-y-5 pb-10">
@@ -763,6 +941,8 @@ export default function BalanceSheetPage() {
       ===================================== */}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {/* ASSETS */}
+
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-sm text-slate-500">إجمالي الأصول</span>
@@ -778,6 +958,8 @@ export default function BalanceSheetPage() {
             مجموع الأصول المتداولة والثابتة
           </p>
         </div>
+
+        {/* LIABILITIES */}
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -795,6 +977,8 @@ export default function BalanceSheetPage() {
           </p>
         </div>
 
+        {/* EQUITY */}
+
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-sm text-slate-500">حقوق الملكية</span>
@@ -810,6 +994,8 @@ export default function BalanceSheetPage() {
             قبل إضافة نتيجة الفترة الحالية
           </p>
         </div>
+
+        {/* NET PROFIT */}
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -892,7 +1078,7 @@ export default function BalanceSheetPage() {
       </div>
 
       {/* =====================================
-          BALANCE SHEET
+          FINANCIAL SECTIONS
       ===================================== */}
 
       <div className="space-y-4">
@@ -932,7 +1118,7 @@ export default function BalanceSheetPage() {
           <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-4">
             <div>
               <h3 className="font-bold text-slate-800">
-                نتيجة النشاط خلال الفترة حتى التاريخ المحدد
+                نتيجة النشاط حتى التاريخ المحدد
               </h3>
 
               <p className="mt-1 text-xs text-slate-500">
@@ -976,7 +1162,7 @@ export default function BalanceSheetPage() {
       </div>
 
       {/* =====================================
-          FINAL TOTAL
+          TOTAL BALANCE
       ===================================== */}
 
       <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900 text-white shadow-sm">
@@ -1014,6 +1200,64 @@ export default function BalanceSheetPage() {
       </div>
 
       {/* =====================================
+          TRIAL BALANCE CHECK
+      ===================================== */}
+
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 bg-slate-50 px-4 py-4">
+          <h3 className="font-bold text-slate-800">
+            التحقق من توازن الأرصدة المحاسبية
+          </h3>
+
+          <p className="mt-1 text-xs text-slate-500">
+            مقارنة إجمالي الحركات المدينة والدائنة
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+            <p className="text-sm text-blue-700">إجمالي المدين</p>
+
+            <p className="mt-2 text-xl font-bold text-blue-900">
+              {formatMoney(calculatedData.totalDebit)}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-purple-100 bg-purple-50 p-4">
+            <p className="text-sm text-purple-700">إجمالي الدائن</p>
+
+            <p className="mt-2 text-xl font-bold text-purple-900">
+              {formatMoney(calculatedData.totalCredit)}
+            </p>
+          </div>
+        </div>
+
+        <div
+          className={`flex items-center gap-3 border-t px-4 py-3 ${
+            isTrialBalanceBalanced
+              ? "border-green-100 bg-green-50"
+              : "border-red-100 bg-red-50"
+          }`}
+        >
+          {isTrialBalanceBalanced ? (
+            <FiCheckCircle className="text-green-600" />
+          ) : (
+            <FiAlertCircle className="text-red-600" />
+          )}
+
+          <span
+            className={`text-sm font-semibold ${
+              isTrialBalanceBalanced ? "text-green-800" : "text-red-800"
+            }`}
+          >
+            {isTrialBalanceBalanced
+              ? "إجمالي المدين يساوي إجمالي الدائن."
+              : "يوجد اختلاف بين إجمالي المدين والدائن."}
+          </span>
+        </div>
+      </div>
+
+      {/* =====================================
           NOTES
       ===================================== */}
 
@@ -1027,20 +1271,27 @@ export default function BalanceSheetPage() {
             <ul className="mt-2 list-inside list-disc text-blue-800">
               <li>يتم احتساب الأرصدة الافتتاحية حتى التاريخ المحدد.</li>
 
-              <li>يتم احتساب القيود اليومية المرحلة فقط.</li>
+              <li>يتم احتساب القيود اليومية المرحلة والمعتمدة فقط.</li>
 
               <li>يتم استبعاد القيود المسودة والملغاة.</li>
 
-              <li>يتم جمع أرصدة الحسابات الفرعية داخل الحسابات الرئيسية.</li>
+              <li>يتم تجميع الأرصدة الفرعية داخل الحسابات الرئيسية.</li>
+
+              <li>يتم احتساب صافي الربح من الإيرادات والمصروفات.</li>
 
               <li>
-                يتم احتساب صافي الربح من الإيرادات والمصروفات وإضافته إلى حقوق
-                الملكية.
+                تتم إضافة نتيجة النشاط إلى الالتزامات وحقوق الملكية عند احتساب
+                معادلة الميزانية.
               </li>
 
               <li>
-                لا يتم احتساب حركات المخزون مباشرة؛ يجب أن تنعكس محاسبياً في
-                حساب المخزون من خلال القيود.
+                لا يتم احتساب حركات المخزون مباشرة؛ يجب أن تنعكس محاسبياً من
+                خلال القيود المحاسبية.
+              </li>
+
+              <li>
+                إجمالي المدين والدائن يشمل الأرصدة الافتتاحية والحركات المرحلة
+                حتى التاريخ المحدد.
               </li>
             </ul>
           </div>

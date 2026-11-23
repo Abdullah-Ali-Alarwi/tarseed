@@ -16,16 +16,24 @@ import {
   FiX,
   FiRefreshCw,
   FiSearch,
-  FiAlertCircle,
 } from "react-icons/fi";
 
 import { toast } from "sonner";
+
+import {
+  getCreateActivity,
+  getUpdateActivity,
+  getCurrentActor,
+  logCreate,
+  logUpdate,
+  logDelete,
+} from "@/app/(erp)/erp/lib/activity";
 
 // ========================================
 // API
 // ========================================
 
-const API_URL = "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 const api = axios.create({
   baseURL: API_URL,
@@ -46,6 +54,14 @@ interface BaseItem {
   id: string;
   companyId: string;
   status: Status;
+
+  createdBy?: string;
+  createdByName?: string;
+  createdAt?: string;
+
+  updatedBy?: string;
+  updatedByName?: string;
+  updatedAt?: string;
 }
 
 interface Warehouse extends BaseItem {
@@ -79,6 +95,28 @@ interface Product extends BaseItem {
   trackInventory: boolean;
 }
 
+interface ReferenceRecord {
+  id?: string;
+  companyId?: string;
+
+  productId?: string;
+  warehouseId?: string;
+
+  fromWarehouseId?: string;
+  toWarehouseId?: string;
+
+  sourceWarehouseId?: string;
+  destinationWarehouseId?: string;
+
+  itemId?: string;
+  referenceId?: string;
+
+  items?: Array<{
+    productId?: string;
+    itemId?: string;
+  }>;
+}
+
 type FormData = Record<string, string | boolean>;
 
 // ========================================
@@ -107,6 +145,55 @@ const DEFAULT_UNITS = [
     symbol: "ctn",
   },
 ];
+
+// ========================================
+// Helpers
+// ========================================
+
+const getCookie = (name: string) => {
+  if (typeof document === "undefined") return "";
+
+  const cookies = document.cookie.split("; ");
+
+  const cookie = cookies.find((item) => item.startsWith(`${name}=`));
+
+  return cookie ? decodeURIComponent(cookie.substring(name.length + 1)) : "";
+};
+
+const getRecordName = (item: BaseItem) => {
+  return "name" in item ? String(item.name) : String(item.id);
+};
+
+const isCompanyRecord = (record: ReferenceRecord, currentCompanyId: string) => {
+  return String(record.companyId || "") === currentCompanyId;
+};
+
+const hasProductReference = (record: ReferenceRecord, productId: string) => {
+  return (
+    String(record.productId || "") === productId ||
+    String(record.itemId || "") === productId ||
+    Boolean(
+      record.items?.some(
+        (item) =>
+          String(item.productId || "") === productId ||
+          String(item.itemId || "") === productId,
+      ),
+    )
+  );
+};
+
+const hasWarehouseReference = (
+  record: ReferenceRecord,
+  warehouseId: string,
+) => {
+  return (
+    String(record.warehouseId || "") === warehouseId ||
+    String(record.fromWarehouseId || "") === warehouseId ||
+    String(record.toWarehouseId || "") === warehouseId ||
+    String(record.sourceWarehouseId || "") === warehouseId ||
+    String(record.destinationWarehouseId || "") === warehouseId
+  );
+};
 
 // ========================================
 // Main Component
@@ -167,39 +254,43 @@ export default function InventorySettingPage() {
   };
 
   // ======================================
-  // Load Current User
+  // Initialize
   // ======================================
 
   useEffect(() => {
     initialize();
   }, []);
+
   const initialize = async () => {
     try {
-      // قراءة نوع الحساب من Cookies
-      const cookies = document.cookie.split("; ");
-
-      const getCookie = (name: string) => {
-        const cookie = cookies.find((item) => item.startsWith(`${name}=`));
-
-        return cookie
-          ? decodeURIComponent(cookie.substring(name.length + 1))
-          : "";
-      };
-
       const userType = getCookie("type");
 
-      // منع حساب منصة Wezzan
+      if (!userType) {
+        toast.error("لم يتم العثور على بيانات تسجيل الدخول");
+        return;
+      }
+
       if (userType === "platform") {
         toast.error("هذا القسم مخصص لمستخدمي الشركات");
         return;
       }
 
-      // قراءة companyId من Cookies
       const currentCompanyId = getCookie("companyId");
 
       if (!currentCompanyId) {
-        console.error("Cookies:", document.cookie);
         toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
+        return;
+      }
+
+      const actor = getCurrentActor();
+
+      if (!actor) {
+        toast.error("تعذر تحديد المستخدم الحالي");
+        return;
+      }
+
+      if (actor.companyId && actor.companyId !== currentCompanyId) {
+        toast.error("بيانات الشركة لا تتطابق مع بيانات المستخدم");
         return;
       }
 
@@ -208,11 +299,13 @@ export default function InventorySettingPage() {
       await loadData(currentCompanyId);
     } catch (error) {
       console.error("Initialize Error:", error);
+
       toast.error("حدث خطأ أثناء تحميل البيانات");
     } finally {
       setLoading(false);
     }
   };
+
   // ======================================
   // Seed Default Units Per Company
   // ======================================
@@ -232,17 +325,29 @@ export default function InventorySettingPage() {
 
     if (missingUnits.length === 0) return;
 
-    await Promise.all(
-      missingUnits.map((unit) =>
-        api.post("/units", {
-          companyId: currentCompanyId,
-          name: unit.name,
-          symbol: unit.symbol,
-          status: "active",
-          isDefault: true,
-        }),
-      ),
-    );
+    for (const unit of missingUnits) {
+      const payload = {
+        companyId: currentCompanyId,
+        name: unit.name,
+        symbol: unit.symbol,
+        status: "active",
+        isDefault: true,
+
+        ...getCreateActivity(),
+
+        companyId: currentCompanyId,
+      };
+
+      const response = await api.post("/units", payload);
+
+      await logCreate(
+        "inventory",
+        `إنشاء وحدة قياس افتراضية: ${unit.name}`,
+        response.data.id,
+        unit.name,
+        payload,
+      );
+    }
   };
 
   // ======================================
@@ -274,8 +379,6 @@ export default function InventorySettingPage() {
 
       await seedDefaultUnits(currentCompanyId, companyUnits);
 
-      // Reload units after inserting defaults
-
       const updatedUnits = await api.get("/units", {
         params: { companyId: currentCompanyId },
       });
@@ -287,7 +390,8 @@ export default function InventorySettingPage() {
       setUnits(companyUnits);
       setProducts(productRes.data);
     } catch (error) {
-      console.error(error);
+      console.error("Load Data Error:", error);
+
       toast.error("تعذر تحميل بيانات المخزون");
     }
   };
@@ -385,15 +489,22 @@ export default function InventorySettingPage() {
   // ======================================
 
   const handleEdit = (item: BaseItem) => {
+    if (item.companyId !== companyId) {
+      toast.error("لا يمكنك تعديل بيانات شركة أخرى");
+      return;
+    }
+
     setEditingId(String(item.id));
 
     if (activeSection === "products") {
+      const product = item as Product;
+
       setForm({
-        name: (item as Product).name,
-        categoryId: (item as Product).categoryId,
-        unitId: (item as Product).unitId,
-        trackInventory: (item as Product).trackInventory,
-        status: item.status,
+        name: product.name,
+        categoryId: product.categoryId,
+        unitId: product.unitId,
+        trackInventory: product.trackInventory,
+        status: product.status,
       });
     } else {
       setForm({ ...item });
@@ -455,6 +566,18 @@ export default function InventorySettingPage() {
       return;
     }
 
+    const actor = getCurrentActor();
+
+    if (!actor) {
+      toast.error("تعذر تحديد المستخدم الحالي");
+      return;
+    }
+
+    if (actor.companyId && actor.companyId !== companyId) {
+      toast.error("لا يمكنك تعديل بيانات شركة أخرى");
+      return;
+    }
+
     if (!String(form.name || "").trim()) {
       toast.error("يرجى إدخال الاسم");
       return;
@@ -464,6 +587,8 @@ export default function InventorySettingPage() {
       toast.error("حدد المجموعة ووحدة القياس");
       return;
     }
+
+    // Validate Product Category and Unit
 
     if (activeSection === "products") {
       const categoryExists = categories.some(
@@ -489,6 +614,20 @@ export default function InventorySettingPage() {
     try {
       setSaving(true);
 
+      const oldItem = editingId
+        ? getCurrentData().find((item) => String(item.id) === editingId)
+        : undefined;
+
+      if (editingId && !oldItem) {
+        toast.error("تعذر العثور على السجل المطلوب");
+        return;
+      }
+
+      if (oldItem && oldItem.companyId !== companyId) {
+        toast.error("لا يمكنك تعديل بيانات شركة أخرى");
+        return;
+      }
+
       let payload: Record<string, unknown> = {
         ...form,
         companyId,
@@ -500,11 +639,15 @@ export default function InventorySettingPage() {
 
       if (activeSection === "products") {
         const category = categories.find(
-          (item) => String(item.id) === String(form.categoryId),
+          (item) =>
+            String(item.id) === String(form.categoryId) &&
+            item.companyId === companyId,
         );
 
         const unit = units.find(
-          (item) => String(item.id) === String(form.unitId),
+          (item) =>
+            String(item.id) === String(form.unitId) &&
+            item.companyId === companyId,
         );
 
         if (!category || !unit) {
@@ -514,6 +657,7 @@ export default function InventorySettingPage() {
 
         payload = {
           companyId,
+
           name: String(form.name).trim(),
 
           categoryId: String(category.id),
@@ -523,17 +667,15 @@ export default function InventorySettingPage() {
           unitName: unit.name,
 
           trackInventory: Boolean(form.trackInventory),
+
           status: String(form.status || "active"),
         };
-
-        // Generate SKU and barcode only on creation
 
         if (editingId === null) {
           const generated = generateProductNumber();
 
           payload.sku = generated.sku;
           payload.barcode = generated.barcode;
-          payload.createdAt = new Date().toISOString();
         }
       }
 
@@ -542,39 +684,23 @@ export default function InventorySettingPage() {
       // ----------------------------------
 
       if (activeSection === "warehouses") {
-        payload = {
-          ...payload,
-          name: String(form.name).trim(),
-          code: String(form.code || "").trim(),
-          location: String(form.location || ""),
-          description: String(form.description || ""),
-          isDefault: Boolean(form.isDefault),
-          status: String(form.status || "active"),
-        };
-
         if (!String(form.code || "").trim()) {
           toast.error("أدخل رمز المستودع");
           return;
         }
 
-        if (Boolean(form.isDefault)) {
-          const otherDefaults = warehouses.filter(
-            (warehouse) =>
-              warehouse.isDefault && String(warehouse.id) !== editingId,
-          );
+        payload = {
+          ...payload,
 
-          await Promise.all(
-            otherDefaults.map((warehouse) =>
-              api.patch(`/warehouses/${warehouse.id}`, {
-                isDefault: false,
-              }),
-            ),
-          );
-        }
+          name: String(form.name).trim(),
+          code: String(form.code).trim(),
+          location: String(form.location || ""),
+          description: String(form.description || ""),
 
-        if (editingId === null) {
-          payload.createdAt = new Date().toISOString();
-        }
+          isDefault: Boolean(form.isDefault),
+
+          status: String(form.status || "active"),
+        };
       }
 
       // ----------------------------------
@@ -589,9 +715,11 @@ export default function InventorySettingPage() {
 
         payload = {
           ...payload,
+
           name: String(form.name).trim(),
           code: String(form.code).trim(),
           description: String(form.description || ""),
+
           status: String(form.status || "active"),
         };
       }
@@ -608,10 +736,33 @@ export default function InventorySettingPage() {
 
         payload = {
           ...payload,
+
           name: String(form.name).trim(),
           symbol: String(form.symbol).trim(),
+
           status: String(form.status || "active"),
-          isDefault: false,
+
+          isDefault: editingId ? Boolean((oldItem as Unit)?.isDefault) : false,
+        };
+      }
+
+      // ----------------------------------
+      // Actor Fields
+      // ----------------------------------
+
+      if (editingId !== null) {
+        payload = {
+          ...payload,
+          ...getUpdateActivity(),
+
+          companyId,
+        };
+      } else {
+        payload = {
+          ...payload,
+          ...getCreateActivity(),
+
+          companyId,
         };
       }
 
@@ -619,14 +770,80 @@ export default function InventorySettingPage() {
       // Create / Update
       // ----------------------------------
 
+      let savedRecord: BaseItem;
+
       if (editingId !== null) {
-        await api.patch(`${getEndpoint()}/${editingId}`, payload);
+        const response = await api.patch(
+          `${getEndpoint()}/${editingId}`,
+          payload,
+        );
+
+        savedRecord = response.data;
+
+        await logUpdate(
+          "inventory",
+          `تعديل ${
+            sections.find((section) => section.id === activeSection)?.title
+          }: ${getRecordName(savedRecord)}`,
+          savedRecord.id,
+          getRecordName(savedRecord),
+          oldItem as unknown as Record<string, unknown>,
+          {
+            ...payload,
+          },
+        );
 
         toast.success("تم تحديث البيانات بنجاح");
       } else {
-        await api.post(getEndpoint(), payload);
+        const response = await api.post(getEndpoint(), payload);
+
+        savedRecord = response.data;
+
+        await logCreate(
+          "inventory",
+          `إضافة ${
+            sections.find((section) => section.id === activeSection)?.title
+          }: ${getRecordName(savedRecord)}`,
+          savedRecord.id,
+          getRecordName(savedRecord),
+          payload,
+        );
 
         toast.success("تمت الإضافة بنجاح");
+      }
+
+      // ----------------------------------
+      // Default Warehouse
+      // ----------------------------------
+
+      if (activeSection === "warehouses" && Boolean(form.isDefault)) {
+        const otherDefaults = warehouses.filter(
+          (warehouse) =>
+            warehouse.isDefault &&
+            String(warehouse.id) !== editingId &&
+            warehouse.companyId === companyId,
+        );
+
+        for (const warehouse of otherDefaults) {
+          const updatePayload = {
+            isDefault: false,
+            ...getUpdateActivity(),
+          };
+
+          await api.patch(`/warehouses/${warehouse.id}`, updatePayload);
+
+          await logUpdate(
+            "inventory",
+            `إلغاء المستودع الافتراضي: ${warehouse.name}`,
+            warehouse.id,
+            warehouse.name,
+            warehouse as unknown as Record<string, unknown>,
+            {
+              ...warehouse,
+              ...updatePayload,
+            },
+          );
+        }
       }
 
       setShowForm(false);
@@ -635,11 +852,46 @@ export default function InventorySettingPage() {
 
       await loadData(companyId);
     } catch (error) {
-      console.error(error);
+      console.error("Save Inventory Setting Error:", error);
+
       toast.error("حدث خطأ أثناء حفظ البيانات");
     } finally {
       setSaving(false);
     }
+  };
+
+  // ======================================
+  // Load References Before Delete
+  // ======================================
+
+  const loadDeleteReferences = async () => {
+    const endpoints = [
+      "/warehouseStocks",
+      "/inventoryMovements",
+      "/transfers",
+      "/stockAdjustments",
+      "/stocktakes",
+      "/purchases",
+      "/sales",
+    ];
+
+    const responses = await Promise.all(
+      endpoints.map((endpoint) =>
+        api.get(endpoint, {
+          params: { companyId },
+        }),
+      ),
+    );
+
+    return {
+      warehouseStocks: responses[0].data as ReferenceRecord[],
+      inventoryMovements: responses[1].data as ReferenceRecord[],
+      transfers: responses[2].data as ReferenceRecord[],
+      stockAdjustments: responses[3].data as ReferenceRecord[],
+      stocktakes: responses[4].data as ReferenceRecord[],
+      purchases: responses[5].data as ReferenceRecord[],
+      sales: responses[6].data as ReferenceRecord[],
+    };
   };
 
   // ======================================
@@ -652,45 +904,194 @@ export default function InventorySettingPage() {
       return;
     }
 
+    const actor = getCurrentActor();
+
+    if (!actor) {
+      toast.error("تعذر تحديد المستخدم الحالي");
+      return;
+    }
+
+    if (actor.companyId && actor.companyId !== companyId) {
+      toast.error("لا يمكنك حذف بيانات شركة أخرى");
+      return;
+    }
+
+    // ----------------------------------
+    // Unit References
+    // ----------------------------------
+
     if (
       activeSection === "units" &&
-      products.some((product) => product.unitId === String(item.id))
+      products.some(
+        (product) =>
+          product.companyId === companyId &&
+          String(product.unitId) === String(item.id),
+      )
     ) {
       toast.error("لا يمكن حذف وحدة مستخدمة في أصناف");
       return;
     }
 
+    // ----------------------------------
+    // Category References
+    // ----------------------------------
+
     if (
       activeSection === "categories" &&
-      products.some((product) => product.categoryId === String(item.id))
+      products.some(
+        (product) =>
+          product.companyId === companyId &&
+          String(product.categoryId) === String(item.id),
+      )
     ) {
       toast.error("لا يمكن حذف مجموعة تحتوي على أصناف");
       return;
     }
 
-    if (activeSection === "warehouses" && warehouses.length === 1) {
-      toast.error("يجب الاحتفاظ بمستودع واحد على الأقل");
-      return;
+    // ----------------------------------
+    // Warehouse Rules
+    // ----------------------------------
+
+    if (activeSection === "warehouses") {
+      if (
+        warehouses.filter((warehouse) => warehouse.companyId === companyId)
+          .length <= 1
+      ) {
+        toast.error("يجب الاحتفاظ بمستودع واحد على الأقل");
+        return;
+      }
+
+      if ((item as Warehouse).isDefault) {
+        toast.error("لا يمكن حذف المستودع الافتراضي. عيّن مستودعًا آخر أولاً.");
+        return;
+      }
     }
+
+    // ----------------------------------
+    // Default Unit
+    // ----------------------------------
 
     if (activeSection === "units" && (item as Unit).isDefault) {
       toast.error("لا يمكن حذف وحدة القياس الافتراضية");
       return;
     }
 
-    const confirmed = window.confirm("هل أنت متأكد من حذف هذا السجل؟");
+    // ----------------------------------
+    // Confirm
+    // ----------------------------------
+
+    const confirmed = window.confirm(
+      `هل أنت متأكد من حذف "${getRecordName(item)}"؟`,
+    );
 
     if (!confirmed) return;
 
     try {
+      setSaving(true);
+
+      // ----------------------------------
+      // Check Database References
+      // ----------------------------------
+
+      if (activeSection === "warehouses" || activeSection === "products") {
+        let references;
+
+        try {
+          references = await loadDeleteReferences();
+        } catch (error) {
+          console.error("Load Delete References Error:", error);
+
+          toast.error(
+            "تعذر التحقق من ارتباطات السجل. لم يتم تنفيذ الحذف حفاظًا على البيانات.",
+          );
+
+          return;
+        }
+
+        if (activeSection === "warehouses") {
+          const warehouseId = String(item.id);
+
+          const referenceGroups = [
+            references.warehouseStocks,
+            references.inventoryMovements,
+            references.transfers,
+            references.stockAdjustments,
+            references.stocktakes,
+            references.purchases,
+            references.sales,
+          ];
+
+          const isUsed = referenceGroups.some((records) =>
+            records.some(
+              (record) =>
+                isCompanyRecord(record, companyId) &&
+                hasWarehouseReference(record, warehouseId),
+            ),
+          );
+
+          if (isUsed) {
+            toast.error(
+              "لا يمكن حذف المستودع لأنه مرتبط بأرصدة أو حركات أو مستندات مخزنية.",
+            );
+            return;
+          }
+        }
+
+        if (activeSection === "products") {
+          const productId = String(item.id);
+
+          const referenceGroups = [
+            references.warehouseStocks,
+            references.inventoryMovements,
+            references.transfers,
+            references.stockAdjustments,
+            references.stocktakes,
+            references.purchases,
+            references.sales,
+          ];
+
+          const isUsed = referenceGroups.some((records) =>
+            records.some(
+              (record) =>
+                isCompanyRecord(record, companyId) &&
+                hasProductReference(record, productId),
+            ),
+          );
+
+          if (isUsed) {
+            toast.error(
+              "لا يمكن حذف الصنف لأنه مرتبط بأرصدة أو حركات أو مستندات.",
+            );
+            return;
+          }
+        }
+      }
+
+      // ----------------------------------
+      // Delete Request
+      // ----------------------------------
+
+      await logDelete(
+        "inventory",
+        `حذف ${
+          sections.find((section) => section.id === activeSection)?.title
+        }: ${getRecordName(item)}`,
+        item.id,
+        getRecordName(item),
+        item as unknown as Record<string, unknown>,
+      );
+
       await api.delete(`${getEndpoint()}/${item.id}`);
 
       toast.success("تم الحذف بنجاح");
 
       await loadData(companyId);
     } catch (error) {
-      console.error(error);
+      console.error("Delete Inventory Setting Error:", error);
+
       toast.error("تعذر حذف السجل");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -970,8 +1371,9 @@ export default function InventorySettingPage() {
 
                       <button
                         onClick={() => handleDelete(item)}
+                        disabled={saving}
                         title="حذف"
-                        className="rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100"
+                        className="rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100 disabled:opacity-50"
                       >
                         <FiTrash2 size={16} />
                       </button>

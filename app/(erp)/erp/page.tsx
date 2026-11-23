@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   FiHome,
@@ -21,32 +22,45 @@ import {
   FiPackage,
 } from "react-icons/fi";
 
+import api from "@/lib/axios";
+
+// ==============================
+// Types
+// ==============================
+
 type Company = {
-  id?: string;
-  name?: string;
-  companyName?: string;
-  commercialName?: string;
-  logo?: string;
+  id: string;
+  name: string;
+  nameEn?: string;
+  code?: string;
   country?: string;
-  city?: string;
-  address?: string;
-  phone?: string;
-  email?: string;
+  timezone?: string;
   currency?: string;
+  locale?: string;
+  status?: string;
+  extra?: Record<string, unknown> | null;
 };
 
 type AuthUser = {
-  id?: string;
+  id?: string | number;
   name?: string;
-  fullName?: string;
   username?: string;
+  email?: string;
+
   role?: string;
-  jobTitle?: string;
-  companyId?: string;
-  companyName?: string;
+  type?: string;
+
+  companyId?: string | number | null;
+  companyname?: string | null;
+  ownerId?: string | number | null;
+
+  is_active?: boolean;
+  status?: string;
 };
 
-const API_URL = "http://localhost:3001";
+// ==============================
+// Shortcuts
+// ==============================
 
 const shortcuts = [
   {
@@ -107,42 +121,65 @@ const shortcuts = [
   },
 ];
 
+// ==============================
+// Main Page
+// ==============================
+
 export default function ERPHomePage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
+
   const [loading, setLoading] = useState(true);
+  const [companyError, setCompanyError] = useState("");
+
   const [currentDate, setCurrentDate] = useState("");
   const [currentTime, setCurrentTime] = useState("");
+
+  // ==============================
+  // Load User and Company
+  // ==============================
 
   useEffect(() => {
     const initialize = async () => {
       try {
+        // 1. Get logged-in user
         const storedUser = localStorage.getItem("authUser");
 
         if (!storedUser) {
-          setLoading(false);
+          setUser(null);
           return;
         }
 
         const parsedUser: AuthUser = JSON.parse(storedUser);
+
         setUser(parsedUser);
 
-        if (parsedUser.companyId) {
-          try {
-            const response = await fetch(
-              `${API_URL}/companies/${parsedUser.companyId}`,
-            );
+        // 2. Get company ID
+        if (!parsedUser.companyId) {
+          setCompany(null);
+          return;
+        }
 
-            if (response.ok) {
-              const companyData = await response.json();
-              setCompany(companyData);
-            }
-          } catch (error) {
-            console.error("Company loading error:", error);
-          }
+        // 3. Fetch company from Supabase
+        const { data } = await api.get<Company[]>("/companies", {
+          params: {
+            select: "*",
+            id: `eq.${parsedUser.companyId}`,
+            limit: 1,
+          },
+        });
+
+        // 4. Save company data
+        if (data && data.length > 0) {
+          setCompany(data[0]);
+        } else {
+          setCompany(null);
+          setCompanyError("لم يتم العثور على بيانات الشركة.");
         }
       } catch (error) {
-        console.error("Initialization error:", error);
+        console.error("Dashboard initialization error:", error);
+
+        setCompanyError("تعذر تحميل بيانات الشركة.");
       } finally {
         setLoading(false);
       }
@@ -150,6 +187,10 @@ export default function ERPHomePage() {
 
     initialize();
   }, []);
+
+  // ==============================
+  // Date and Time
+  // ==============================
 
   useEffect(() => {
     const updateDateTime = () => {
@@ -179,26 +220,33 @@ export default function ERPHomePage() {
     return () => clearInterval(timer);
   }, []);
 
-  const companyName =
-    company?.companyName ||
-    company?.name ||
-    company?.commercialName ||
-    user?.companyName ||
-    "شركتي";
+  // ==============================
+  // Display Data
+  // ==============================
 
-  const userName = user?.fullName || user?.name || user?.username || "المستخدم";
+  const companyName = company?.name || user?.companyname || "شركتي";
 
-  const roleName = user?.jobTitle || user?.role || "مستخدم النظام";
+  const userName = user?.name || user?.username || "المستخدم";
+
+  const roleName = user?.role || "مستخدم النظام";
+
+  const companyLocation = company?.country || "غير محدد";
+
+  // ==============================
+  // Render
+  // ==============================
 
   return (
-    <div dir="rtl" className="space-y-6 pb-8 m-5">
+    <div dir="rtl" className="m-5 space-y-6 pb-8">
       {/* Welcome Header */}
+
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-l from-[#0E1F33] to-[#193B5C] p-6 text-white shadow-sm">
         <div className="relative z-10">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="max-w-2xl">
               <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs text-slate-200">
                 <FiHome size={14} />
+
                 <span>نظام إدارة موارد المؤسسة ERP</span>
               </div>
 
@@ -215,37 +263,36 @@ export default function ERPHomePage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <div className="flex items-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-xs text-slate-200">
                   <FiCalendar size={15} />
+
                   <span>{currentDate || "..."}</span>
                 </div>
 
                 <div className="flex items-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-xs text-slate-200">
                   <FiClock size={15} />
+
                   <span>{currentTime || "..."}</span>
                 </div>
               </div>
             </div>
 
+            {/* Company Logo */}
+
             <div className="flex h-24 w-24 shrink-0 items-center justify-center self-center rounded-2xl border border-white/10 bg-white/10 md:h-28 md:w-28">
-              {company?.logo ? (
-                <img
-                  src={company.logo}
-                  alt="شعار الشركة"
-                  className="h-20 w-20 rounded-xl object-contain"
-                />
-              ) : (
-                <FiBriefcase size={48} className="text-white/80" />
-              )}
+              <FiBriefcase size={48} className="text-white/80" />
             </div>
           </div>
         </div>
 
         <div className="pointer-events-none absolute -left-8 -top-12 h-56 w-56 rounded-full border-[30px] border-white/5" />
+
         <div className="pointer-events-none absolute -left-20 -bottom-32 h-64 w-64 rounded-full border-[30px] border-white/5" />
       </div>
 
       {/* Company and User Information */}
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Company Information */}
+
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-5 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -257,6 +304,7 @@ export default function ERPHomePage() {
                 <h2 className="text-sm font-bold text-slate-800">
                   بيانات الشركة
                 </h2>
+
                 <p className="mt-1 text-xs text-slate-500">
                   معلومات المنشأة الحالية
                 </p>
@@ -280,17 +328,14 @@ export default function ERPHomePage() {
 
             <InfoRow
               icon={<FiMapPin />}
-              label="الموقع"
-              value={
-                [company?.city, company?.address].filter(Boolean).join(" - ") ||
-                "غير محدد"
-              }
+              label="الدولة"
+              value={companyLocation}
             />
 
             <InfoRow
               icon={<FiUser />}
               label="رقم الشركة"
-              value={company?.id || user?.companyId || "غير محدد"}
+              value={company?.id || user?.companyId?.toString() || "غير محدد"}
             />
 
             <InfoRow
@@ -298,10 +343,29 @@ export default function ERPHomePage() {
               label="العملة"
               value={company?.currency || "غير محددة"}
             />
+
+            <InfoRow
+              icon={<FiActivity />}
+              label="رمز الشركة"
+              value={company?.code || "غير محدد"}
+            />
+
+            <InfoRow
+              icon={<FiActivity />}
+              label="حالة الشركة"
+              value={company?.status || "غير محددة"}
+            />
+
+            {companyError && (
+              <p className="rounded-lg bg-red-50 p-3 text-xs text-red-600">
+                {companyError}
+              </p>
+            )}
           </div>
         </div>
 
         {/* User Information */}
+
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-5 flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
@@ -312,6 +376,7 @@ export default function ERPHomePage() {
               <h2 className="text-sm font-bold text-slate-800">
                 بيانات المستخدم
               </h2>
+
               <p className="mt-1 text-xs text-slate-500">
                 معلومات الحساب الحالي
               </p>
@@ -329,20 +394,33 @@ export default function ERPHomePage() {
 
             <InfoRow
               icon={<FiBriefcase />}
-              label="المسمى الوظيفي"
+              label="الدور الوظيفي"
               value={roleName}
             />
 
             <InfoRow
-              icon={<FiShieldIcon />}
+              icon={<FiActivity />}
               label="نوع الحساب"
-              value={user?.role || "غير محدد"}
+              value={user?.type || "غير محدد"}
+            />
+
+            <InfoRow
+              icon={<FiActivity />}
+              label="حالة الحساب"
+              value={user?.status === "active" ? "نشط" : "غير نشط"}
+            />
+
+            <InfoRow
+              icon={<FiUser />}
+              label="رقم المستخدم"
+              value={user?.id?.toString() || "غير محدد"}
             />
           </div>
         </div>
       </div>
 
       {/* Shortcuts */}
+
       <section>
         <div className="mb-4 flex items-center justify-between">
           <div>
@@ -401,9 +479,11 @@ export default function ERPHomePage() {
       </section>
 
       {/* Footer */}
+
       <div className="flex flex-col items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-5 py-4 text-xs text-slate-500 sm:flex-row">
         <div className="flex items-center gap-2">
           <FiSettings size={15} />
+
           <span>نظام إدارة موارد المؤسسة</span>
         </div>
 
@@ -413,12 +493,16 @@ export default function ERPHomePage() {
   );
 }
 
+// ==============================
+// Info Row Component
+// ==============================
+
 function InfoRow({
   icon,
   label,
   value,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string;
 }) {
@@ -426,6 +510,7 @@ function InfoRow({
     <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3 last:border-0 last:pb-0">
       <div className="flex items-center gap-2 text-slate-500">
         <span className="text-slate-400">{icon}</span>
+
         <span className="text-xs">{label}</span>
       </div>
 
@@ -434,8 +519,4 @@ function InfoRow({
       </span>
     </div>
   );
-}
-
-function FiShieldIcon() {
-  return <FiActivity />;
 }

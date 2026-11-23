@@ -289,7 +289,7 @@ export default function PurchasesPage() {
           </div>
 
           <Link
-            href="/purchases/new"
+            href="/erp/purchases/new"
             className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#0E1F33] px-3 text-[11px] font-semibold text-white transition hover:bg-[#162d49]"
           >
             <FiPlus size={14} />
@@ -933,4 +933,3 @@ export default function PurchasesPage() {
     </div>
   );
 }
-

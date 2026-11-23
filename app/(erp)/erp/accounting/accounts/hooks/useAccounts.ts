@@ -1,27 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import axios from "axios";
+
+import {
+  getAccounts,
+  getAccountById,
+  createAccount as createAccountApi,
+  updateAccount as updateAccountApi,
+  deleteAccount as deleteAccountApi,
+} from "@/lib/api/accounts";
+
+import { getProducts } from "@/lib/api/products";
+import { getWarehouseStocks } from "@/lib/api/warehouseStocks";
 
 import { Account, AccountFormData, AccountId } from "../types";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-interface Product {
-  id: string;
-  companyId: string;
-  name: string;
-  purchasePrice: number;
-  trackInventory?: boolean;
-}
-
-interface WarehouseStock {
-  id: string;
-  companyId: string;
-  productId: string;
-  quantity: number;
-}
+// =====================================
+// الحسابات الرئيسية الافتراضية
+// =====================================
 
 const defaultAccounts = [
   {
@@ -76,6 +72,10 @@ const defaultAccounts = [
   },
 ] as const;
 
+// =====================================
+// Hook
+// =====================================
+
 export function useAccounts(companyId: string) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(false);
@@ -92,30 +92,26 @@ export function useAccounts(companyId: string) {
       return 0;
     }
 
-    const [productsResponse, stocksResponse] = await Promise.all([
-      axios.get<Product[]>(`${API_URL}/products`, {
-        params: { companyId },
-      }),
-
-      axios.get<WarehouseStock[]>(`${API_URL}/warehouseStocks`, {
-        params: { companyId },
-      }),
+    const [products, stocks] = await Promise.all([
+      getProducts(companyId),
+      getWarehouseStocks(companyId),
     ]);
 
-    const products = productsResponse.data.filter(
+    const trackedProducts = products.filter(
       (product) =>
         String(product.companyId) === String(companyId) &&
         product.trackInventory !== false
     );
 
-    const stocks = stocksResponse.data.filter(
+    const companyStocks = stocks.filter(
       (stock) =>
         String(stock.companyId) === String(companyId)
     );
 
+    // تجميع الكميات حسب المنتج
     const quantities = new Map<string, number>();
 
-    for (const stock of stocks) {
+    for (const stock of companyStocks) {
       const productId = String(stock.productId);
 
       quantities.set(
@@ -125,9 +121,14 @@ export function useAccounts(companyId: string) {
       );
     }
 
-    const total = products.reduce((sum, product) => {
-      const quantity = quantities.get(String(product.id)) || 0;
-      const purchasePrice = Number(product.purchasePrice || 0);
+    // حساب قيمة المخزون
+    const total = trackedProducts.reduce((sum, product) => {
+      const quantity =
+        quantities.get(String(product.id)) || 0;
+
+      const purchasePrice = Number(
+        product.purchasePrice || 0
+      );
 
       return sum + quantity * purchasePrice;
     }, 0);
@@ -152,40 +153,36 @@ export function useAccounts(companyId: string) {
       setLoading(true);
       setError(null);
 
-      const [accountsResponse] = await Promise.all([
-        axios.get<Account[]>(`${API_URL}/accounts`, {
-          params: { companyId },
-        }),
-      ]);
+      const [companyAccounts, currentInventoryValue] =
+        await Promise.all([
+          getAccounts(companyId),
+          calculateInventoryValue(),
+        ]);
 
-      const companyAccounts = accountsResponse.data.filter(
-        (account) =>
-          String(account.companyId) === String(companyId)
-      );
+      const updatedAccounts = companyAccounts.map(
+        (account) => {
+          if (String(account.code) === "1104") {
+            return {
+              ...account,
+              balance: currentInventoryValue,
+            };
+          }
 
-      const currentInventoryValue =
-        await calculateInventoryValue();
-
-      const updatedAccounts = companyAccounts.map((account) => {
-        if (String(account.code) === "1104") {
           return {
             ...account,
-            balance: currentInventoryValue,
+            balance: Number(account.balance || 0),
           };
         }
+      );
 
-        return {
-          ...account,
-          balance: Number(account.balance || 0),
-        };
-      });
+      setAccounts(updatedAccounts as Account[]);
 
-      setAccounts(updatedAccounts);
-
-      return updatedAccounts;
+      return updatedAccounts as Account[];
     } catch (err) {
       console.error("Fetch accounts error:", err);
+
       setError("تعذر تحميل الحسابات أو بيانات المخزون");
+
       throw err;
     } finally {
       setLoading(false);
@@ -203,7 +200,9 @@ export function useAccounts(companyId: string) {
           !currentAccounts.some(
             (account) =>
               String(account.code) === defaultAccount.code &&
-              account.parentId === null
+              (account.parentId === null ||
+                account.parentId === undefined ||
+                account.parentId === "")
           )
       );
     },
@@ -219,28 +218,21 @@ export function useAccounts(companyId: string) {
       throw new Error("لم يتم تحديد الشركة الحالية");
     }
 
-    const response = await axios.get<Account[]>(
-      `${API_URL}/accounts`,
-      { params: { companyId } }
-    );
-
-    const currentAccounts = response.data.filter(
-      (account) =>
-        String(account.companyId) === String(companyId)
-    );
+    const currentAccounts = await getAccounts(companyId);
 
     const missingAccounts =
-      getMissingDefaultAccounts(currentAccounts);
+      getMissingDefaultAccounts(currentAccounts as Account[]);
 
     if (missingAccounts.length === 0) {
       throw new Error("الحسابات الرئيسية موجودة مسبقاً");
     }
 
     for (const account of missingAccounts) {
-      await axios.post(`${API_URL}/accounts`, {
+      await createAccountApi({
         ...account,
-        isActive: true,
         companyId,
+        isActive: true,
+        balance: 0,
       });
     }
 
@@ -258,20 +250,17 @@ export function useAccounts(companyId: string) {
       throw new Error("لم يتم تحديد الشركة الحالية");
     }
 
-    const response = await axios.post<Account>(
-      `${API_URL}/accounts`,
-      {
-        ...data,
-        companyId,
-        isActive: true,
-        balance: 0,
-        createdAt: new Date().toISOString(),
-      }
-    );
+    const newAccount = await createAccountApi({
+      ...data,
+      companyId,
+      isActive: true,
+      balance: 0,
+      createdAt: new Date().toISOString(),
+    });
 
     await fetchAccounts();
 
-    return response.data;
+    return newAccount;
   };
 
   // =====================================
@@ -279,17 +268,19 @@ export function useAccounts(companyId: string) {
   // =====================================
 
   const getCompanyAccount = async (id: AccountId) => {
-    const response = await axios.get<Account>(
-      `${API_URL}/accounts/${id}`
-    );
+    const account = await getAccountById(String(id));
+
+    if (!account) {
+      throw new Error("الحساب غير موجود");
+    }
 
     if (
-      String(response.data.companyId) !== String(companyId)
+      String(account.companyId) !== String(companyId)
     ) {
       throw new Error("هذا الحساب لا يتبع الشركة الحالية");
     }
 
-    return response.data;
+    return account;
   };
 
   // =====================================
@@ -306,8 +297,8 @@ export function useAccounts(companyId: string) {
 
     await getCompanyAccount(id);
 
-    const response = await axios.patch<Account>(
-      `${API_URL}/accounts/${id}`,
+    const updatedAccount = await updateAccountApi(
+      String(id),
       {
         ...data,
         companyId,
@@ -316,7 +307,7 @@ export function useAccounts(companyId: string) {
 
     await fetchAccounts();
 
-    return response.data;
+    return updatedAccount;
   };
 
   // =====================================
@@ -330,11 +321,13 @@ export function useAccounts(companyId: string) {
 
     const account = await getCompanyAccount(id);
 
-    if (account.code === "1104") {
-      throw new Error("لا يمكن حذف حساب المخزون المرتبط بنظام المستودعات");
+    if (String(account.code) === "1104") {
+      throw new Error(
+        "لا يمكن حذف حساب المخزون المرتبط بنظام المستودعات"
+      );
     }
 
-    await axios.delete(`${API_URL}/accounts/${id}`);
+    await deleteAccountApi(String(id));
 
     await fetchAccounts();
   };
@@ -344,14 +337,23 @@ export function useAccounts(companyId: string) {
   // =====================================
 
   const toggleAccountStatus = async (id: AccountId) => {
-    const account = await getCompanyAccount(id);
-
-    if (account.code === "1104" && account.isActive) {
-      throw new Error("لا يمكن إيقاف حساب المخزون أثناء استخدام نظام المستودعات");
+    if (!companyId) {
+      throw new Error("لم يتم تحديد الشركة الحالية");
     }
 
-    const response = await axios.patch<Account>(
-      `${API_URL}/accounts/${id}`,
+    const account = await getCompanyAccount(id);
+
+    if (
+      String(account.code) === "1104" &&
+      account.isActive
+    ) {
+      throw new Error(
+        "لا يمكن إيقاف حساب المخزون أثناء استخدام نظام المستودعات"
+      );
+    }
+
+    const updatedAccount = await updateAccountApi(
+      String(id),
       {
         isActive: !account.isActive,
       }
@@ -359,7 +361,7 @@ export function useAccounts(companyId: string) {
 
     await fetchAccounts();
 
-    return response.data;
+    return updatedAccount;
   };
 
   // =====================================
@@ -374,8 +376,14 @@ export function useAccounts(companyId: string) {
       return;
     }
 
-    fetchAccounts();
+    fetchAccounts().catch((err) => {
+      console.error("Initial accounts loading error:", err);
+    });
   }, [companyId, fetchAccounts]);
+
+  // =====================================
+  // القيم والدوال المتاحة للصفحات
+  // =====================================
 
   return {
     accounts,

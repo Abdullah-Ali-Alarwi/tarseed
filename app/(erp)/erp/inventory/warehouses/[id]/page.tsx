@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import axios from "axios";
@@ -27,12 +28,14 @@ import {
   FiActivity,
 } from "react-icons/fi";
 
+import { getCurrentActor, saveActivityLog } from "../../../lib/activity";
+
 /* =========================================================
    API
 ========================================================= */
 
 const api = axios.create({
-  baseURL: "http://localhost:3001",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
   headers: {
     "Content-Type": "application/json",
   },
@@ -51,6 +54,14 @@ interface Warehouse {
   description?: string;
   isDefault?: boolean;
   status: "active" | "inactive";
+
+  createdBy?: string;
+  createdByName?: string;
+  createdAt?: string;
+
+  updatedBy?: string;
+  updatedByName?: string;
+  updatedAt?: string;
 }
 
 interface Product {
@@ -60,10 +71,14 @@ interface Product {
   name: string;
   sku: string;
   unitName?: string;
+
   purchasePrice: number;
   sellingPrice: number;
+
   currentStock: number;
   minStock: number;
+
+  averageCost?: number;
   trackInventory: boolean;
   status: "active" | "inactive";
 }
@@ -74,13 +89,21 @@ interface WarehouseStock {
   productId: string;
   warehouseId: string;
   quantity: number;
+
+  averageCost?: number;
+  unitCost?: number;
+  costPrice?: number;
+
   updatedAt?: string;
+  updatedBy?: string;
+  updatedByName?: string;
 }
 
 interface DocumentItem {
   productId: string;
   warehouseId?: string;
   quantity: number;
+
   price?: number;
   purchasePrice?: number;
   sellingPrice?: number;
@@ -103,14 +126,19 @@ interface InventoryMovement {
   warehouseId?: string;
   fromWarehouseId?: string;
   toWarehouseId?: string;
+
   productId: string;
   productName?: string;
   type: string;
   quantity: number;
+
   reference?: string;
   referenceNumber?: string;
   date?: string;
   createdAt?: string;
+
+  createdBy?: string;
+  createdByName?: string;
 }
 
 interface Transfer {
@@ -164,11 +192,39 @@ const isCompleted = (status?: string) =>
   );
 
 const getCookie = (name: string) => {
+  if (typeof document === "undefined") return "";
+
   const cookie = document.cookie
     .split("; ")
     .find((item) => item.startsWith(`${name}=`));
 
   return cookie ? decodeURIComponent(cookie.split("=").slice(1).join("=")) : "";
+};
+
+const getDocumentItemTotal = (
+  item: DocumentItem,
+  type: "sales" | "purchases",
+) => {
+  if (item.total !== undefined && item.total !== null) {
+    return number(item.total);
+  }
+
+  const price =
+    type === "sales"
+      ? number(item.sellingPrice ?? item.price)
+      : number(item.purchasePrice ?? item.price);
+
+  return number(item.quantity) * price;
+};
+
+const formatDate = (date?: string) => {
+  if (!date) return "-";
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) return "-";
+
+  return parsed.toLocaleDateString("ar-YE");
 };
 
 /* =========================================================
@@ -185,6 +241,8 @@ export default function WarehouseDetailsPage() {
 
   const [warehouse, setWarehouse] = useState<Warehouse | null>(null);
 
+  const [companyId, setCompanyId] = useState("");
+
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouseStocks, setWarehouseStocks] = useState<WarehouseStock[]>([]);
 
@@ -198,6 +256,51 @@ export default function WarehouseDetailsPage() {
   const [stocktakes, setStocktakes] = useState<Stocktake[]>([]);
 
   /* =========================================================
+     ACTIVITY LOG
+  ========================================================= */
+
+  const logWarehouseView = async (
+    currentWarehouse: Warehouse,
+    currentCompanyId: string,
+  ) => {
+    try {
+      const actor = getCurrentActor();
+
+      if (!actor?.userId || !actor?.companyId) {
+        console.warn("Activity log skipped: current actor is unavailable.");
+        return;
+      }
+
+      if (String(actor.companyId) !== String(currentCompanyId)) {
+        console.warn("Activity log skipped: company mismatch.");
+        return;
+      }
+
+      await saveActivityLog({
+        companyId: currentCompanyId,
+
+        userId: actor.userId,
+        userName: actor.userName || actor.username,
+        username: actor.username,
+        userRole: actor.userRole,
+
+        action: "view",
+        module: "المستودعات",
+
+        description: `عرض تفاصيل المستودع: ${currentWarehouse.name}`,
+
+        recordId: String(currentWarehouse.id),
+        recordName: currentWarehouse.name,
+
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      // فشل تسجيل النشاط لا يجب أن يمنع عرض الصفحة.
+      console.warn("Failed to log warehouse view:", error);
+    }
+  };
+
+  /* =========================================================
      LOAD DATA
   ========================================================= */
 
@@ -205,20 +308,26 @@ export default function WarehouseDetailsPage() {
     try {
       setLoading(true);
 
-      const type = getCookie("type");
-      const currentCompanyId = getCookie("companyId");
+      const actor = getCurrentActor();
+      const userType = getCookie("type");
 
-      if (!["owner", "erp"].includes(type)) {
-        toast.error("ليس لديك صلاحية الوصول");
+      // منع مستخدم المنصة من الدخول إلى بيانات المستودعات.
+      if (userType === "platform") {
+        toast.error("ليس لديك صلاحية الوصول إلى مستودعات الشركات");
         router.replace("/login");
         return;
       }
 
-      if (!currentCompanyId) {
-        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
+      // يجب توفر هوية مستخدم مرتبطة بشركة.
+      if (!actor?.userId || !actor?.companyId) {
+        toast.error("تعذر تحديد المستخدم أو الشركة المرتبطة به");
         router.replace("/login");
         return;
       }
+
+      const currentCompanyId = String(actor.companyId);
+
+      setCompanyId(currentCompanyId);
 
       const endpoints = [
         "warehouses",
@@ -236,12 +345,15 @@ export default function WarehouseDetailsPage() {
         endpoints.map(async (endpoint) => {
           try {
             const response = await api.get(`/${endpoint}`, {
-              params: { companyId: currentCompanyId },
+              params: {
+                companyId: currentCompanyId,
+              },
             });
 
-            return response.data;
+            return Array.isArray(response.data) ? response.data : [];
           } catch (error) {
             console.error(`Failed loading ${endpoint}:`, error);
+
             throw new Error(`تعذر تحميل البيانات: ${endpoint}`);
           }
         }),
@@ -259,14 +371,50 @@ export default function WarehouseDetailsPage() {
         stocktakesData,
       ] = responses;
 
-      const foundWarehouse = warehousesData.find(
-        (item: Warehouse) =>
-          String(item.id) === warehouseId &&
-          String(item.companyId) === String(currentCompanyId),
+      // تأكيد عزل بيانات الشركة حتى لو أعاد API بيانات إضافية.
+      const companyWarehouses = warehousesData.filter(
+        (item: Warehouse) => String(item.companyId) === currentCompanyId,
+      );
+
+      const companyProducts = productsData.filter(
+        (item: Product) => String(item.companyId) === currentCompanyId,
+      );
+
+      const companyStocks = stocksData.filter(
+        (item: WarehouseStock) => String(item.companyId) === currentCompanyId,
+      );
+
+      const companySales = salesData.filter(
+        (item: SalesPurchase) => String(item.companyId) === currentCompanyId,
+      );
+
+      const companyPurchases = purchasesData.filter(
+        (item: SalesPurchase) => String(item.companyId) === currentCompanyId,
+      );
+
+      const companyMovements = movementsData.filter(
+        (item: InventoryMovement) =>
+          String(item.companyId) === currentCompanyId,
+      );
+
+      const companyTransfers = transfersData.filter(
+        (item: Transfer) => String(item.companyId) === currentCompanyId,
+      );
+
+      const companyAdjustments = adjustmentsData.filter(
+        (item: Adjustment) => String(item.companyId) === currentCompanyId,
+      );
+
+      const companyStocktakes = stocktakesData.filter(
+        (item: Stocktake) => String(item.companyId) === currentCompanyId,
+      );
+
+      const foundWarehouse = companyWarehouses.find(
+        (item: Warehouse) => String(item.id) === warehouseId,
       );
 
       if (!foundWarehouse) {
-        toast.error("المستودع غير موجود");
+        toast.error("المستودع غير موجود أو لا يتبع شركتك");
         router.replace("/erp/inventory/inventorySetting");
         return;
       }
@@ -274,26 +422,24 @@ export default function WarehouseDetailsPage() {
       setWarehouse(foundWarehouse);
 
       setProducts(
-        productsData.filter(
-          (item: Product) =>
-            String(item.companyId) === String(currentCompanyId) &&
-            item.trackInventory !== false,
+        companyProducts.filter(
+          (item: Product) => item.trackInventory !== false,
         ),
       );
 
-      setWarehouseStocks(
-        stocksData.filter(
-          (item: WarehouseStock) =>
-            String(item.companyId) === String(currentCompanyId),
-        ),
-      );
+      setWarehouseStocks(companyStocks);
 
-      setSales(salesData);
-      setPurchases(purchasesData);
-      setMovements(movementsData);
-      setTransfers(transfersData);
-      setAdjustments(adjustmentsData);
-      setStocktakes(stocktakesData);
+      setSales(companySales);
+      setPurchases(companyPurchases);
+
+      setMovements(companyMovements);
+      setTransfers(companyTransfers);
+
+      setAdjustments(companyAdjustments);
+      setStocktakes(companyStocktakes);
+
+      // تسجيل عرض المستودع بواسطة المستخدم الحالي.
+      await logWarehouseView(foundWarehouse, currentCompanyId);
     } catch (error) {
       console.error("Warehouse loading error:", error);
 
@@ -309,6 +455,8 @@ export default function WarehouseDetailsPage() {
 
   useEffect(() => {
     loadData();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warehouseId]);
 
   /* =========================================================
@@ -339,9 +487,21 @@ export default function WarehouseDetailsPage() {
             ? number(product.currentStock)
             : 0;
 
+        // استخدام تكلفة المخزون المسجلة إن توفرت،
+        // ثم متوسط التكلفة، ثم سعر الشراء كقيمة بديلة.
+        const unitCost =
+          number(stockRecord?.averageCost) ||
+          number(stockRecord?.unitCost) ||
+          number(stockRecord?.costPrice) ||
+          number(product.averageCost) ||
+          number(product.purchasePrice);
+
         return {
           ...product,
+
           warehouseQuantity: quantity,
+          warehouseUnitCost: unitCost,
+
           hasWarehouseStock,
         };
       })
@@ -400,7 +560,11 @@ export default function WarehouseDetailsPage() {
     () =>
       sales.filter(
         (sale) =>
-          isCompleted(sale.status) && String(sale.warehouseId) === warehouseId,
+          isCompleted(sale.status) &&
+          (String(sale.warehouseId) === warehouseId ||
+            (sale.items || []).some(
+              (item) => String(item.warehouseId) === warehouseId,
+            )),
       ),
     [sales, warehouseId],
   );
@@ -410,10 +574,57 @@ export default function WarehouseDetailsPage() {
       purchases.filter(
         (purchase) =>
           isCompleted(purchase.status) &&
-          String(purchase.warehouseId) === warehouseId,
+          (String(purchase.warehouseId) === warehouseId ||
+            (purchase.items || []).some(
+              (item) => String(item.warehouseId) === warehouseId,
+            )),
       ),
     [purchases, warehouseId],
   );
+
+  /* =========================================================
+     DOCUMENT TOTALS FOR THIS WAREHOUSE
+  ========================================================= */
+
+  const getWarehouseDocumentTotals = (
+    documents: SalesPurchase[],
+    type: "sales" | "purchases",
+  ) => {
+    return documents.reduce(
+      (result, document) => {
+        const items = document.items || [];
+
+        if (items.length === 0) {
+          if (String(document.warehouseId) === warehouseId) {
+            result.amount += number(document.total);
+          }
+
+          return result;
+        }
+
+        const warehouseItems = items.filter(
+          (item) =>
+            String(item.warehouseId || document.warehouseId) === warehouseId,
+        );
+
+        result.quantity += warehouseItems.reduce(
+          (sum, item) => sum + number(item.quantity),
+          0,
+        );
+
+        result.amount += warehouseItems.reduce(
+          (sum, item) => sum + getDocumentItemTotal(item, type),
+          0,
+        );
+
+        return result;
+      },
+      {
+        amount: 0,
+        quantity: 0,
+      },
+    );
+  };
 
   /* =========================================================
      CALCULATIONS
@@ -422,72 +633,45 @@ export default function WarehouseDetailsPage() {
   const stats = useMemo(() => {
     const totalProducts = warehouseProducts.length;
 
-    const lowStock = warehouseProducts.filter(
-      (product) =>
+    const lowStock = warehouseProducts.filter((product) => {
+      const minimum = number(product.minStock);
+
+      return (
+        minimum > 0 &&
         product.warehouseQuantity > 0 &&
-        product.warehouseQuantity <= number(product.minStock),
-    ).length;
+        product.warehouseQuantity <= minimum
+      );
+    }).length;
 
     const outOfStock = warehouseProducts.filter(
       (product) => product.warehouseQuantity <= 0,
     ).length;
 
-    // الرصيد الفعلي لكل منتج في هذا المستودع
+    // الرصيد الفعلي لكل منتج في هذا المستودع.
     const stockQuantity = warehouseProducts.reduce(
       (sum, product) => sum + product.warehouseQuantity,
       0,
     );
 
-    // تكلفة المخزون المتبقي
+    // قيمة المخزون بالتكلفة المتاحة لكل منتج.
     const stockCost = warehouseProducts.reduce(
       (sum, product) =>
-        sum + product.warehouseQuantity * number(product.purchasePrice),
+        sum + product.warehouseQuantity * product.warehouseUnitCost,
       0,
     );
 
-    // قيمة المخزون المتبقي بسعر البيع
+    // قيمة تقديرية بسعر البيع.
     const stockSellingValue = warehouseProducts.reduce(
       (sum, product) =>
         sum + product.warehouseQuantity * number(product.sellingPrice),
       0,
     );
 
-    const salesTotal = warehouseSales.reduce(
-      (sum, sale) => sum + number(sale.total),
-      0,
-    );
+    const salesTotals = getWarehouseDocumentTotals(warehouseSales, "sales");
 
-    const purchasesTotal = warehousePurchases.reduce(
-      (sum, purchase) => sum + number(purchase.total),
-      0,
-    );
-
-    const salesQuantity = warehouseSales.reduce(
-      (sum, sale) =>
-        sum +
-        (sale.items || []).reduce(
-          (itemSum, item) =>
-            itemSum +
-            (String(item.warehouseId || sale.warehouseId) === warehouseId
-              ? number(item.quantity)
-              : 0),
-          0,
-        ),
-      0,
-    );
-
-    const purchasesQuantity = warehousePurchases.reduce(
-      (sum, purchase) =>
-        sum +
-        (purchase.items || []).reduce(
-          (itemSum, item) =>
-            itemSum +
-            (String(item.warehouseId || purchase.warehouseId) === warehouseId
-              ? number(item.quantity)
-              : 0),
-          0,
-        ),
-      0,
+    const purchasesTotals = getWarehouseDocumentTotals(
+      warehousePurchases,
+      "purchases",
     );
 
     const incomingTransfers = warehouseTransfers
@@ -500,18 +684,26 @@ export default function WarehouseDetailsPage() {
 
     return {
       totalProducts,
+
       lowStock,
       outOfStock,
+
       stockQuantity,
       stockCost,
       stockSellingValue,
-      expectedProfit: stockSellingValue - stockCost,
-      salesTotal,
-      purchasesTotal,
-      salesQuantity,
-      purchasesQuantity,
+
+      // الفرق التقديري وليس الربح المحقق.
+      estimatedStockMargin: stockSellingValue - stockCost,
+
+      salesTotal: salesTotals.amount,
+      purchasesTotal: purchasesTotals.amount,
+
+      salesQuantity: salesTotals.quantity,
+      purchasesQuantity: purchasesTotals.quantity,
+
       incomingTransfers,
       outgoingTransfers,
+
       movementCount: warehouseMovements.length,
       adjustmentCount: warehouseAdjustments.length,
       stocktakeCount: warehouseStocktakes.length,
@@ -661,6 +853,40 @@ export default function WarehouseDetailsPage() {
             {warehouse.description}
           </p>
         )}
+
+        {/* AUDIT INFORMATION */}
+
+        <div className="mt-3 grid grid-cols-1 gap-2 border-t pt-3 sm:grid-cols-2">
+          <div className="flex items-center gap-2 text-[10px] text-gray-500">
+            <FiActivity className="text-blue-600" />
+
+            <span>
+              أنشئ بواسطة:
+              <strong className="mr-1 text-gray-700">
+                {warehouse.createdByName || "غير مسجل"}
+              </strong>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 text-[10px] text-gray-500">
+            <FiRefreshCw className="text-blue-600" />
+
+            <span>
+              آخر تعديل بواسطة:
+              <strong className="mr-1 text-gray-700">
+                {warehouse.updatedByName || "لا يوجد تعديل مسجل"}
+              </strong>
+            </span>
+          </div>
+
+          <div className="text-[10px] text-gray-400">
+            تاريخ الإنشاء: {formatDate(warehouse.createdAt)}
+          </div>
+
+          <div className="text-[10px] text-gray-400">
+            آخر تحديث: {formatDate(warehouse.updatedAt)}
+          </div>
+        </div>
       </div>
 
       {/* INVENTORY SUMMARY */}
@@ -690,15 +916,15 @@ export default function WarehouseDetailsPage() {
         />
 
         <StatCard
-          title="القيمة بسعر البيع"
+          title="القيمة التقديرية بسعر البيع"
           value={money(stats.stockSellingValue)}
           icon={<FiTrendingUp />}
           color="purple"
         />
 
         <StatCard
-          title="الربح المتوقع"
-          value={money(stats.expectedProfit)}
+          title="فرق القيمة التقديري"
+          value={money(stats.estimatedStockMargin)}
           icon={<FiTrendingUp />}
           color="green"
         />
@@ -791,7 +1017,7 @@ export default function WarehouseDetailsPage() {
             </h2>
 
             <p className="mt-1 text-[10px] text-gray-400">
-              الرصيد الحالي بعد المبيعات والمشتريات والتحويلات والتسويات
+              الرصيد الحالي وفق سجلات أرصدة المستودعات
             </p>
           </div>
 
@@ -813,12 +1039,12 @@ export default function WarehouseDetailsPage() {
                   <th className="px-3 py-2.5">المنتج</th>
                   <th className="px-3 py-2.5">الرمز</th>
                   <th className="px-3 py-2.5">الوحدة</th>
-                  <th className="px-3 py-2.5">سعر الشراء</th>
+                  <th className="px-3 py-2.5">تكلفة الوحدة</th>
                   <th className="px-3 py-2.5">سعر البيع</th>
                   <th className="px-3 py-2.5">المتبقي</th>
                   <th className="px-3 py-2.5">تكلفة المتبقي</th>
                   <th className="px-3 py-2.5">القيمة البيعية</th>
-                  <th className="px-3 py-2.5">الربح المتوقع</th>
+                  <th className="px-3 py-2.5">فرق القيمة</th>
                   <th className="px-3 py-2.5">الحالة</th>
                 </tr>
               </thead>
@@ -827,16 +1053,17 @@ export default function WarehouseDetailsPage() {
                 {warehouseProducts.map((product) => {
                   const quantity = number(product.warehouseQuantity);
 
-                  const purchasePrice = number(product.purchasePrice);
+                  const purchasePrice = number(product.warehouseUnitCost);
                   const sellingPrice = number(product.sellingPrice);
 
                   const cost = quantity * purchasePrice;
                   const sellingValue = quantity * sellingPrice;
-                  const profit = sellingValue - cost;
+                  const estimatedDifference = sellingValue - cost;
 
                   const minStock = number(product.minStock);
 
-                  const isLow = quantity > 0 && quantity <= minStock;
+                  const isLow =
+                    minStock > 0 && quantity > 0 && quantity <= minStock;
 
                   const isOut = quantity <= 0;
 
@@ -879,7 +1106,7 @@ export default function WarehouseDetailsPage() {
                       </td>
 
                       <td className="px-3 py-2.5 font-semibold text-green-700">
-                        {money(profit)}
+                        {money(estimatedDifference)}
                       </td>
 
                       <td className="px-3 py-2.5">
@@ -925,13 +1152,14 @@ export default function WarehouseDetailsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[750px] text-right text-[11px]">
+            <table className="w-full min-w-[850px] text-right text-[11px]">
               <thead className="bg-gray-50 text-[10px] text-gray-500">
                 <tr>
                   <th className="px-3 py-2.5">المنتج</th>
                   <th className="px-3 py-2.5">نوع الحركة</th>
                   <th className="px-3 py-2.5">الكمية</th>
                   <th className="px-3 py-2.5">المرجع</th>
+                  <th className="px-3 py-2.5">نفذها المستخدم</th>
                   <th className="px-3 py-2.5">التاريخ</th>
                 </tr>
               </thead>
@@ -960,11 +1188,11 @@ export default function WarehouseDetailsPage() {
                       </td>
 
                       <td className="px-3 py-2.5 text-gray-500">
-                        {movement.date || movement.createdAt
-                          ? new Date(
-                              movement.date || movement.createdAt || "",
-                            ).toLocaleDateString("ar-YE")
-                          : "-"}
+                        {movement.createdByName || "-"}
+                      </td>
+
+                      <td className="px-3 py-2.5 text-gray-500">
+                        {formatDate(movement.date || movement.createdAt)}
                       </td>
                     </tr>
                   ))}
@@ -974,16 +1202,33 @@ export default function WarehouseDetailsPage() {
         )}
       </div>
 
-      {/* STOCK SOURCE NOTE */}
+      {/* ACCOUNTING NOTE */}
 
       <div className="flex items-start gap-2 rounded-lg border border-blue-100 bg-blue-50 p-3 text-[10px] leading-5 text-blue-800">
         <FiDatabase className="mt-1 shrink-0 text-sm" />
 
-        <p>
-          يتم احتساب الرصيد الحالي من سجل أرصدة المستودعات (warehouseStocks)،
-          ويُستخدم رصيد المنتج الأصلي فقط عند عدم وجود سجل خاص به في المستودع.
-          سجل الحركات مخصص للتدقيق ولا يُضاف مرة أخرى إلى الرصيد.
-        </p>
+        <div>
+          <p className="font-bold">ملاحظات محاسبية حول بيانات المستودع</p>
+
+          <p className="mt-1">
+            يتم احتساب الرصيد الحالي من سجل أرصدة المستودعات (warehouseStocks)،
+            ويُستخدم رصيد المنتج الأصلي فقط عند عدم وجود سجل خاص به في المستودع.
+            سجل الحركات مخصص للتدقيق ولا يُضاف مرة أخرى إلى الرصيد.
+          </p>
+
+          <p className="mt-1">
+            تكلفة المخزون المعروضة تعتمد على متوسط التكلفة أو تكلفة الوحدة
+            المسجلة إن توفرت، وإلا تستخدم سعر الشراء كقيمة بديلة. لذلك يجب
+            اعتماد طريقة تقييم مخزون موحدة مثل المتوسط المرجح أو FIFO عند إعداد
+            القوائم المالية النهائية.
+          </p>
+
+          <p className="mt-1">
+            القيمة البيعية وفرق القيمة المعروضين تقديريان، ولا يمثلان إيرادًا
+            محققًا أو صافي ربح. قائمة الدخل تعتمد على المبيعات المحققة وتكلفة
+            البضاعة المباعة والمصروفات والقيود المحاسبية المعتمدة.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -998,7 +1243,7 @@ function InfoItem({
   label,
   value,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string;
 }) {
@@ -1043,7 +1288,7 @@ function StatCard({
 }: {
   title: string;
   value: string | number;
-  icon: React.ReactNode;
+  icon: ReactNode;
   color: string;
 }) {
   const colors: Record<string, string> = {
@@ -1060,7 +1305,11 @@ function StatCard({
       <div className="flex items-center justify-between gap-2">
         <p className="truncate text-[10px] text-gray-500 sm:text-xs">{title}</p>
 
-        <div className={`shrink-0 rounded-md p-2 text-sm ${colors[color]}`}>
+        <div
+          className={`shrink-0 rounded-md p-2 text-sm ${
+            colors[color] || colors.blue
+          }`}
+        >
           {icon}
         </div>
       </div>
@@ -1084,7 +1333,7 @@ function FinancialCard({
   color,
 }: {
   title: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   amount: number;
   quantity: number;
   color: string;
@@ -1102,7 +1351,9 @@ function FinancialCard({
           {title}
         </h3>
 
-        <span className={`rounded-md p-2 ${styles[color]}`}>{icon}</span>
+        <span className={`rounded-md p-2 ${styles[color] || styles.blue}`}>
+          {icon}
+        </span>
       </div>
 
       <p className="mt-3 text-[10px] text-gray-400">إجمالي القيمة</p>

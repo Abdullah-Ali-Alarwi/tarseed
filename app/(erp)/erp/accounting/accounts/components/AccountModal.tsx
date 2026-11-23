@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 import { Account, AccountFormData } from "../types";
 
 import AccountForm from "./AccountForm";
@@ -19,6 +21,27 @@ export default function AccountModal({
   onClose,
   onSubmit,
 }: Props) {
+  // إغلاق النافذة باستخدام Escape
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    // منع تمرير الصفحة الخلفية
+    document.body.style.overflow = "hidden";
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -30,11 +53,19 @@ export default function AccountModal({
         }
       }}
     >
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-modal-title"
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+      >
         {/* رأس النافذة */}
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-5">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">
+            <h2
+              id="account-modal-title"
+              className="text-lg font-bold text-slate-900"
+            >
               {initialData ? "تعديل الحساب" : "إضافة حساب جديد"}
             </h2>
 

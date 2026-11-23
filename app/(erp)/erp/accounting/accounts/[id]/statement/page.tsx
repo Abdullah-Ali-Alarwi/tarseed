@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-
 import { useParams, useRouter } from "next/navigation";
-
-import axios from "axios";
 
 import {
   FiArrowRight,
@@ -28,7 +25,11 @@ import { toast } from "sonner";
 // API
 // =====================================================
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import { getUserByUsername } from "@/lib/api/users";
+import { getAccounts } from "@/lib/api/accounts";
+import { getJournals } from "@/lib/api/journals";
+import { getJournalLines } from "@/lib/api/journalLines";
+import { getInventoryMovements } from "@/lib/api/inventoryMovements";
 
 // =====================================================
 // TYPES
@@ -144,45 +145,27 @@ interface InventoryMovement {
 
 interface StatementRow {
   id: string;
-
   date: string;
-
   documentNumber: string;
-
   description: string;
-
   reference: string;
-
   debit: number;
-
   credit: number;
-
   balance: number;
-
   source: "opening" | "journal";
 }
 
 interface InventoryRow {
   id: string;
-
   date: string;
-
   documentNumber: string;
-
   description: string;
-
   productName: string;
-
   warehouseName: string;
-
   movementType: string;
-
   quantity: number;
-
   unitCost: number;
-
   totalCost: number;
-
   reference: string;
 }
 
@@ -206,9 +189,7 @@ function getToday() {
   const date = new Date();
 
   const year = date.getFullYear();
-
   const month = String(date.getMonth() + 1).padStart(2, "0");
-
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
@@ -229,7 +210,6 @@ function formatDate(value: string) {
   if (!value) return "-";
 
   const dateValue = value.substring(0, 10);
-
   const date = new Date(`${dateValue}T00:00:00`);
 
   if (Number.isNaN(date.getTime())) return "-";
@@ -393,26 +373,17 @@ export default function AccountStatementPage() {
       setError("");
 
       try {
+        // -----------------------------------------------
+        // المستخدم الحالي
+        // -----------------------------------------------
+
         const username = getCookie("username");
 
         if (!username) {
           throw new Error("لم يتم العثور على المستخدم الحالي");
         }
 
-        // -----------------------------------------------
-        // المستخدم الحالي
-        // -----------------------------------------------
-
-        const usersResponse = await axios.get<CurrentUser[]>(
-          `${API_URL}/users`,
-          {
-            params: { username },
-          },
-        );
-
-        const user = usersResponse.data.find(
-          (item) => item.username === username,
-        );
+        const user = await getUserByUsername(username);
 
         if (!user) {
           throw new Error("المستخدم غير موجود");
@@ -434,36 +405,38 @@ export default function AccountStatementPage() {
         // الحساب
         // -----------------------------------------------
 
-        const accountResponse = await axios.get<Account>(
-          `${API_URL}/accounts/${accountId}`,
+        const allAccounts = await getAccounts();
+
+        const currentAccount = allAccounts.find(
+          (item) => String(item.id) === accountId,
         );
 
-        const currentAccount = accountResponse.data;
+        if (!currentAccount) {
+          throw new Error("الحساب غير موجود");
+        }
 
         if (String(currentAccount.companyId) !== currentCompanyId) {
           throw new Error("هذا الحساب لا يتبع شركتك");
         }
 
-        setAccount(currentAccount);
+        setAccount(currentAccount as Account);
 
         // -----------------------------------------------
         // البيانات المحاسبية والمخزون
         // -----------------------------------------------
-        const [
-          journalsResponse,
-          linesResponse,
-          openingResponse,
-          movementsResponse,
-        ] = await Promise.all([
-          axios.get<Journal[]>(`${API_URL}/journals`),
 
-          axios.get<JournalLine[]>(`${API_URL}/journalLines`),
+        const [allJournals, allJournalLines, allInventoryMovements] =
+          await Promise.all([
+            getJournals(),
+            getJournalLines(),
+            getInventoryMovements(),
+          ]);
 
-          axios.get<OpeningEntry[]>(`${API_URL}/openingEntries`),
+        // -----------------------------------------------
+        // قيود الشركة
+        // -----------------------------------------------
 
-          axios.get<InventoryMovement[]>(`${API_URL}/inventoryMovements`),
-        ]);
-        const companyJournals = journalsResponse.data.filter(
+        const companyJournals = allJournals.filter(
           (journal) => String(journal.companyId) === currentCompanyId,
         );
 
@@ -471,38 +444,49 @@ export default function AccountStatementPage() {
           companyJournals.map((journal) => String(journal.id)),
         );
 
-        const companyLines = linesResponse.data.filter(
+        // -----------------------------------------------
+        // تفاصيل القيود الخاصة بالحساب
+        // -----------------------------------------------
+
+        const companyLines = allJournalLines.filter(
           (line) =>
             String(line.companyId) === currentCompanyId &&
             sameId(line.accountId, accountId) &&
             companyJournalIds.has(String(line.journalId)),
         );
 
-        const companyOpeningEntries = openingResponse.data.filter(
-          (entry) =>
-            String(entry.companyId) === currentCompanyId &&
-            sameId(entry.accountId, accountId),
-        );
+        // -----------------------------------------------
+        // الأرصدة الافتتاحية
+        // -----------------------------------------------
+        // مؤقتًا فارغة حتى إنشاء ملف:
+        // lib/api/openingEntries.ts
 
-        const companyMovements = movementsResponse.data.filter(
+        const companyOpeningEntries: OpeningEntry[] = [];
+
+        // -----------------------------------------------
+        // حركات المخزون
+        // -----------------------------------------------
+
+        const companyMovements = allInventoryMovements.filter(
           (movement) => String(movement.companyId) === currentCompanyId,
         );
 
-        setJournals(companyJournals);
+        // -----------------------------------------------
+        // تحديث الحالات
+        // -----------------------------------------------
 
-        setJournalLines(companyLines);
+        setJournals(companyJournals as Journal[]);
+
+        setJournalLines(companyLines as JournalLine[]);
 
         setOpeningEntries(companyOpeningEntries);
 
-        setInventoryMovements(companyMovements);
+        setInventoryMovements(companyMovements as InventoryMovement[]);
       } catch (err) {
         console.error("Account statement error:", err);
 
-        const message = axios.isAxiosError(err)
-          ? err.response?.data?.message || err.message
-          : err instanceof Error
-            ? err.message
-            : "تعذر تحميل كشف الحساب";
+        const message =
+          err instanceof Error ? err.message : "تعذر تحميل كشف الحساب";
 
         setError(message);
 
@@ -1211,19 +1195,12 @@ export default function AccountStatementPage() {
             <thead className="bg-gray-50 text-xs font-bold text-gray-600">
               <tr>
                 <th className="px-4 py-4">التاريخ</th>
-
                 <th className="px-4 py-4">رقم المستند</th>
-
                 <th className="px-4 py-4">البيان</th>
-
                 <th className="px-4 py-4">المرجع</th>
-
                 <th className="px-4 py-4">مدين</th>
-
                 <th className="px-4 py-4">دائن</th>
-
                 <th className="px-4 py-4">الرصيد</th>
-
                 <th className="px-4 py-4">الطبيعة</th>
               </tr>
             </thead>
@@ -1419,19 +1396,12 @@ export default function AccountStatementPage() {
               <thead className="bg-gray-50 text-xs font-bold text-gray-600">
                 <tr>
                   <th className="px-4 py-4">التاريخ</th>
-
                   <th className="px-4 py-4">رقم المستند</th>
-
                   <th className="px-4 py-4">المنتج</th>
-
                   <th className="px-4 py-4">المستودع</th>
-
                   <th className="px-4 py-4">نوع الحركة</th>
-
                   <th className="px-4 py-4">الكمية</th>
-
                   <th className="px-4 py-4">سعر التكلفة</th>
-
                   <th className="px-4 py-4">إجمالي التكلفة</th>
                 </tr>
               </thead>

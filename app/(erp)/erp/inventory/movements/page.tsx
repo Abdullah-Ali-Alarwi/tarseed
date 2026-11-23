@@ -11,12 +11,9 @@ import {
   FiRefreshCw,
   FiSearch,
   FiFilter,
-  FiCalendar,
   FiPackage,
   FiFileText,
   FiX,
-  FiTrendingUp,
-  FiTrendingDown,
   FiLayers,
   FiAward,
 } from "react-icons/fi";
@@ -61,7 +58,12 @@ interface Warehouse {
    CONSTANTS
 ========================================================= */
 
-const API_URL = "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+const api = axios.create({
+  baseURL: API_URL,
+  timeout: 15000,
+});
 
 const movementTypes = [
   { value: "all", label: "جميع الحركات" },
@@ -86,7 +88,9 @@ const getCookie = (name: string): string | null => {
 };
 
 const formatNumber = (value: number) => {
-  return new Intl.NumberFormat("ar-YE").format(value || 0);
+  return new Intl.NumberFormat("ar-YE").format(
+    Number.isFinite(value) ? value : 0,
+  );
 };
 
 const formatDate = (date: string) => {
@@ -101,6 +105,16 @@ const formatDate = (date: string) => {
     month: "long",
     day: "numeric",
   });
+};
+
+const formatTime = (date?: string) => {
+  if (!date) return "-";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "-";
+
+  return parsedDate.toLocaleTimeString("ar-YE");
 };
 
 const getMovementLabel = (type: string) => {
@@ -162,12 +176,19 @@ export default function InventoryMovementsPage() {
       const type = getCookie("type");
       const currentCompanyId = getCookie("companyId");
 
-      if (!type || !["owner", "erp"].includes(type)) {
+      // منع مستخدم المنصة من دخول بيانات الشركة
+      if (!type || !["owner", "erp", "employee"].includes(type)) {
+        setMovements([]);
+        setWarehouses([]);
+
         toast.error("ليس لديك صلاحية الوصول إلى حركات المخزون");
         return;
       }
 
       if (!currentCompanyId) {
+        setMovements([]);
+        setWarehouses([]);
+
         toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
         return;
       }
@@ -175,26 +196,34 @@ export default function InventoryMovementsPage() {
       setCompanyId(currentCompanyId);
 
       const [movementsResponse, warehousesResponse] = await Promise.all([
-        axios.get(`${API_URL}/inventoryMovements`, {
+        api.get("/inventoryMovements", {
           params: {
             companyId: currentCompanyId,
           },
         }),
 
-        axios.get(`${API_URL}/warehouses`, {
+        api.get("/warehouses", {
           params: {
             companyId: currentCompanyId,
           },
         }),
       ]);
 
+      const movementsData = Array.isArray(movementsResponse.data)
+        ? movementsResponse.data
+        : [];
+
+      const warehousesData = Array.isArray(warehousesResponse.data)
+        ? warehousesResponse.data
+        : [];
+
       // حماية إضافية لعزل بيانات الشركات
-      const companyMovements = movementsResponse.data.filter(
+      const companyMovements = movementsData.filter(
         (item: InventoryMovement) =>
           String(item.companyId) === String(currentCompanyId),
       );
 
-      const companyWarehouses = warehousesResponse.data.filter(
+      const companyWarehouses = warehousesData.filter(
         (item: Warehouse) =>
           String(item.companyId) === String(currentCompanyId),
       );
@@ -203,6 +232,9 @@ export default function InventoryMovementsPage() {
       setWarehouses(companyWarehouses);
     } catch (error) {
       console.error("Load inventory movements error:", error);
+
+      setMovements([]);
+      setWarehouses([]);
 
       toast.error("حدث خطأ أثناء تحميل حركات المخزون");
     } finally {
@@ -224,12 +256,22 @@ export default function InventoryMovementsPage() {
 
       const matchesSearch =
         !searchText ||
-        movement.productName?.toLowerCase().includes(searchText) ||
-        movement.productSKU?.toLowerCase().includes(searchText) ||
-        movement.warehouseName?.toLowerCase().includes(searchText) ||
+        String(movement.productName || "")
+          .toLowerCase()
+          .includes(searchText) ||
+        String(movement.productSKU || "")
+          .toLowerCase()
+          .includes(searchText) ||
+        String(movement.warehouseName || "")
+          .toLowerCase()
+          .includes(searchText) ||
         String(movement.referenceNumber || "")
           .toLowerCase()
-          .includes(searchText);
+          .includes(searchText) ||
+        String(movement.referenceId || "")
+          .toLowerCase()
+          .includes(searchText) ||
+        String(movement.id).toLowerCase().includes(searchText);
 
       const matchesType =
         selectedType === "all" || movement.type === selectedType;
@@ -264,12 +306,24 @@ export default function InventoryMovementsPage() {
     0,
   );
 
+  const netMovement = totalIncoming - totalOutgoing;
+
+  /* =========================================================
+     RESET FILTERS
+  ========================================================= */
+
+  const resetFilters = () => {
+    setSearch("");
+    setSelectedType("all");
+    setSelectedWarehouse("all");
+  };
+
   /* =========================================================
      RENDER
   ========================================================= */
 
   return (
-    <div dir="rtl" className="space-y-6 pb-10 m-5">
+    <div dir="rtl" className="m-5 space-y-6 pb-10">
       {/* =====================================================
           HEADER
       ===================================================== */}
@@ -378,12 +432,10 @@ export default function InventoryMovementsPage() {
 
               <h2
                 className={`mt-3 text-2xl font-bold ${
-                  totalIncoming - totalOutgoing >= 0
-                    ? "text-green-600"
-                    : "text-red-600"
+                  netMovement >= 0 ? "text-green-600" : "text-red-600"
                 }`}
               >
-                {formatNumber(totalIncoming - totalOutgoing)}
+                {formatNumber(netMovement)}
               </h2>
             </div>
 
@@ -459,11 +511,7 @@ export default function InventoryMovementsPage() {
           </p>
 
           <button
-            onClick={() => {
-              setSearch("");
-              setSelectedType("all");
-              setSelectedWarehouse("all");
-            }}
+            onClick={resetFilters}
             className="flex items-center gap-2 text-sm text-slate-500 transition hover:text-red-600"
           >
             <FiX />
@@ -536,13 +584,9 @@ export default function InventoryMovementsPage() {
                     key={movement.id}
                     className="transition hover:bg-slate-50"
                   >
-                    {/* ID */}
-
                     <td className="px-5 py-4 text-sm font-medium text-slate-700">
                       #{movement.id}
                     </td>
-
-                    {/* Type */}
 
                     <td className="px-5 py-4">
                       <span
@@ -566,11 +610,9 @@ export default function InventoryMovementsPage() {
                       </span>
                     </td>
 
-                    {/* Product */}
-
                     <td className="px-5 py-4">
                       <p className="text-sm font-semibold text-slate-800">
-                        {movement.productName}
+                        {movement.productName || "-"}
                       </p>
 
                       <p className="mt-1 text-xs text-slate-400">
@@ -578,16 +620,12 @@ export default function InventoryMovementsPage() {
                       </p>
                     </td>
 
-                    {/* Warehouse */}
-
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-2 text-sm text-slate-600">
                         <FiAward className="text-slate-400" />
                         {movement.warehouseName || "-"}
                       </div>
                     </td>
-
-                    {/* Quantity */}
 
                     <td className="px-5 py-4">
                       <span
@@ -609,19 +647,13 @@ export default function InventoryMovementsPage() {
                       </span>
                     </td>
 
-                    {/* Reference */}
-
                     <td className="px-5 py-4 text-sm text-slate-600">
                       {getMovementReference(movement)}
                     </td>
 
-                    {/* Date */}
-
                     <td className="px-5 py-4 text-sm text-slate-500">
                       {formatDate(movement.date)}
                     </td>
-
-                    {/* Details */}
 
                     <td className="px-5 py-4">
                       <button
@@ -689,7 +721,7 @@ export default function InventoryMovementsPage() {
                   <p className="mb-2 text-xs text-slate-400">اسم المنتج</p>
 
                   <p className="font-semibold text-slate-700">
-                    {selectedMovement.productName}
+                    {selectedMovement.productName || "-"}
                   </p>
                 </div>
 
@@ -745,16 +777,10 @@ export default function InventoryMovementsPage() {
                   <p className="mb-2 text-xs text-slate-400">وقت التسجيل</p>
 
                   <p className="font-semibold text-slate-700">
-                    {selectedMovement.createdAt
-                      ? new Date(selectedMovement.createdAt).toLocaleTimeString(
-                          "ar-YE",
-                        )
-                      : "-"}
+                    {formatTime(selectedMovement.createdAt)}
                   </p>
                 </div>
               </div>
-
-              {/* Notes */}
 
               <div className="rounded-xl border border-slate-100 p-4">
                 <p className="mb-2 text-xs text-slate-400">ملاحظات</p>

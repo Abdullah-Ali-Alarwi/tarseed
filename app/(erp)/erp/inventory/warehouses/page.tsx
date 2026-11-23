@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import Link from "next/link";
 import axios from "axios";
 import { toast } from "sonner";
@@ -25,12 +26,23 @@ import {
   FiEye,
 } from "react-icons/fi";
 
+import {
+  getCurrentActor,
+  getCreateActivity,
+  getUpdateActivity,
+  logCreate,
+  logUpdate,
+  logDelete,
+} from "../../lib/activity";
+
 // ========================================
 // API
 // ========================================
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
 const api = axios.create({
-  baseURL: "http://localhost:3001",
+  baseURL: API_URL,
   headers: {
     "Content-Type": "application/json",
   },
@@ -49,7 +61,14 @@ interface Warehouse {
   location: string;
   description: string;
   status: WarehouseStatus;
+
   createdAt?: string;
+  createdBy?: string;
+  createdByName?: string;
+
+  updatedAt?: string;
+  updatedBy?: string;
+  updatedByName?: string;
 }
 
 interface Product {
@@ -66,11 +85,37 @@ interface Product {
   status?: string;
 }
 
+interface WarehouseStock {
+  id: string;
+  companyId: string;
+  productId: string;
+  warehouseId: string;
+  quantity: number;
+
+  createdAt?: string;
+  createdBy?: string;
+  createdByName?: string;
+
+  updatedAt?: string;
+  updatedBy?: string;
+  updatedByName?: string;
+}
+
+interface InventoryMovement {
+  id: string | number;
+  companyId: string;
+  warehouseId: string;
+  productId: string;
+  type?: string;
+}
+
 // ========================================
 // Helpers
 // ========================================
 
 const getCookie = (name: string) => {
+  if (typeof document === "undefined") return "";
+
   const cookie = document.cookie
     .split("; ")
     .find((item) => item.startsWith(`${name}=`));
@@ -110,6 +155,10 @@ export default function WarehousesPage() {
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [warehouseStocks, setWarehouseStocks] = useState<WarehouseStock[]>([]);
+  const [inventoryMovements, setInventoryMovements] = useState<
+    InventoryMovement[]
+  >([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -126,6 +175,28 @@ export default function WarehousesPage() {
   const [form, setForm] = useState(emptyForm);
 
   // ======================================
+  // Current Actor
+  // ======================================
+
+  const getActor = () => {
+    const actor = getCurrentActor();
+
+    if (!actor) {
+      throw new Error(
+        "لم يتم العثور على بيانات المستخدم. يرجى تسجيل الدخول مرة أخرى.",
+      );
+    }
+
+    if (!actor.userId || !actor.companyId) {
+      throw new Error(
+        "بيانات المستخدم أو الشركة غير مكتملة. يرجى تسجيل الدخول مرة أخرى.",
+      );
+    }
+
+    return actor;
+  };
+
+  // ======================================
   // Initialize
   // ======================================
 
@@ -135,13 +206,23 @@ export default function WarehousesPage() {
 
   const initialize = async () => {
     try {
-      const userType = getCookie("type");
-      const currentCompanyId = getCookie("companyId");
+      const actor = getCurrentActor();
 
-      if (!["owner", "erp"].includes(userType)) {
+      const userType = getCookie("type");
+
+      if (!actor) {
+        toast.error("انتهت جلسة المستخدم، يرجى تسجيل الدخول");
+        return;
+      }
+
+      if (userType === "platform") {
         toast.error("هذه الصفحة مخصصة لمستخدمي الشركات");
         return;
       }
+
+      const currentCompanyId = String(
+        actor.companyId || getCookie("companyId") || "",
+      );
 
       if (!currentCompanyId) {
         toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
@@ -165,32 +246,44 @@ export default function WarehousesPage() {
 
   const loadData = async (currentCompanyId: string) => {
     try {
-      const [warehouseRes, productRes] = await Promise.all([
-        api.get("/warehouses", {
-          params: { companyId: currentCompanyId },
-        }),
+      const [warehouseRes, productRes, stockRes, movementRes] =
+        await Promise.all([
+          api.get("/warehouses", {
+            params: { companyId: currentCompanyId },
+          }),
 
-        api.get("/products", {
-          params: { companyId: currentCompanyId },
-        }),
-      ]);
+          api.get("/products", {
+            params: { companyId: currentCompanyId },
+          }),
+
+          api.get("/warehouseStocks", {
+            params: { companyId: currentCompanyId },
+          }),
+
+          api.get("/inventoryMovements", {
+            params: { companyId: currentCompanyId },
+          }),
+        ]);
+
+      const sameCompany = (item: { companyId?: string | number }) =>
+        String(item.companyId) === String(currentCompanyId);
 
       setWarehouses(
-        warehouseRes.data.filter(
-          (item: Warehouse) =>
-            String(item.companyId) === String(currentCompanyId),
-        ),
+        warehouseRes.data.filter((item: Warehouse) => sameCompany(item)),
       );
 
-      setProducts(
-        productRes.data.filter(
-          (item: Product) =>
-            String(item.companyId) === String(currentCompanyId),
-        ),
+      setProducts(productRes.data.filter((item: Product) => sameCompany(item)));
+
+      setWarehouseStocks(
+        stockRes.data.filter((item: WarehouseStock) => sameCompany(item)),
+      );
+
+      setInventoryMovements(
+        movementRes.data.filter((item: InventoryMovement) => sameCompany(item)),
       );
     } catch (error) {
       console.error("Load Data Error:", error);
-      toast.error("تعذر تحميل بيانات المستودعات");
+      toast.error("تعذر تحميل بيانات المستودعات والمخزون");
     }
   };
 
@@ -203,7 +296,9 @@ export default function WarehousesPage() {
 
     try {
       setLoading(true);
+
       await loadData(companyId);
+
       toast.success("تم تحديث البيانات");
     } finally {
       setLoading(false);
@@ -211,47 +306,41 @@ export default function WarehousesPage() {
   };
 
   // ======================================
-  // Warehouse Statistics
+  // Stock Helpers
   // ======================================
 
-  const activeWarehouses = warehouses.filter(
-    (item) => item.status === "active",
-  );
-
-  const inactiveWarehouses = warehouses.filter(
-    (item) => item.status === "inactive",
-  );
-
-  const totalProducts = products.length;
-
-  const totalStockQuantity = products.reduce(
-    (sum, product) => sum + number(product.currentStock),
-    0,
-  );
-
-  const totalStockCost = products.reduce(
-    (sum, product) =>
-      sum + number(product.currentStock) * number(product.purchasePrice),
-    0,
-  );
-
-  const lowStockProducts = products.filter(
-    (product) =>
-      product.status !== "inactive" &&
-      number(product.currentStock) <= number(product.minStock),
-  );
-
-  const lowStockPercentage =
-    totalProducts > 0 ? (lowStockProducts.length / totalProducts) * 100 : 0;
+  const getProductStock = (productId: string, warehouseId?: string) => {
+    return warehouseStocks
+      .filter(
+        (stock) =>
+          String(stock.productId) === String(productId) &&
+          (!warehouseId || String(stock.warehouseId) === String(warehouseId)) &&
+          String(stock.companyId) === String(companyId),
+      )
+      .reduce((sum, stock) => sum + number(stock.quantity), 0);
+  };
 
   // ======================================
   // Warehouse Products
   // ======================================
 
   const getWarehouseProducts = (warehouseId: string) => {
-    return products.filter(
-      (product) => String(product.warehouseId) === String(warehouseId),
+    const productIds = new Set(
+      warehouseStocks
+        .filter(
+          (stock) =>
+            String(stock.warehouseId) === String(warehouseId) &&
+            String(stock.companyId) === String(companyId),
+        )
+        .map((stock) => String(stock.productId)),
     );
+
+    return products.filter((product) => {
+      const belongsToWarehouse =
+        String(product.warehouseId || "") === String(warehouseId);
+
+      return belongsToWarehouse || productIds.has(String(product.id));
+    });
   };
 
   // ======================================
@@ -259,27 +348,43 @@ export default function WarehousesPage() {
   // ======================================
 
   const getWarehouseStats = (warehouseId: string) => {
-    const warehouseProducts = getWarehouseProducts(warehouseId);
+    const warehouseStocksList = warehouseStocks.filter(
+      (stock) =>
+        String(stock.warehouseId) === String(warehouseId) &&
+        String(stock.companyId) === String(companyId),
+    );
 
-    const quantity = warehouseProducts.reduce(
-      (sum, product) => sum + number(product.currentStock),
+    const productIds = new Set(
+      warehouseStocksList.map((stock) => String(stock.productId)),
+    );
+
+    const warehouseProducts = products.filter(
+      (product) =>
+        productIds.has(String(product.id)) ||
+        String(product.warehouseId || "") === String(warehouseId),
+    );
+
+    const quantity = warehouseStocksList.reduce(
+      (sum, stock) => sum + number(stock.quantity),
       0,
     );
 
-    const cost = warehouseProducts.reduce(
-      (sum, product) =>
-        sum + number(product.currentStock) * number(product.purchasePrice),
-      0,
-    );
+    const cost = warehouseStocksList.reduce((sum, stock) => {
+      const product = products.find(
+        (item) => String(item.id) === String(stock.productId),
+      );
+
+      return sum + number(stock.quantity) * number(product?.purchasePrice);
+    }, 0);
 
     const lowProducts = warehouseProducts.filter(
       (product) =>
         product.status !== "inactive" &&
-        number(product.currentStock) <= number(product.minStock),
+        getProductStock(product.id, warehouseId) <= number(product.minStock),
     );
 
     const outOfStock = warehouseProducts.filter(
-      (product) => number(product.currentStock) <= 0,
+      (product) => getProductStock(product.id, warehouseId) <= 0,
     ).length;
 
     const lowPercentage =
@@ -296,6 +401,46 @@ export default function WarehousesPage() {
       lowPercentage,
     };
   };
+
+  // ======================================
+  // Warehouse Statistics
+  // ======================================
+
+  const activeWarehouses = warehouses.filter(
+    (item) => item.status === "active",
+  );
+
+  const inactiveWarehouses = warehouses.filter(
+    (item) => item.status === "inactive",
+  );
+
+  const totalProducts = new Set(
+    warehouseStocks.map((item) => String(item.productId)),
+  ).size;
+
+  const totalStockQuantity = warehouseStocks.reduce(
+    (sum, stock) => sum + number(stock.quantity),
+    0,
+  );
+
+  const totalStockCost = warehouseStocks.reduce((sum, stock) => {
+    const product = products.find(
+      (item) => String(item.id) === String(stock.productId),
+    );
+
+    return sum + number(stock.quantity) * number(product?.purchasePrice);
+  }, 0);
+
+  const lowStockProducts = products.filter((product) => {
+    if (product.status === "inactive") return false;
+
+    const stock = getProductStock(product.id);
+
+    return stock <= number(product.minStock);
+  });
+
+  const lowStockPercentage =
+    totalProducts > 0 ? (lowStockProducts.length / totalProducts) * 100 : 0;
 
   // ======================================
   // Locations
@@ -357,6 +502,11 @@ export default function WarehousesPage() {
   // ======================================
 
   const handleEdit = (warehouse: Warehouse) => {
+    if (String(warehouse.companyId) !== String(companyId)) {
+      toast.error("لا يمكنك تعديل مستودع تابع لشركة أخرى");
+      return;
+    }
+
     setEditingId(String(warehouse.id));
 
     setForm({
@@ -374,9 +524,7 @@ export default function WarehousesPage() {
   // ======================================
 
   const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >,
+    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
   ) => {
     const { name, value } = e.target;
 
@@ -390,7 +538,7 @@ export default function WarehousesPage() {
   // Save Warehouse
   // ======================================
 
-  const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSave = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (!companyId) {
@@ -419,6 +567,17 @@ export default function WarehousesPage() {
     try {
       setSaving(true);
 
+      const actor = getActor();
+
+      if (String(actor.companyId) !== String(companyId)) {
+        toast.error("المستخدم غير مرتبط بالشركة الحالية");
+        return;
+      }
+
+      const now = new Date().toISOString();
+
+      const actorName = actor.userName || actor.username;
+
       const payload = {
         companyId,
         name,
@@ -426,6 +585,10 @@ export default function WarehousesPage() {
         description: form.description.trim(),
         status: form.status,
       };
+
+      // ==================================
+      // Update
+      // ==================================
 
       if (editingId) {
         const currentWarehouse = warehouses.find(
@@ -440,14 +603,63 @@ export default function WarehousesPage() {
           return;
         }
 
-        await api.patch(`/warehouses/${editingId}`, payload);
+        const updatePayload = {
+          ...payload,
+          updatedBy: String(actor.userId),
+          updatedByName: actorName,
+          updatedAt: now,
+          ...getUpdateActivity(),
+        };
+
+        await api.patch(`/warehouses/${editingId}`, updatePayload);
+
+        try {
+          await logUpdate(
+            "المستودعات",
+            `تم تعديل المستودع: ${name}`,
+            editingId,
+            name,
+            currentWarehouse,
+            {
+              ...payload,
+              updatedBy: String(actor.userId),
+              updatedByName: actorName,
+            },
+          );
+        } catch (activityError) {
+          console.error("Update Activity Error:", activityError);
+        }
 
         toast.success("تم تحديث المستودع بنجاح");
-      } else {
-        await api.post("/warehouses", {
+      }
+
+      // ==================================
+      // Create
+      // ==================================
+      else {
+        const createPayload = {
           ...payload,
-          createdAt: new Date().toISOString(),
-        });
+          createdBy: String(actor.userId),
+          createdByName: actorName,
+          createdAt: now,
+          ...getCreateActivity(),
+        };
+
+        const response = await api.post("/warehouses", createPayload);
+
+        const newWarehouse = response.data as Warehouse;
+
+        try {
+          await logCreate(
+            "المستودعات",
+            `تم إنشاء مستودع جديد: ${name}`,
+            String(newWarehouse.id),
+            name,
+            createPayload,
+          );
+        } catch (activityError) {
+          console.error("Create Activity Error:", activityError);
+        }
 
         toast.success("تمت إضافة المستودع بنجاح");
       }
@@ -459,7 +671,10 @@ export default function WarehousesPage() {
       await loadData(companyId);
     } catch (error) {
       console.error("Save Warehouse Error:", error);
-      toast.error("حدث خطأ أثناء حفظ المستودع");
+
+      toast.error(
+        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ المستودع",
+      );
     } finally {
       setSaving(false);
     }
@@ -481,11 +696,23 @@ export default function WarehousesPage() {
     }
 
     const hasProducts = products.some(
-      (product) => String(product.warehouseId) === String(warehouse.id),
+      (product) => String(product.warehouseId || "") === String(warehouse.id),
     );
 
-    if (hasProducts) {
-      toast.error("لا يمكن حذف مستودع يحتوي على أصناف");
+    const hasStock = warehouseStocks.some(
+      (stock) =>
+        String(stock.warehouseId) === String(warehouse.id) &&
+        number(stock.quantity) !== 0,
+    );
+
+    const hasMovements = inventoryMovements.some(
+      (movement) => String(movement.warehouseId) === String(warehouse.id),
+    );
+
+    if (hasProducts || hasStock || hasMovements) {
+      toast.error(
+        "لا يمكن حذف المستودع لأنه مرتبط بأصناف أو أرصدة أو حركات مخزنية. يمكنك تغيير حالته إلى غير نشط.",
+      );
       return;
     }
 
@@ -496,7 +723,26 @@ export default function WarehousesPage() {
     if (!confirmed) return;
 
     try {
+      const actor = getActor();
+
+      if (String(actor.companyId) !== String(companyId)) {
+        toast.error("المستخدم غير مرتبط بالشركة الحالية");
+        return;
+      }
+
       await api.delete(`/warehouses/${warehouse.id}`);
+
+      try {
+        await logDelete(
+          "المستودعات",
+          `تم حذف المستودع: ${warehouse.name}`,
+          String(warehouse.id),
+          warehouse.name,
+          warehouse,
+        );
+      } catch (activityError) {
+        console.error("Delete Activity Error:", activityError);
+      }
 
       toast.success("تم حذف المستودع بنجاح");
 
@@ -546,7 +792,9 @@ export default function WarehousesPage() {
           لم يتم العثور على الشركة المرتبطة بالمستخدم
         </h2>
 
-        <p className="mt-2 text-xs">تحقق من وجود companyId في Cookies.</p>
+        <p className="mt-2 text-xs">
+          تحقق من تسجيل الدخول وبيانات الشركة المرتبطة بالمستخدم.
+        </p>
       </div>
     );
   }
@@ -685,8 +933,6 @@ export default function WarehousesPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {/* Search */}
-
           <div className="relative">
             <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
 
@@ -699,8 +945,6 @@ export default function WarehousesPage() {
             />
           </div>
 
-          {/* Status */}
-
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -710,8 +954,6 @@ export default function WarehousesPage() {
             <option value="active">نشط</option>
             <option value="inactive">غير نشط</option>
           </select>
-
-          {/* Location */}
 
           <select
             value={locationFilter}
@@ -726,8 +968,6 @@ export default function WarehousesPage() {
               </option>
             ))}
           </select>
-
-          {/* Stock */}
 
           <select
             value={stockFilter}
@@ -791,8 +1031,6 @@ export default function WarehousesPage() {
                     key={warehouse.id}
                     className="transition hover:bg-gray-50"
                   >
-                    {/* Warehouse Name / Link */}
-
                     <td className="px-3 py-3">
                       <Link
                         href={`/erp/inventory/warehouses/${warehouse.id}`}
@@ -816,8 +1054,6 @@ export default function WarehousesPage() {
                       </Link>
                     </td>
 
-                    {/* Location */}
-
                     <td className="px-3 py-3 text-gray-600">
                       <div className="flex items-center gap-1">
                         <FiMapPin className="text-gray-400" />
@@ -825,27 +1061,19 @@ export default function WarehousesPage() {
                       </div>
                     </td>
 
-                    {/* Products */}
-
                     <td className="px-3 py-3">
                       <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-700">
                         {stats.productsCount}
                       </span>
                     </td>
 
-                    {/* Quantity */}
-
                     <td className="px-3 py-3 font-semibold text-gray-800">
                       {money(stats.quantity)}
                     </td>
 
-                    {/* Cost */}
-
                     <td className="px-3 py-3 font-semibold text-green-700">
                       {money(stats.cost)}
                     </td>
-
-                    {/* Low Stock */}
 
                     <td className="px-3 py-3">
                       <span
@@ -858,8 +1086,6 @@ export default function WarehousesPage() {
                         {stats.lowCount}
                       </span>
                     </td>
-
-                    {/* Low Percentage */}
 
                     <td className="px-3 py-3">
                       <div className="flex min-w-[90px] items-center gap-2">
@@ -890,8 +1116,6 @@ export default function WarehousesPage() {
                       </div>
                     </td>
 
-                    {/* Status */}
-
                     <td className="px-3 py-3">
                       <span
                         className={`rounded-full px-2 py-1 text-[9px] ${
@@ -903,8 +1127,6 @@ export default function WarehousesPage() {
                         {warehouse.status === "active" ? "نشط" : "غير نشط"}
                       </span>
                     </td>
-
-                    {/* Actions */}
 
                     <td className="px-3 py-3">
                       <div className="flex justify-center gap-1.5">
@@ -968,8 +1190,6 @@ export default function WarehousesPage() {
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-3">
           <div className="my-auto w-full max-w-xl rounded-xl bg-white shadow-xl">
-            {/* Modal Header */}
-
             <div className="flex items-center justify-between border-b p-4">
               <div>
                 <h2 className="text-sm font-bold text-gray-800">
@@ -989,12 +1209,8 @@ export default function WarehousesPage() {
               </button>
             </div>
 
-            {/* Form */}
-
             <form onSubmit={handleSave}>
               <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
-                {/* Name */}
-
                 <div className="sm:col-span-2">
                   <label className={labelClass}>اسم المستودع *</label>
 
@@ -1008,8 +1224,6 @@ export default function WarehousesPage() {
                   />
                 </div>
 
-                {/* Location */}
-
                 <div>
                   <label className={labelClass}>الموقع</label>
 
@@ -1021,8 +1235,6 @@ export default function WarehousesPage() {
                     placeholder="المقر الرئيسي"
                   />
                 </div>
-
-                {/* Status */}
 
                 <div>
                   <label className={labelClass}>الحالة</label>
@@ -1038,8 +1250,6 @@ export default function WarehousesPage() {
                   </select>
                 </div>
 
-                {/* Description */}
-
                 <div className="sm:col-span-2">
                   <label className={labelClass}>الوصف</label>
 
@@ -1053,14 +1263,11 @@ export default function WarehousesPage() {
                   />
                 </div>
 
-                {/* Company */}
-
                 <div className="rounded-md bg-blue-50 p-3 text-[11px] text-blue-700 sm:col-span-2">
-                  سيتم ربط هذا المستودع بالشركة الحالية تلقائياً.
+                  سيتم ربط هذا المستودع بالشركة الحالية، وتسجيل المستخدم الذي
+                  قام بإنشائه أو تعديله تلقائياً.
                 </div>
               </div>
-
-              {/* Footer */}
 
               <div className="flex justify-end gap-2 border-t p-4">
                 <button
@@ -1105,7 +1312,7 @@ function StatCard({
 }: {
   title: string;
   value: string | number;
-  icon: React.ReactNode;
+  icon: ReactNode;
   color: string;
 }) {
   const colors: Record<string, string> = {

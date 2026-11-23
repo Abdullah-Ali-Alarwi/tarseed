@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   FiChevronDown,
@@ -38,40 +38,79 @@ export default function AccountsTable({
   const [expanded, setExpanded] = useState<AccountId[]>([]);
   const [showAll, setShowAll] = useState(true);
 
-  const tree = buildAccountTree(accounts);
+  // مقارنة المعرفات مع مراعاة احتمال كونها أرقاماً أو نصوصاً
+  const isSameId = (a: AccountId, b: AccountId) => String(a) === String(b);
 
+  // بناء شجرة الحسابات
+  const tree = useMemo(() => {
+    return buildAccountTree(accounts);
+  }, [accounts]);
+
+  // فتح وإغلاق حساب
   const toggleExpand = (id: AccountId) => {
     setExpanded((prev) =>
-      prev.some((item) => String(item) === String(id))
-        ? prev.filter((item) => String(item) !== String(id))
+      prev.some((item) => isSameId(item, id))
+        ? prev.filter((item) => !isSameId(item, id))
         : [...prev, id],
     );
   };
 
-  const visibleAccounts = showAll
-    ? tree
-    : tree.filter((account) => {
-        let parentId = account.parentId;
+  // فتح جميع الحسابات
+  const expandAll = () => {
+    setExpanded(
+      accounts
+        .filter((account) => hasChildren(account.id, accounts))
+        .map((account) => account.id),
+    );
 
-        while (parentId !== null) {
-          const isParentExpanded = expanded.some(
-            (id) => String(id) === String(parentId),
-          );
+    setShowAll(false);
+  };
 
-          if (!isParentExpanded) return false;
+  // طي جميع الحسابات
+  const collapseAll = () => {
+    setExpanded([]);
+    setShowAll(true);
+  };
 
-          const parent = accounts.find(
-            (item) => String(item.id) === String(parentId),
-          );
+  // تحديد الحسابات التي يجب عرضها
+  const visibleAccounts = useMemo(() => {
+    if (showAll) {
+      return tree;
+    }
 
-          parentId = parent?.parentId ?? null;
+    return tree.filter((account) => {
+      let parentId = account.parentId;
+
+      while (parentId !== null) {
+        const isParentExpanded = expanded.some((id) => isSameId(id, parentId));
+
+        if (!isParentExpanded) {
+          return false;
         }
 
-        return true;
-      });
+        const parent = accounts.find((item) => isSameId(item.id, parentId));
+
+        parentId = parent?.parentId ?? null;
+      }
+
+      return true;
+    });
+  }, [tree, showAll, expanded, accounts]);
+
+  // تأكيد الحذف
+  const handleDelete = (account: Account) => {
+    const confirmed = window.confirm(
+      `هل أنت متأكد من حذف الحساب "${account.name}"؟`,
+    );
+
+    if (confirmed) {
+      onDelete(account.id);
+    }
+  };
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      {/* رأس الجدول */}
       <div className="flex items-center justify-between border-b border-slate-200 p-4">
         <div>
           <h2 className="font-bold text-slate-900">شجرة الحسابات</h2>
@@ -82,16 +121,15 @@ export default function AccountsTable({
         </div>
 
         <button
-          onClick={() => {
-            setShowAll(!showAll);
-            setExpanded([]);
-          }}
-          className="rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+          type="button"
+          onClick={showAll ? expandAll : collapseAll}
+          className="rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100"
         >
-          {showAll ? "طي الحسابات" : "عرض جميع الحسابات"}
+          {showAll ? "توسيع جميع الحسابات" : "طي جميع الحسابات"}
         </button>
       </div>
 
+      {/* الجدول */}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1100px] text-right text-sm">
           <thead className="bg-slate-50 text-slate-600">
@@ -111,31 +149,40 @@ export default function AccountsTable({
             {visibleAccounts.map((account) => {
               const children = hasChildren(account.id, accounts);
 
-              const isExpanded = expanded.some(
-                (id) => String(id) === String(account.id),
+              const isExpanded = expanded.some((id) =>
+                isSameId(id, account.id),
               );
+
+              const balance = Number(account.balance || 0);
 
               return (
                 <tr
                   key={account.id}
-                  className="border-t border-slate-100 hover:bg-blue-50/40"
+                  className="border-t border-slate-100 transition hover:bg-blue-50/40"
                 >
+                  {/* رقم الحساب */}
                   <td className="whitespace-nowrap p-4 font-semibold text-slate-700">
                     {account.code}
                   </td>
 
+                  {/* اسم الحساب */}
                   <td className="p-4">
                     <div
                       className="flex items-center gap-2"
                       style={{
-                        paddingRight: `${(account.level - 1) * 22}px`,
+                        paddingRight: `${Math.max(
+                          0,
+                          (account.level - 1) * 22,
+                        )}px`,
                       }}
                     >
                       {children ? (
                         <button
                           type="button"
                           onClick={() => toggleExpand(account.id)}
-                          className="flex h-6 w-6 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200"
+                          aria-label={isExpanded ? "طي الحساب" : "توسيع الحساب"}
+                          aria-expanded={isExpanded}
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-200"
                         >
                           {isExpanded ? (
                             <FiChevronDown size={17} />
@@ -171,10 +218,12 @@ export default function AccountsTable({
                     </div>
                   </td>
 
+                  {/* نوع الحساب */}
                   <td className="whitespace-nowrap p-4 text-slate-600">
                     {getAccountTypeName(account.type)}
                   </td>
 
+                  {/* الطبيعة */}
                   <td className="whitespace-nowrap p-4">
                     <span
                       className={`rounded-md px-2.5 py-1 text-xs font-medium ${
@@ -187,30 +236,35 @@ export default function AccountsTable({
                     </span>
                   </td>
 
+                  {/* المستوى */}
                   <td className="whitespace-nowrap p-4 text-slate-600">
                     <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs">
                       {account.level}
                     </span>
                   </td>
 
+                  {/* الرصيد */}
                   <td className="whitespace-nowrap p-4">
                     <span
                       className={`font-bold ${
-                        Number(account.balance || 0) > 0
+                        balance > 0
                           ? "text-emerald-700"
-                          : "text-slate-500"
+                          : balance < 0
+                            ? "text-red-600"
+                            : "text-slate-500"
                       }`}
                     >
-                      {formatMoney(Number(account.balance || 0))}
+                      {formatMoney(balance)}
                     </span>
 
-                    {account.code === "1104" && (
+                    {String(account.code) === "1104" && (
                       <span className="mr-2 rounded bg-emerald-50 px-2 py-1 text-[10px] text-emerald-700">
                         مخزون
                       </span>
                     )}
                   </td>
 
+                  {/* الحالة */}
                   <td className="whitespace-nowrap p-4">
                     <span
                       className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs ${
@@ -229,13 +283,15 @@ export default function AccountsTable({
                     </span>
                   </td>
 
+                  {/* الإجراءات */}
                   <td className="p-4">
                     <div className="flex items-center justify-center gap-2">
                       <button
                         type="button"
                         onClick={() => onEdit(account)}
                         title="تعديل الحساب"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50"
+                        aria-label={`تعديل الحساب ${account.name}`}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-blue-600 transition hover:bg-blue-50"
                       >
                         <FiEdit size={16} />
                       </button>
@@ -244,16 +300,18 @@ export default function AccountsTable({
                         type="button"
                         onClick={() => onToggleStatus(account.id)}
                         title="تفعيل / إيقاف الحساب"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-600 hover:bg-amber-50"
+                        aria-label={`تغيير حالة الحساب ${account.name}`}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-amber-600 transition hover:bg-amber-50"
                       >
                         <FiPower size={16} />
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => onDelete(account.id)}
+                        onClick={() => handleDelete(account)}
                         title="حذف الحساب"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-red-600 hover:bg-red-50"
+                        aria-label={`حذف الحساب ${account.name}`}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-red-600 transition hover:bg-red-50"
                       >
                         <FiTrash2 size={16} />
                       </button>
@@ -263,6 +321,7 @@ export default function AccountsTable({
               );
             })}
 
+            {/* لا توجد حسابات */}
             {visibleAccounts.length === 0 && (
               <tr>
                 <td colSpan={8} className="p-12 text-center">
@@ -282,11 +341,17 @@ export default function AccountsTable({
         </table>
       </div>
 
+      {/* تذييل الجدول */}
       <div className="border-t border-slate-200 bg-slate-50 px-4 py-3">
         <p className="text-xs text-slate-500">
           عدد الحسابات المعروضة:{" "}
           <span className="font-semibold text-slate-700">
             {visibleAccounts.length}
+          </span>
+          <span className="mx-2">|</span>
+          إجمالي الحسابات:{" "}
+          <span className="font-semibold text-slate-700">
+            {accounts.length}
           </span>
         </p>
       </div>

@@ -92,7 +92,7 @@ export default function SalesLayout({ children }: { children: ReactNode }) {
       </div>
 
       {/* Page Content */}
-      <div>{children}</div>
+      <div className="m-5">{children}</div>
     </div>
   );
 }

@@ -3,9 +3,12 @@ import {
   AccountId,
   AccountNature,
   AccountType,
-} from "./types";
+} from "@/lib/api/accounts";
 
+// ==============================
 // تحديد طبيعة الحساب تلقائياً
+// ==============================
+
 export function getAccountNature(
   type: AccountType
 ): AccountNature {
@@ -16,15 +19,21 @@ export function getAccountNature(
   return "credit";
 }
 
+// ==============================
 // مقارنة معرفات الحسابات
+// ==============================
+
 export function isSameAccountId(
   first: AccountId | null,
   second: AccountId | null
-) {
+): boolean {
   return String(first ?? "") === String(second ?? "");
 }
 
+// ==============================
 // حساب مستوى الحساب
+// ==============================
+
 export function getAccountLevel(
   parentId: AccountId | null,
   accounts: Account[]
@@ -38,7 +47,10 @@ export function getAccountLevel(
   return parent ? parent.level + 1 : 1;
 }
 
+// ==============================
 // أسماء أنواع الحسابات
+// ==============================
+
 export function getAccountTypeName(
   type: AccountType
 ): string {
@@ -53,30 +65,56 @@ export function getAccountTypeName(
   return types[type];
 }
 
+// ==============================
 // طبيعة الحساب بالعربي
+// ==============================
+
 export function getNatureName(
   nature: AccountNature
 ): string {
   return nature === "debit" ? "مدين" : "دائن";
 }
 
+// ==============================
 // ترتيب الحسابات في شجرة
+// ==============================
+
 export function buildAccountTree(
   accounts: Account[],
-  parentId: AccountId | null = null
+  parentId: AccountId | null = null,
+  visited: Set<string> = new Set()
 ): Account[] {
   return accounts
     .filter((account) =>
       isSameAccountId(account.parentId, parentId)
     )
     .sort((a, b) => a.code.localeCompare(b.code))
-    .flatMap((account) => [
-      account,
-      ...buildAccountTree(accounts, account.id),
-    ]);
+    .flatMap((account) => {
+      const accountKey = String(account.id);
+
+      // منع الدوران اللانهائي في حالة وجود علاقة دائرية
+      if (visited.has(accountKey)) {
+        return [];
+      }
+
+      const nextVisited = new Set(visited);
+      nextVisited.add(accountKey);
+
+      return [
+        account,
+        ...buildAccountTree(
+          accounts,
+          account.id,
+          nextVisited
+        ),
+      ];
+    });
 }
 
+// ==============================
 // التحقق من وجود أبناء للحساب
+// ==============================
+
 export function hasChildren(
   accountId: AccountId,
   accounts: Account[]
@@ -86,12 +124,18 @@ export function hasChildren(
   );
 }
 
+// ==============================
 // التحقق من إمكانية اختيار الحساب كأب
+// ==============================
+
 export function canBeParent(account: Account): boolean {
   return account.isGroup && account.isActive;
 }
 
+// ==============================
 // تنسيق العملة
+// ==============================
+
 export function formatMoney(value: number): string {
   return new Intl.NumberFormat("ar-YE", {
     minimumFractionDigits: 0,

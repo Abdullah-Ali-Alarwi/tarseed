@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import axios from "axios";
 import { toast } from "sonner";
@@ -8,8 +8,6 @@ import { toast } from "sonner";
 import {
   FiPackage,
   FiHome,
-  FiLayers,
-  FiBox,
   FiSettings,
   FiArrowDownCircle,
   FiArrowUpCircle,
@@ -20,6 +18,11 @@ import {
   FiClipboard,
   FiTruck,
   FiPlus,
+  FiDollarSign,
+  FiTrendingUp,
+  FiLayers,
+  FiShoppingCart,
+  FiBox,
 } from "react-icons/fi";
 
 // ========================================
@@ -43,11 +46,18 @@ interface Product {
   name: string;
   sku?: string;
   barcode?: string;
+
+  purchasePrice?: number;
+  sellingPrice?: number;
+
   quantity?: number;
   stock?: number;
   currentStock?: number;
+
   minStock?: number;
   reorderLevel?: number;
+
+  warehouseId?: string;
   status?: string;
 }
 
@@ -59,6 +69,15 @@ interface Warehouse {
   status?: string;
 }
 
+interface WarehouseStock {
+  id: string;
+  companyId: string;
+  productId: string;
+  warehouseId: string;
+  quantity: number;
+  updatedAt?: string;
+}
+
 interface InventoryMovement {
   id: string;
   companyId: string;
@@ -66,10 +85,13 @@ interface InventoryMovement {
   productName?: string;
   warehouseId?: string;
   warehouseName?: string;
+
   type?: string;
   movementType?: string;
+
   quantity?: number;
   reference?: string;
+
   date?: string;
   createdAt?: string;
 }
@@ -79,6 +101,8 @@ interface InventoryMovement {
 // ========================================
 
 const getCookie = (name: string) => {
+  if (typeof document === "undefined") return "";
+
   const cookies = document.cookie.split("; ");
 
   const cookie = cookies.find((item) => item.startsWith(`${name}=`));
@@ -87,7 +111,13 @@ const getCookie = (name: string) => {
 };
 
 const formatNumber = (value: number) => {
-  return new Intl.NumberFormat("ar-YE").format(value);
+  return new Intl.NumberFormat("ar-YE", {
+    maximumFractionDigits: 2,
+  }).format(value);
+};
+
+const formatMoney = (value: number) => {
+  return `${formatNumber(value)}`;
 };
 
 const formatDate = (date?: string) => {
@@ -104,6 +134,12 @@ const formatDate = (date?: string) => {
   });
 };
 
+const getStock = (value?: number) => {
+  const number = Number(value ?? 0);
+
+  return Number.isFinite(number) ? number : 0;
+};
+
 // ========================================
 // Main Page
 // ========================================
@@ -113,6 +149,7 @@ export default function InventoryPage() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [warehouseStocks, setWarehouseStocks] = useState<WarehouseStock[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -150,6 +187,7 @@ export default function InventoryPage() {
       await loadInventory(currentCompanyId);
     } catch (error) {
       console.error("Inventory Initialize Error:", error);
+
       toast.error("حدث خطأ أثناء تهيئة صفحة المخزون");
     } finally {
       setLoading(false);
@@ -162,23 +200,33 @@ export default function InventoryPage() {
 
   const loadInventory = async (currentCompanyId: string) => {
     try {
-      const [productsResponse, warehousesResponse, movementsResponse] =
-        await Promise.all([
-          api.get("/products", {
-            params: { companyId: currentCompanyId },
-          }),
+      const [
+        productsResponse,
+        warehousesResponse,
+        warehouseStocksResponse,
+        movementsResponse,
+      ] = await Promise.all([
+        api.get("/products", {
+          params: { companyId: currentCompanyId },
+        }),
 
-          api.get("/warehouses", {
-            params: { companyId: currentCompanyId },
-          }),
+        api.get("/warehouses", {
+          params: { companyId: currentCompanyId },
+        }),
 
-          api.get("/inventoryMovements", {
-            params: { companyId: currentCompanyId },
-          }),
-        ]);
+        api.get("/warehouseStocks", {
+          params: { companyId: currentCompanyId },
+        }),
+
+        api.get("/inventoryMovements", {
+          params: { companyId: currentCompanyId },
+        }),
+      ]);
 
       setProducts(productsResponse.data);
       setWarehouses(warehousesResponse.data);
+      setWarehouseStocks(warehouseStocksResponse.data);
+
       setMovements(
         [...movementsResponse.data].sort((a, b) => {
           const dateA = new Date(a.createdAt || a.date || 0).getTime();
@@ -190,6 +238,7 @@ export default function InventoryPage() {
       );
     } catch (error) {
       console.error("Load Inventory Error:", error);
+
       toast.error("تعذر تحميل بيانات المخزون");
     }
   };
@@ -203,12 +252,29 @@ export default function InventoryPage() {
 
     try {
       setLoading(true);
+
       await loadInventory(companyId);
+
       toast.success("تم تحديث بيانات المخزون");
     } finally {
       setLoading(false);
     }
   };
+
+  // ======================================
+  // Product Stock Map
+  // ======================================
+
+  const productStockMap = useMemo(() => {
+    const result: Record<string, number> = {};
+
+    warehouseStocks.forEach((stock) => {
+      result[stock.productId] =
+        (result[stock.productId] || 0) + getStock(stock.quantity);
+    });
+
+    return result;
+  }, [warehouseStocks]);
 
   // ======================================
   // Statistics
@@ -222,19 +288,102 @@ export default function InventoryPage() {
     (warehouse) => warehouse.status !== "inactive",
   );
 
-  const lowStockProducts = products.filter((product) => {
-    const stock = product.currentStock ?? product.stock ?? product.quantity;
+  const totalQuantity = useMemo(() => {
+    return warehouseStocks.reduce(
+      (total, stock) => total + getStock(stock.quantity),
+      0,
+    );
+  }, [warehouseStocks]);
 
-    const minimum = product.minStock ?? product.reorderLevel;
+  const totalPurchaseValue = useMemo(() => {
+    return warehouseStocks.reduce((total, stock) => {
+      const product = products.find((item) => item.id === stock.productId);
+
+      if (!product) return total;
+
+      return total + getStock(stock.quantity) * getStock(product.purchasePrice);
+    }, 0);
+  }, [warehouseStocks, products]);
+
+  const totalSellingValue = useMemo(() => {
+    return warehouseStocks.reduce((total, stock) => {
+      const product = products.find((item) => item.id === stock.productId);
+
+      if (!product) return total;
+
+      return total + getStock(stock.quantity) * getStock(product.sellingPrice);
+    }, 0);
+  }, [warehouseStocks, products]);
+
+  const expectedProfit = totalSellingValue - totalPurchaseValue;
+
+  const lowStockProducts = activeProducts.filter((product) => {
+    const stock = productStockMap[product.id] || 0;
+
+    const minimum = getStock(product.minStock ?? product.reorderLevel);
 
     return (
-      typeof stock === "number" &&
-      typeof minimum === "number" &&
+      (product.minStock !== undefined || product.reorderLevel !== undefined) &&
       stock <= minimum
     );
   });
 
+  const productsWithoutCost = activeProducts.filter((product) => {
+    const quantity = productStockMap[product.id] || 0;
+
+    return quantity > 0 && !getStock(product.purchasePrice);
+  });
+
+  const productsWithoutSellingPrice = activeProducts.filter((product) => {
+    const quantity = productStockMap[product.id] || 0;
+
+    return quantity > 0 && !getStock(product.sellingPrice);
+  });
+
   const totalMovements = movements.length;
+
+  const stockedProductsCount = activeProducts.filter(
+    (product) => (productStockMap[product.id] || 0) > 0,
+  ).length;
+
+  // ======================================
+  // Warehouse Statistics
+  // ======================================
+
+  const warehouseStatistics = useMemo(() => {
+    return activeWarehouses.map((warehouse) => {
+      const stocks = warehouseStocks.filter(
+        (stock) => stock.warehouseId === warehouse.id,
+      );
+
+      let quantity = 0;
+      let purchaseValue = 0;
+      let sellingValue = 0;
+
+      stocks.forEach((stock) => {
+        const product = products.find((item) => item.id === stock.productId);
+
+        const stockQuantity = getStock(stock.quantity);
+
+        quantity += stockQuantity;
+
+        if (product) {
+          purchaseValue += stockQuantity * getStock(product.purchasePrice);
+
+          sellingValue += stockQuantity * getStock(product.sellingPrice);
+        }
+      });
+
+      return {
+        ...warehouse,
+        quantity,
+        purchaseValue,
+        sellingValue,
+        productsCount: stocks.filter((stock) => getStock(stock.quantity) > 0)
+          .length,
+      };
+    });
+  }, [activeWarehouses, warehouseStocks, products]);
 
   // ======================================
   // Movement Labels
@@ -243,7 +392,9 @@ export default function InventoryPage() {
   const getMovementLabel = (movement: InventoryMovement) => {
     const type = (movement.type || movement.movementType || "").toLowerCase();
 
-    if (["in", "purchase", "receipt", "incoming"].includes(type)) {
+    if (
+      ["in", "purchase", "receipt", "incoming", "transfer_in"].includes(type)
+    ) {
       return {
         label: "إدخال مخزون",
         color: "bg-green-50 text-green-700",
@@ -251,7 +402,7 @@ export default function InventoryPage() {
       };
     }
 
-    if (["out", "sale", "issue", "outgoing"].includes(type)) {
+    if (["out", "sale", "issue", "outgoing", "transfer_out"].includes(type)) {
       return {
         label: "إخراج مخزون",
         color: "bg-red-50 text-red-700",
@@ -259,7 +410,7 @@ export default function InventoryPage() {
       };
     }
 
-    if (["transfer", "تسوية", "adjustment"].includes(type)) {
+    if (["transfer", "adjustment", "تسوية"].includes(type)) {
       return {
         label: "تحويل / تسوية",
         color: "bg-blue-50 text-blue-700",
@@ -280,7 +431,7 @@ export default function InventoryPage() {
 
   const quickLinks = [
     {
-      title: "اضافة منتج",
+      title: "إضافة منتج",
       description: "إدارة أصناف ومنتجات الشركة",
       href: "/erp/products",
       icon: FiPackage,
@@ -367,7 +518,7 @@ export default function InventoryPage() {
   // ======================================
 
   return (
-    <div dir="rtl" className="space-y-7 p-4 md:p-6">
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
       {/* Header */}
 
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -381,7 +532,7 @@ export default function InventoryPage() {
           <h1 className="text-2xl font-bold text-gray-800">إدارة المخزون</h1>
 
           <p className="mt-2 text-sm text-gray-500">
-            متابعة الأصناف والمستودعات وحركة المخزون.
+            متابعة الكميات والقيمة المالية وتوزيع المخزون على المستودعات.
           </p>
         </div>
 
@@ -420,105 +571,259 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Statistics */}
+      {/* Main Statistics */}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {/* Products */}
 
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">إجمالي الأصناف النشطة</p>
-
-              <h2 className="mt-3 text-3xl font-bold text-gray-800">
-                {formatNumber(activeProducts.length)}
-              </h2>
-            </div>
-
-            <div className="rounded-xl bg-blue-50 p-4 text-blue-600">
-              <FiPackage size={26} />
-            </div>
-          </div>
-
-          <Link
-            href="/erp/products"
-            className="mt-5 flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800"
-          >
-            عرض الأصناف
-            <FiArrowLeft />
-          </Link>
-        </div>
+        <StatCard
+          title="الأصناف النشطة"
+          value={formatNumber(activeProducts.length)}
+          icon={<FiPackage size={25} />}
+          color="blue"
+          description={`أصناف لديها رصيد: ${formatNumber(stockedProductsCount)}`}
+          href="/erp/products"
+          linkText="عرض الأصناف"
+        />
 
         {/* Warehouses */}
 
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">المستودعات النشطة</p>
+        <StatCard
+          title="المستودعات النشطة"
+          value={formatNumber(activeWarehouses.length)}
+          icon={<FiHome size={25} />}
+          color="purple"
+          description="عدد المستودعات المسجلة"
+          href="/erp/inventory/warehouses"
+          linkText="عرض المستودعات"
+        />
 
-              <h2 className="mt-3 text-3xl font-bold text-gray-800">
-                {formatNumber(activeWarehouses.length)}
-              </h2>
-            </div>
+        {/* Total Quantity */}
 
-            <div className="rounded-xl bg-purple-50 p-4 text-purple-600">
-              <FiHome size={26} />
-            </div>
-          </div>
-
-          <Link
-            href="/erp/inventory/warehouses"
-            className="mt-5 flex items-center gap-2 text-sm text-purple-600 hover:text-purple-800"
-          >
-            عرض المستودعات
-            <FiArrowLeft />
-          </Link>
-        </div>
+        <StatCard
+          title="إجمالي الكميات"
+          value={formatNumber(totalQuantity)}
+          icon={<FiLayers size={25} />}
+          color="cyan"
+          description="مجموع أرصدة جميع المستودعات"
+        />
 
         {/* Low Stock */}
 
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">أصناف منخفضة المخزون</p>
-
-              <h2 className="mt-3 text-3xl font-bold text-gray-800">
-                {formatNumber(lowStockProducts.length)}
-              </h2>
-            </div>
-
-            <div className="rounded-xl bg-orange-50 p-4 text-orange-600">
-              <FiAlertTriangle size={26} />
-            </div>
-          </div>
-
-          <p className="mt-5 text-xs text-gray-400">
-            حسب حد إعادة الطلب المسجل للصنف
-          </p>
-        </div>
-
-        {/* Movements */}
-
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">إجمالي حركات المخزون</p>
-
-              <h2 className="mt-3 text-3xl font-bold text-gray-800">
-                {formatNumber(totalMovements)}
-              </h2>
-            </div>
-
-            <div className="rounded-xl bg-green-50 p-4 text-green-600">
-              <FiActivity size={26} />
-            </div>
-          </div>
-
-          <p className="mt-5 text-xs text-gray-400">
-            جميع الحركات المسجلة للشركة
-          </p>
-        </div>
+        <StatCard
+          title="أصناف منخفضة المخزون"
+          value={formatNumber(lowStockProducts.length)}
+          icon={<FiAlertTriangle size={25} />}
+          color="orange"
+          description="حسب حد إعادة الطلب المسجل"
+        />
       </div>
+
+      {/* Financial Statistics */}
+
+      <section>
+        <div className="mb-4">
+          <h2 className="text-lg font-bold text-gray-800">
+            القيمة المالية للمخزون
+          </h2>
+
+          <p className="mt-1 text-xs text-gray-500">
+            القيم محسوبة من أرصدة المستودعات وأسعار المنتجات المسجلة.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {/* Purchase Value */}
+
+          <StatCard
+            title="قيمة المخزون بالتكلفة المسجلة"
+            value={formatMoney(totalPurchaseValue)}
+            icon={<FiDollarSign size={25} />}
+            color="blue"
+            description="الكمية المتوفرة × سعر الشراء"
+          />
+
+          {/* Selling Value */}
+
+          <StatCard
+            title="القيمة المتوقعة للبيع"
+            value={formatMoney(totalSellingValue)}
+            icon={<FiShoppingCart size={25} />}
+            color="green"
+            description="الكمية المتوفرة × سعر البيع"
+          />
+
+          {/* Expected Profit */}
+
+          <StatCard
+            title="الربح المتوقع"
+            value={formatMoney(expectedProfit)}
+            icon={<FiTrendingUp size={25} />}
+            color={expectedProfit >= 0 ? "green" : "red"}
+            description="فرق سعر البيع والشراء للكميات الحالية"
+          />
+
+          {/* Movements */}
+
+          <StatCard
+            title="إجمالي حركات المخزون"
+            value={formatNumber(totalMovements)}
+            icon={<FiActivity size={25} />}
+            color="purple"
+            description="جميع الحركات المسجلة للشركة"
+          />
+        </div>
+      </section>
+
+      {/* Valuation Notes */}
+
+      {(productsWithoutCost.length > 0 ||
+        productsWithoutSellingPrice.length > 0 ||
+        warehouseStocks.length === 0) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-start gap-3">
+            <FiAlertTriangle className="mt-1 shrink-0 text-amber-600" />
+
+            <div className="space-y-2">
+              <h3 className="font-bold text-amber-800">
+                ملاحظات على تقييم المخزون
+              </h3>
+
+              {warehouseStocks.length === 0 && (
+                <p className="text-sm text-amber-800">
+                  لا توجد أرصدة مسجلة في جدول warehouseStocks. لذلك لن يتم
+                  استخدام currentStock من المنتجات بدلًا منها.
+                </p>
+              )}
+
+              {productsWithoutCost.length > 0 && (
+                <p className="text-sm text-amber-800">
+                  يوجد {formatNumber(productsWithoutCost.length)} صنفًا لديه
+                  رصيد دون سعر شراء مسجل.
+                </p>
+              )}
+
+              {productsWithoutSellingPrice.length > 0 && (
+                <p className="text-sm text-amber-800">
+                  يوجد {formatNumber(productsWithoutSellingPrice.length)} صنفًا
+                  لديه رصيد دون سعر بيع مسجل.
+                </p>
+              )}
+
+              <p className="text-xs text-amber-700">
+                القيم المعروضة تقديرية، ولا تمثل حتى الآن تكلفة المخزون
+                المحاسبية المعتمدة.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Warehouse Statistics */}
+
+      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-200 p-5">
+          <h2 className="font-bold text-gray-800">المخزون حسب المستودع</h2>
+
+          <p className="mt-1 text-xs text-gray-500">
+            توزيع الكميات والقيم المالية على مستودعات الشركة.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[850px] text-right text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="px-5 py-4">المستودع</th>
+                <th className="px-5 py-4">عدد الأصناف</th>
+                <th className="px-5 py-4">إجمالي الكميات</th>
+                <th className="px-5 py-4">قيمة الشراء</th>
+                <th className="px-5 py-4">قيمة البيع</th>
+                <th className="px-5 py-4">الفرق المتوقع</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-gray-100">
+              {warehouseStatistics.map((warehouse) => {
+                const profit = warehouse.sellingValue - warehouse.purchaseValue;
+
+                return (
+                  <tr key={warehouse.id} className="hover:bg-gray-50">
+                    <td className="px-5 py-4">
+                      <div className="font-semibold text-gray-800">
+                        {warehouse.name}
+                      </div>
+
+                      <div className="mt-1 text-xs text-gray-400">
+                        {warehouse.code || warehouse.id}
+                      </div>
+                    </td>
+
+                    <td className="px-5 py-4 text-gray-700">
+                      {formatNumber(warehouse.productsCount)}
+                    </td>
+
+                    <td className="px-5 py-4 font-semibold text-gray-800">
+                      {formatNumber(warehouse.quantity)}
+                    </td>
+
+                    <td className="px-5 py-4 text-blue-700">
+                      {formatMoney(warehouse.purchaseValue)}
+                    </td>
+
+                    <td className="px-5 py-4 text-green-700">
+                      {formatMoney(warehouse.sellingValue)}
+                    </td>
+
+                    <td
+                      className={`px-5 py-4 font-semibold ${
+                        profit >= 0 ? "text-green-700" : "text-red-600"
+                      }`}
+                    >
+                      {formatMoney(profit)}
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {warehouseStatistics.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-5 py-12 text-center text-gray-400"
+                  >
+                    لا توجد مستودعات مسجلة.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+
+            {warehouseStatistics.length > 0 && (
+              <tfoot className="bg-gray-50 font-bold text-gray-800">
+                <tr>
+                  <td className="px-5 py-4">الإجمالي</td>
+
+                  <td className="px-5 py-4">-</td>
+
+                  <td className="px-5 py-4">{formatNumber(totalQuantity)}</td>
+
+                  <td className="px-5 py-4 text-blue-700">
+                    {formatMoney(totalPurchaseValue)}
+                  </td>
+
+                  <td className="px-5 py-4 text-green-700">
+                    {formatMoney(totalSellingValue)}
+                  </td>
+
+                  <td className="px-5 py-4 text-green-700">
+                    {formatMoney(expectedProfit)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </section>
 
       {/* Quick Links */}
 
@@ -598,6 +903,7 @@ export default function InventoryPage() {
             <tbody className="divide-y divide-gray-100">
               {movements.slice(0, 6).map((movement) => {
                 const movementInfo = getMovementLabel(movement);
+
                 const MovementIcon = movementInfo.icon;
 
                 return (
@@ -644,6 +950,67 @@ export default function InventoryPage() {
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+// ========================================
+// Statistics Card
+// ========================================
+
+interface StatCardProps {
+  title: string;
+  value: string;
+  icon: React.ReactNode;
+  color: "blue" | "purple" | "cyan" | "orange" | "green" | "red";
+  description: string;
+  href?: string;
+  linkText?: string;
+}
+
+function StatCard({
+  title,
+  value,
+  icon,
+  color,
+  description,
+  href,
+  linkText,
+}: StatCardProps) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600",
+    purple: "bg-purple-50 text-purple-600",
+    cyan: "bg-cyan-50 text-cyan-600",
+    orange: "bg-orange-50 text-orange-600",
+    green: "bg-green-50 text-green-600",
+    red: "bg-red-50 text-red-600",
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm text-gray-500">{title}</p>
+
+          <h2 className="mt-3 break-words text-2xl font-bold text-gray-800">
+            {value}
+          </h2>
+        </div>
+
+        <div className={`shrink-0 rounded-xl p-4 ${colors[color]}`}>{icon}</div>
+      </div>
+
+      <p className="mt-4 text-xs text-gray-400">{description}</p>
+
+      {href && (
+        <Link
+          href={href}
+          className="mt-4 flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800"
+        >
+          {linkText || "عرض التفاصيل"}
+          <FiArrowLeft />
+        </Link>
+      )}
     </div>
   );
 }

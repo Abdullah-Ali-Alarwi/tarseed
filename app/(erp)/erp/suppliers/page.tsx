@@ -1,710 +1,451 @@
 ﻿"use client";
 
+import { useCallback, useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import Link from "next/link";
-import { useMemo, useState } from "react";
 import {
   FiPlus,
   FiSearch,
-  FiTruck,
-  FiDollarSign,
-  FiCreditCard,
-  FiAlertCircle,
-  FiMoreVertical,
+  FiRefreshCw,
+  FiUsers,
+  FiPhone,
   FiMapPin,
+  FiEdit2,
   FiEye,
-  FiEdit,
-  FiTrash2,
-  FiCheckCircle,
+  FiDollarSign,
+  FiFilter,
+  FiX,
 } from "react-icons/fi";
 import { toast } from "sonner";
 
-import { useERPStore } from "@/Store/erpStore";
+const api = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+type Supplier = {
+  id: string;
+  companyId: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  accountCode?: string;
+  accountName?: string;
+  balance?: number;
+  notes?: string;
+  status?: string;
+  isActive?: boolean;
+  createdAt?: string;
+};
 
 export default function SuppliersPage() {
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("جميع الموردين");
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  // ======================================================
-  // Zustand - ERP Store
-  // ======================================================
+  const loadSuppliers = useCallback(async () => {
+    try {
+      setLoading(true);
 
-  const suppliers = useERPStore((state) => state.suppliers);
-  const purchases = useERPStore((state) => state.purchases);
-  const deleteSupplier = useERPStore((state) => state.deleteSupplier);
+      const authUser = localStorage.getItem("authUser");
 
-  // ======================================================
-  // تحويل أي قيمة إلى رقم
-  // ======================================================
+      if (!authUser) {
+        toast.error("يرجى تسجيل الدخول أولاً");
+        setSuppliers([]);
+        return;
+      }
 
-  const getAmount = (value: unknown): number => {
-    if (typeof value === "number") {
-      return Number.isFinite(value) ? value : 0;
+      const parsedUser = JSON.parse(authUser);
+
+      if (!parsedUser.username) {
+        toast.error("بيانات المستخدم غير مكتملة");
+        return;
+      }
+
+      // جلب المستخدم من قاعدة البيانات
+      const usersRes = await api.get("/users", {
+        params: {
+          username: parsedUser.username,
+        },
+      });
+
+      const dbUser = usersRes.data?.[0];
+
+      if (!dbUser) {
+        toast.error("لم يتم العثور على المستخدم");
+        return;
+      }
+
+      if (dbUser.type === "platform") {
+        toast.error("لا يمكن لمستخدم المنصة الوصول إلى الموردين");
+        return;
+      }
+
+      if (!dbUser.companyId) {
+        toast.error("المستخدم غير مرتبط بشركة");
+        return;
+      }
+
+      const companyId = String(dbUser.companyId);
+
+      // جلب الموردين التابعين للشركة الحالية
+      const suppliersRes = await api.get("/suppliers", {
+        params: {
+          companyId,
+        },
+      });
+
+      setSuppliers(Array.isArray(suppliersRes.data) ? suppliersRes.data : []);
+    } catch (error) {
+      console.error("Suppliers loading error:", error);
+      toast.error("حدث خطأ أثناء تحميل الموردين");
+    } finally {
+      setLoading(false);
     }
+  }, []);
 
-    if (typeof value === "string") {
-      return Number(value.replace(/[^\d.-]/g, "")) || 0;
-    }
+  useEffect(() => {
+    loadSuppliers();
+  }, [loadSuppliers]);
 
-    return 0;
-  };
-
-  // ======================================================
-  // تنسيق المبلغ
-  // ======================================================
-
-  const formatMoney = (value: number) => {
-    return value.toLocaleString("ar-SA-u-nu-latn", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
-  };
-
-  // ======================================================
-  // إجمالي مشتريات المورد
-  // ======================================================
-
-  const getSupplierPurchases = (supplierId: string) => {
-    return purchases
-      .filter(
-        (purchase) =>
-          purchase.supplierId === supplierId && purchase.status !== "cancelled",
-      )
-      .reduce((total, purchase) => total + getAmount(purchase.total), 0);
-  };
-
-  // ======================================================
-  // إجمالي المدفوع للمورد
-  // ======================================================
-
-  const getSupplierPaid = (supplierId: string) => {
-    return purchases
-      .filter(
-        (purchase) =>
-          purchase.supplierId === supplierId &&
-          purchase.paymentMethod !== "credit" &&
-          purchase.status !== "cancelled",
-      )
-      .reduce((total, purchase) => total + getAmount(purchase.total), 0);
-  };
-
-  // ======================================================
-  // إجمالي الفواتير الآجلة
-  // ======================================================
-
-  const getSupplierCreditPurchases = (supplierId: string) => {
-    return purchases
-      .filter(
-        (purchase) =>
-          purchase.supplierId === supplierId &&
-          purchase.paymentMethod === "credit" &&
-          purchase.status !== "cancelled",
-      )
-      .reduce((total, purchase) => total + getAmount(purchase.total), 0);
-  };
-
-  // ======================================================
-  // الرصيد المستحق
-  // ======================================================
-
-  const getSupplierDue = (supplier: (typeof suppliers)[number]) => {
-    const balance = getAmount(supplier.balance);
-    const creditPurchases = getSupplierCreditPurchases(supplier.id);
-
-    return Math.max(0, balance + creditPurchases);
-  };
-
-  // ======================================================
-  // حالة المورد
-  // ======================================================
-
-  const getSupplierStatus = (supplier: (typeof suppliers)[number]) => {
-    const due = getSupplierDue(supplier);
-
-    return due > 0 ? "متأخر" : "نشط";
-  };
-
-  // ======================================================
-  // الموردين المفلترين
-  // ======================================================
-
+  // البحث والتصفية
   const filteredSuppliers = useMemo(() => {
-    const searchValue = search.trim().toLowerCase();
-
     return suppliers.filter((supplier) => {
-      const matchesSearch =
-        !searchValue ||
-        supplier.id.toLowerCase().includes(searchValue) ||
-        supplier.name.toLowerCase().includes(searchValue) ||
-        String(supplier.phone || "")
-          .toLowerCase()
-          .includes(searchValue) ||
-        String(supplier.address || "")
-          .toLowerCase()
-          .includes(searchValue) ||
-        String(supplier.accountCode || "")
-          .toLowerCase()
-          .includes(searchValue) ||
-        String(supplier.accountName || "")
-          .toLowerCase()
-          .includes(searchValue);
+      const value = search.trim().toLowerCase();
 
-      const status = getSupplierStatus(supplier);
+      const matchesSearch =
+        !value ||
+        supplier.name?.toLowerCase().includes(value) ||
+        supplier.phone?.toLowerCase().includes(value) ||
+        supplier.accountCode?.toLowerCase().includes(value);
+
+      const active = supplier.status === "active" || supplier.isActive === true;
 
       const matchesStatus =
-        statusFilter === "جميع الموردين" || status === statusFilter;
+        statusFilter === "all" ||
+        (statusFilter === "active" && active) ||
+        (statusFilter === "inactive" && !active);
 
       return matchesSearch && matchesStatus;
     });
-  }, [suppliers, purchases, search, statusFilter]);
+  }, [suppliers, search, statusFilter]);
 
-  // ======================================================
   // الإحصائيات
-  // ======================================================
+  const totalBalance = useMemo(
+    () =>
+      suppliers.reduce(
+        (total, supplier) => total + Number(supplier.balance || 0),
+        0,
+      ),
+    [suppliers],
+  );
 
-  const statistics = useMemo(() => {
-    const totalSuppliers = suppliers.length;
+  const activeCount = suppliers.filter(
+    (supplier) => supplier.status === "active" || supplier.isActive === true,
+  ).length;
 
-    const validPurchases = purchases.filter(
-      (purchase) => purchase.status !== "cancelled",
-    );
+  const inactiveCount = suppliers.length - activeCount;
 
-    const totalPurchases = validPurchases.reduce(
-      (total, purchase) => total + getAmount(purchase.total),
-      0,
-    );
-
-    const totalPaid = validPurchases
-      .filter((purchase) => purchase.paymentMethod !== "credit")
-      .reduce((total, purchase) => total + getAmount(purchase.total), 0);
-
-    const totalDue = suppliers.reduce(
-      (total, supplier) => total + getSupplierDue(supplier),
-      0,
-    );
-
-    const activeSuppliers = suppliers.filter(
-      (supplier) => getSupplierStatus(supplier) === "نشط",
-    ).length;
-
-    const overdueSuppliers = suppliers.filter(
-      (supplier) => getSupplierStatus(supplier) === "متأخر",
-    ).length;
-
-    return {
-      totalSuppliers,
-      totalPurchases,
-      totalPaid,
-      totalDue,
-      activeSuppliers,
-      overdueSuppliers,
-    };
-  }, [suppliers, purchases]);
-
-  // ======================================================
-  // حذف المورد
-  // ======================================================
-
-  const handleDelete = (supplierId: string, supplierName: string) => {
-    const supplierPurchases = purchases.filter(
-      (purchase) =>
-        purchase.supplierId === supplierId && purchase.status !== "cancelled",
-    );
-
-    if (supplierPurchases.length > 0) {
-      toast.error("لا يمكن حذف المورد", {
-        description:
-          "يوجد فواتير مشتريات مرتبطة بهذا المورد. احذف أو عدّل الفواتير المرتبطة أولاً.",
-      });
-
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `هل أنت متأكد من حذف المورد "${supplierName}"؟\n\nسيتم حذف المورد نهائياً من النظام.`,
-    );
-
-    if (!confirmed) return;
-
-    deleteSupplier(supplierId);
-
-    toast.success("تم حذف المورد بنجاح", {
-      description: `تم حذف المورد ${supplierName}`,
-    });
-  };
-
-  // ======================================================
-  // الصفحة
-  // ======================================================
+  const formatMoney = (value: number) =>
+    new Intl.NumberFormat("ar-YE", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(value);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-5" dir="rtl">
-      {/* Header */}
-
-      <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
+    <div dir="rtl" className="space-y-5">
+      {/* عنوان الصفحة */}
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-xl font-bold text-gray-800">الموردين</h1>
-
-          <p className="mt-0.5 text-xs text-gray-500">
-            إدارة الموردين والمشتريات والأرصدة المستحقة
+          <h1 className="text-xl font-bold text-slate-800">قائمة الموردين</h1>
+          <p className="mt-1 text-xs text-slate-500">
+            إدارة الموردين ومتابعة بياناتهم وأرصدتهم
           </p>
         </div>
 
-        <Link
-          href="/suppliers/new"
-          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700"
-        >
-          <FiPlus size={17} />
-          إضافة مورد
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={loadSuppliers}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+          >
+            <FiRefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            تحديث
+          </button>
+
+          <Link
+            href="/erp/suppliers/new"
+            className="flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-700"
+          >
+            <FiPlus size={15} />
+            إضافة مورد
+          </Link>
+        </div>
       </div>
 
-      {/* Statistics */}
-
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
-          title="إجمالي الموردين"
-          value={formatMoney(statistics.totalSuppliers)}
-          subtitle="مورد"
-          icon={FiTruck}
-        />
-
-        <StatCard
-          title="إجمالي المشتريات"
-          value={formatMoney(statistics.totalPurchases)}
-          subtitle="ريال"
-          icon={FiDollarSign}
-        />
-
-        <StatCard
-          title="المبالغ المدفوعة"
-          value={formatMoney(statistics.totalPaid)}
-          subtitle="ريال"
-          icon={FiCreditCard}
-        />
-
-        <StatCard
-          title="الأرصدة المستحقة"
-          value={formatMoney(statistics.totalDue)}
-          subtitle="ريال"
-          icon={FiAlertCircle}
-          warning
-        />
-      </div>
-
-      {/* Supplier Status */}
-
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
-              <FiTruck size={18} />
-            </div>
-
+      {/* الإحصائيات */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
             <div>
-              <p className="text-[11px] text-gray-500">إجمالي الموردين</p>
-
-              <p className="mt-0.5 text-sm font-bold text-gray-800">
-                {statistics.totalSuppliers} مورد
-              </p>
+              <p className="text-xs text-slate-500">إجمالي الموردين</p>
+              <h3 className="mt-2 text-2xl font-bold text-slate-800">
+                {suppliers.length}
+              </h3>
+            </div>
+            <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
+              <FiUsers size={21} />
             </div>
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-green-50 text-green-600">
-              <FiCheckCircle size={18} />
-            </div>
-
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
             <div>
-              <p className="text-[11px] text-gray-500">الموردين النشطين</p>
-
-              <p className="mt-0.5 text-sm font-bold text-green-600">
-                {statistics.activeSuppliers} مورد
-              </p>
+              <p className="text-xs text-slate-500">الموردون النشطون</p>
+              <h3 className="mt-2 text-2xl font-bold text-green-600">
+                {activeCount}
+              </h3>
+            </div>
+            <div className="rounded-xl bg-green-50 p-3 text-green-600">
+              <FiUsers size={21} />
             </div>
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-500">
-              <FiAlertCircle size={18} />
-            </div>
-
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
             <div>
-              <p className="text-[11px] text-gray-500">موردون لديهم مستحقات</p>
+              <p className="text-xs text-slate-500">الموردون غير النشطين</p>
+              <h3 className="mt-2 text-2xl font-bold text-slate-500">
+                {inactiveCount}
+              </h3>
+            </div>
+            <div className="rounded-xl bg-slate-100 p-3 text-slate-500">
+              <FiFilter size={21} />
+            </div>
+          </div>
+        </div>
 
-              <p className="mt-0.5 text-sm font-bold text-red-500">
-                {statistics.overdueSuppliers} مورد
-              </p>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-slate-500">إجمالي أرصدة الموردين</p>
+              <h3 className="mt-2 text-xl font-bold text-amber-600">
+                {formatMoney(totalBalance)}
+              </h3>
+            </div>
+            <div className="rounded-xl bg-amber-50 p-3 text-amber-600">
+              <FiDollarSign size={21} />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Suppliers Table */}
+      {/* البحث والتصفية */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row">
+          <div className="relative flex-1">
+            <FiSearch
+              size={16}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+            />
 
-      <div className="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
-        {/* Toolbar */}
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ابحث باسم المورد أو رقم الهاتف أو الحساب..."
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pr-9 pl-9 text-xs outline-none transition focus:border-slate-400 focus:bg-white"
+            />
 
-        <div className="border-b border-gray-100 p-3.5">
-          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-            <div>
-              <h2 className="text-sm font-bold text-gray-800">
-                قائمة الموردين
-              </h2>
-
-              <p className="mt-0.5 text-[11px] text-gray-400">
-                {filteredSuppliers.length} مورد
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row">
-              {/* Search */}
-
-              <div className="relative w-full sm:w-64">
-                <FiSearch
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  size={16}
-                />
-
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="البحث عن مورد أو هاتف..."
-                  className="w-full rounded-lg border border-gray-200 bg-white py-2 pr-9 pl-3 text-xs text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-500 focus:ring-1 focus:ring-amber-100"
-                />
-              </div>
-
-              {/* Status */}
-
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 outline-none focus:border-amber-500"
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
               >
-                <option value="جميع الموردين">جميع الموردين</option>
+                <FiX size={15} />
+              </button>
+            )}
+          </div>
 
-                <option value="نشط">نشط</option>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs outline-none focus:border-slate-400"
+          >
+            <option value="all">جميع الحالات</option>
+            <option value="active">نشط</option>
+            <option value="inactive">غير نشط</option>
+          </select>
+        </div>
+      </div>
 
-                <option value="متأخر">متأخر</option>
-              </select>
-            </div>
+      {/* جدول الموردين */}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">الموردون</h2>
+            <p className="mt-1 text-[11px] text-slate-400">
+              عدد النتائج: {filteredSuppliers.length}
+            </p>
           </div>
         </div>
 
-        {/* Table */}
+        {loading ? (
+          <div className="flex min-h-60 items-center justify-center">
+            <FiRefreshCw size={22} className="animate-spin text-slate-400" />
+          </div>
+        ) : filteredSuppliers.length === 0 ? (
+          <div className="flex min-h-64 flex-col items-center justify-center px-4 text-center">
+            <div className="mb-3 rounded-full bg-slate-100 p-4 text-slate-400">
+              <FiUsers size={27} />
+            </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-right text-xs">
-            <thead className="bg-gray-50">
-              <tr className="text-[11px] text-gray-500">
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  كود المورد
-                </th>
+            <h3 className="text-sm font-bold text-slate-700">
+              {search || statusFilter !== "all"
+                ? "لا توجد نتائج مطابقة"
+                : "لا يوجد موردون حتى الآن"}
+            </h3>
 
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  اسم المورد
-                </th>
+            <p className="mt-2 text-xs text-slate-400">
+              {search || statusFilter !== "all"
+                ? "جرّب تغيير كلمات البحث أو الفلتر"
+                : "يمكنك البدء بإضافة مورد جديد"}
+            </p>
 
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  رقم الهاتف
-                </th>
+            {!search && statusFilter === "all" && (
+              <Link
+                href="/erp/suppliers/new"
+                className="mt-4 flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs text-white hover:bg-slate-700"
+              >
+                <FiPlus size={14} />
+                إضافة مورد
+              </Link>
+            )}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[850px] text-right">
+              <thead className="bg-slate-50 text-[11px] text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">المورد</th>
+                  <th className="px-4 py-3 font-semibold">الهاتف</th>
+                  <th className="px-4 py-3 font-semibold">العنوان</th>
+                  <th className="px-4 py-3 font-semibold">الحساب المحاسبي</th>
+                  <th className="px-4 py-3 font-semibold">الرصيد</th>
+                  <th className="px-4 py-3 font-semibold">الحالة</th>
+                  <th className="px-4 py-3 text-center font-semibold">
+                    الإجراءات
+                  </th>
+                </tr>
+              </thead>
 
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  العنوان
-                </th>
-
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  إجمالي المشتريات
-                </th>
-
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  المدفوع
-                </th>
-
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  الرصيد المستحق
-                </th>
-
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  الحالة
-                </th>
-
-                <th className="whitespace-nowrap px-4 py-3 font-medium">
-                  الإجراءات
-                </th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-gray-100">
-              {filteredSuppliers.length > 0 ? (
-                filteredSuppliers.map((supplier) => {
-                  const supplierPurchases = getSupplierPurchases(supplier.id);
-
-                  const supplierPaid = getSupplierPaid(supplier.id);
-
-                  const supplierDue = getSupplierDue(supplier);
-
-                  const status = getSupplierStatus(supplier);
+              <tbody className="divide-y divide-slate-100">
+                {filteredSuppliers.map((supplier) => {
+                  const active =
+                    supplier.status === "active" || supplier.isActive === true;
 
                   return (
                     <tr
                       key={supplier.id}
-                      className="transition hover:bg-gray-50"
+                      className="transition hover:bg-slate-50"
                     >
-                      {/* ID */}
-
                       <td className="px-4 py-3">
-                        <Link
-                          href={`/suppliers/${supplier.id}`}
-                          className="font-semibold text-amber-600 hover:text-amber-700"
-                        >
-                          {supplier.accountCode || supplier.id}
-                        </Link>
-                      </td>
-
-                      {/* Name */}
-
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/suppliers/${supplier.id}`}
-                          className="font-semibold text-gray-700 hover:text-amber-600"
-                        >
-                          {supplier.name}
-                        </Link>
-                      </td>
-
-                      {/* Phone */}
-
-                      <td className="whitespace-nowrap px-4 py-3 text-gray-600">
-                        {supplier.phone || "-"}
-                      </td>
-
-                      {/* Address */}
-
-                      <td className="px-4 py-3 text-gray-600">
-                        <div className="flex max-w-[180px] items-center gap-1.5">
-                          <FiMapPin
-                            size={13}
-                            className="shrink-0 text-gray-400"
-                          />
-
-                          <span className="truncate">
-                            {supplier.address || "-"}
-                          </span>
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                            <FiUsers size={17} />
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold text-slate-800">
+                              {supplier.name}
+                            </p>
+                            <p className="mt-1 text-[10px] text-slate-400">
+                              #{supplier.id}
+                            </p>
+                          </div>
                         </div>
                       </td>
 
-                      {/* Purchases */}
-
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <span className="font-semibold text-gray-700">
-                          {formatMoney(supplierPurchases)}
-                        </span>
-
-                        <span className="mr-1 text-[10px] text-gray-400">
-                          ريال
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        <span className="flex items-center gap-2">
+                          <FiPhone size={13} className="text-slate-400" />
+                          {supplier.phone || "—"}
                         </span>
                       </td>
 
-                      {/* Paid */}
-
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <span className="font-semibold text-green-600">
-                          {formatMoney(supplierPaid)}
-                        </span>
-
-                        <span className="mr-1 text-[10px] text-gray-400">
-                          ريال
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        <span className="flex items-center gap-2">
+                          <FiMapPin size={13} className="text-slate-400" />
+                          {supplier.address || "—"}
                         </span>
                       </td>
 
-                      {/* Due */}
+                      <td className="px-4 py-3">
+                        <p className="text-xs font-medium text-slate-700">
+                          {supplier.accountCode || "—"}
+                        </p>
+                        <p className="mt-1 text-[10px] text-slate-400">
+                          {supplier.accountName || ""}
+                        </p>
+                      </td>
 
-                      <td className="whitespace-nowrap px-4 py-3">
+                      <td className="px-4 py-3">
                         <span
-                          className={`font-semibold ${
-                            supplierDue > 0 ? "text-red-600" : "text-gray-700"
+                          className={`text-xs font-bold ${
+                            Number(supplier.balance || 0) > 0
+                              ? "text-amber-600"
+                              : Number(supplier.balance || 0) < 0
+                                ? "text-red-600"
+                                : "text-green-600"
                           }`}
                         >
-                          {formatMoney(supplierDue)}
-                        </span>
-
-                        <span className="mr-1 text-[10px] text-gray-400">
-                          ريال
+                          {formatMoney(Number(supplier.balance || 0))}
                         </span>
                       </td>
 
-                      {/* Status */}
-
                       <td className="px-4 py-3">
-                        <Status status={status} />
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${
+                            active
+                              ? "bg-green-50 text-green-700"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {active ? "نشط" : "غير نشط"}
+                        </span>
                       </td>
 
-                      {/* Actions */}
-
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-0.5">
+                        <div className="flex items-center justify-center gap-1.5">
                           <Link
-                            href={`/suppliers/${supplier.id}`}
+                            href={`/erp/suppliers/${supplier.id}`}
                             title="عرض المورد"
-                            className="rounded-md p-1.5 text-gray-500 transition hover:bg-green-50 hover:text-green-600"
+                            className="rounded-lg bg-blue-50 p-2 text-blue-600 transition hover:bg-blue-100"
                           >
-                            <FiEye size={16} />
+                            <FiEye size={14} />
                           </Link>
 
                           <Link
-                            href={`/suppliers/${supplier.id}/edit`}
+                            href={`/erp/suppliers/${supplier.id}/edit`}
                             title="تعديل المورد"
-                            className="rounded-md p-1.5 text-gray-500 transition hover:bg-blue-50 hover:text-blue-600"
+                            className="rounded-lg bg-amber-50 p-2 text-amber-600 transition hover:bg-amber-100"
                           >
-                            <FiEdit size={16} />
-                          </Link>
-
-                          <button
-                            type="button"
-                            title="حذف المورد"
-                            onClick={() =>
-                              handleDelete(supplier.id, supplier.name)
-                            }
-                            className="rounded-md p-1.5 text-gray-500 transition hover:bg-red-50 hover:text-red-600"
-                          >
-                            <FiTrash2 size={16} />
-                          </button>
-
-                          <Link
-                            href={`/suppliers/${supplier.id}`}
-                            title="المزيد"
-                            className="rounded-md p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
-                          >
-                            <FiMoreVertical size={16} />
+                            <FiEdit2 size={14} />
                           </Link>
                         </div>
                       </td>
                     </tr>
                   );
-                })
-              ) : (
-                <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center">
-                    <div className="flex flex-col items-center justify-center">
-                      <FiTruck size={34} className="mb-2 text-gray-300" />
-
-                      <p className="text-sm font-medium text-gray-500">
-                        لا توجد نتائج
-                      </p>
-
-                      <p className="mt-1 text-xs text-gray-400">
-                        لم يتم العثور على مورد مطابق للبحث
-                      </p>
-
-                      {(search || statusFilter !== "جميع الموردين") && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSearch("");
-                            setStatusFilter("جميع الموردين");
-                          }}
-                          className="mt-3 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-amber-700"
-                        >
-                          إظهار جميع الموردين
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Footer */}
-
-        <div className="flex flex-col justify-between gap-2 border-t border-gray-100 px-4 py-3 sm:flex-row sm:items-center">
-          <p className="text-xs text-gray-400">
-            عرض{" "}
-            <span className="font-semibold text-gray-600">
-              {filteredSuppliers.length}
-            </span>{" "}
-            من أصل{" "}
-            <span className="font-semibold text-gray-600">
-              {suppliers.length}
-            </span>{" "}
-            مورد
-          </p>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-// ======================================================
-// Stat Card
-// ======================================================
-
-function StatCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  warning = false,
-}: {
-  title: string;
-  value: string;
-  subtitle: string;
-  icon: React.ElementType;
-  warning?: boolean;
-}) {
-  return (
-    <div className="rounded-lg border border-gray-100 bg-white p-3.5 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-xs text-gray-500">{title}</p>
-
-          <div className="mt-1.5 flex items-end gap-1.5">
-            <h2 className="truncate text-lg font-bold text-gray-800">
-              {value}
-            </h2>
-
-            <span className="mb-0.5 whitespace-nowrap text-[10px] text-gray-400">
-              {subtitle}
-            </span>
+                })}
+              </tbody>
+            </table>
           </div>
-        </div>
-
-        <div
-          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
-            warning ? "bg-red-50 text-red-500" : "bg-amber-50 text-amber-600"
-          }`}
-        >
-          <Icon size={18} />
-        </div>
+        )}
       </div>
     </div>
   );
 }
-
-// ======================================================
-// Status
-// ======================================================
-
-function Status({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    نشط: "bg-green-50 text-green-600",
-    متأخر: "bg-red-50 text-red-600",
-  };
-
-  return (
-    <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
-        styles[status] || "bg-gray-50 text-gray-500"
-      }`}
-    >
-      {status}
-    </span>
-  );
-}
-

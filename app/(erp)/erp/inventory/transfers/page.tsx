@@ -9,7 +9,7 @@ import {
   FiTrash2,
   FiX,
   FiSave,
-  FiArrowRight,
+  FiArrowLeftCircle,
   FiCheckCircle,
   FiClock,
   FiXCircle,
@@ -18,17 +18,25 @@ import {
   FiFilter,
   FiEye,
   FiAlertCircle,
-  FiArrowLeftCircle,
 } from "react-icons/fi";
 import { toast } from "sonner";
 import { FaWarehouse } from "react-icons/fa";
+
+import {
+  getCreateActivity,
+  getUpdateActivity,
+  logCreate,
+  logUpdate,
+  logDelete,
+  getCurrentActor,
+} from "../../lib/activity";
 
 /* =========================================================
    API
 ========================================================= */
 
 const API = axios.create({
-  baseURL: "http://localhost:3001",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
   headers: {
     "Content-Type": "application/json",
   },
@@ -71,6 +79,11 @@ interface WarehouseStock {
   warehouseId: string;
   quantity: number;
   updatedAt?: string;
+
+  createdBy?: string;
+  createdByName?: string;
+  updatedBy?: string;
+  updatedByName?: string;
 }
 
 interface InventoryMovement {
@@ -89,25 +102,52 @@ interface InventoryMovement {
   date: string;
   notes?: string;
   createdAt: string;
+
+  createdBy?: string;
+  createdByName?: string;
+  createdByUsername?: string;
+  createdByRole?: string;
 }
 
 interface Transfer {
   id: string;
   companyId: string;
   transferNumber: string;
+
   fromWarehouseId: string;
   fromWarehouseName: string;
+
   toWarehouseId: string;
   toWarehouseName: string;
+
   productId: string;
   productName: string;
   productSKU: string;
+
   quantity: number;
   unitName: string;
+
   date: string;
   notes: string;
   status: TransferStatus;
+
   createdAt: string;
+  createdBy?: string;
+  createdByName?: string;
+  createdByUsername?: string;
+  createdByRole?: string;
+
+  updatedAt?: string;
+  updatedBy?: string;
+  updatedByName?: string;
+
+  completedAt?: string;
+  completedBy?: string;
+  completedByName?: string;
+
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelledByName?: string;
 }
 
 interface TransferForm {
@@ -119,11 +159,25 @@ interface TransferForm {
   notes: string;
 }
 
+interface StockChange {
+  action: "updated" | "created";
+  id: string;
+  oldQuantity: number;
+  oldData?: WarehouseStock;
+}
+
 /* =========================================================
    HELPERS
 ========================================================= */
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
 
 const number = (value: unknown) => {
   const result = Number(value);
@@ -142,6 +196,114 @@ const emptyForm: TransferForm = {
   quantity: "",
   date: today(),
   notes: "",
+};
+
+const getCookie = (name: string) => {
+  if (typeof document === "undefined") return "";
+
+  const cookie = document.cookie
+    .split("; ")
+    .find((item) => item.startsWith(`${name}=`));
+
+  return cookie ? decodeURIComponent(cookie.split("=").slice(1).join("=")) : "";
+};
+
+/* =========================================================
+   ACTIVITY HELPERS
+========================================================= */
+
+const getActorData = (companyId: string) => {
+  const actor = getCurrentActor();
+
+  if (!actor) {
+    throw new Error("تعذر تحديد المستخدم الحالي. يرجى تسجيل الدخول مجددًا.");
+  }
+
+  if (String(actor.companyId) !== String(companyId)) {
+    throw new Error("المستخدم الحالي لا ينتمي إلى الشركة المحددة.");
+  }
+
+  return {
+    userId: String(actor.userId),
+    userName: actor.userName,
+    username: actor.username,
+    userRole: actor.userRole,
+  };
+};
+
+const getCreateMetadata = (companyId: string) => {
+  const actor = getActorData(companyId);
+
+  return {
+    ...getCreateActivity(),
+    companyId,
+    createdBy: actor.userId,
+    createdByName: actor.userName,
+    createdByUsername: actor.username,
+    createdByRole: actor.userRole,
+    createdAt: new Date().toISOString(),
+  };
+};
+
+const getUpdateMetadata = (companyId: string) => {
+  const actor = getActorData(companyId);
+
+  return {
+    ...getUpdateActivity(),
+    updatedBy: actor.userId,
+    updatedByName: actor.userName,
+    updatedAt: new Date().toISOString(),
+  };
+};
+
+const recordCreateActivity = async (
+  module: string,
+  description: string,
+  recordId: string,
+  recordName: string,
+  newData?: unknown,
+) => {
+  try {
+    await logCreate(module, description, recordId, recordName, newData);
+  } catch (error) {
+    console.error("Create activity error:", error);
+  }
+};
+
+const recordUpdateActivity = async (
+  module: string,
+  description: string,
+  recordId: string,
+  recordName: string,
+  oldData?: unknown,
+  newData?: unknown,
+) => {
+  try {
+    await logUpdate(
+      module,
+      description,
+      recordId,
+      recordName,
+      oldData,
+      newData,
+    );
+  } catch (error) {
+    console.error("Update activity error:", error);
+  }
+};
+
+const recordDeleteActivity = async (
+  module: string,
+  description: string,
+  recordId: string,
+  recordName: string,
+  oldData?: unknown,
+) => {
+  try {
+    await logDelete(module, description, recordId, recordName, oldData);
+  } catch (error) {
+    console.error("Delete activity error:", error);
+  }
 };
 
 /* =========================================================
@@ -179,11 +341,13 @@ export default function TransfersPage() {
   const [availableStock, setAvailableStock] = useState(0);
   const [checkingStock, setCheckingStock] = useState(false);
 
-  /* =========================
-     INITIALIZATION
-  ========================= */
+  /* =========================================================
+     LOAD DATA
+  ========================================================= */
 
   const loadData = useCallback(async (currentCompanyId: string) => {
+    if (!currentCompanyId) return;
+
     setLoading(true);
 
     try {
@@ -221,10 +385,6 @@ export default function TransfersPage() {
       const failed = results.filter((item) => item.error);
 
       if (failed.length) {
-        failed.forEach((item) => {
-          console.error(`Collection error: ${item.name}`);
-        });
-
         toast.error(
           `تعذر تحميل بعض البيانات: ${failed
             .map((item) => item.name)
@@ -237,21 +397,23 @@ export default function TransfersPage() {
 
       setTransfers(
         getData("transfers").filter(
-          (item: Transfer) => item.companyId === currentCompanyId,
+          (item: Transfer) =>
+            String(item.companyId) === String(currentCompanyId),
         ),
       );
 
       setWarehouses(
         getData("warehouses").filter(
           (item: Warehouse) =>
-            item.companyId === currentCompanyId && item.status !== "inactive",
+            String(item.companyId) === String(currentCompanyId) &&
+            item.status !== "inactive",
         ),
       );
 
       setProducts(
         getData("products").filter(
           (item: Product) =>
-            item.companyId === currentCompanyId &&
+            String(item.companyId) === String(currentCompanyId) &&
             item.status !== "inactive" &&
             item.trackInventory !== false,
         ),
@@ -259,7 +421,8 @@ export default function TransfersPage() {
 
       setWarehouseStocks(
         getData("warehouseStocks").filter(
-          (item: WarehouseStock) => item.companyId === currentCompanyId,
+          (item: WarehouseStock) =>
+            String(item.companyId) === String(currentCompanyId),
         ),
       );
     } catch (error) {
@@ -270,20 +433,17 @@ export default function TransfersPage() {
     }
   }, []);
 
+  /* =========================================================
+     INITIALIZATION
+  ========================================================= */
+
   useEffect(() => {
     const initialize = async () => {
       try {
-        const type = document.cookie
-          .split("; ")
-          .find((item) => item.startsWith("type="))
-          ?.split("=")[1];
+        const type = getCookie("type");
+        const storedCompanyId = getCookie("companyId");
 
-        const storedCompanyId = document.cookie
-          .split("; ")
-          .find((item) => item.startsWith("companyId="))
-          ?.split("=")[1];
-
-        if (!type || !["owner", "erp"].includes(type)) {
+        if (!type || !["owner", "erp", "employee"].includes(type)) {
           toast.error("ليس لديك صلاحية الوصول إلى هذه الصفحة");
           setLoading(false);
           return;
@@ -295,7 +455,16 @@ export default function TransfersPage() {
           return;
         }
 
+        const actor = getCurrentActor();
+
+        if (!actor || String(actor.companyId) !== String(storedCompanyId)) {
+          toast.error("تعذر التحقق من المستخدم أو الشركة");
+          setLoading(false);
+          return;
+        }
+
         setCompanyId(storedCompanyId);
+
         await loadData(storedCompanyId);
       } catch (error) {
         console.error(error);
@@ -311,30 +480,24 @@ export default function TransfersPage() {
      WAREHOUSE STOCK
   ========================================================= */
 
-  /**
-   * warehouseStocks هو المصدر الأساسي للرصيد الحالي.
-   *
-   * إذا لم يوجد سجل للمنتج في المستودع:
-   * نستخدم currentStock فقط للمستودع الافتتاحي
-   * المحدد في products.warehouseId.
-   */
-
   const getAvailableStock = useCallback(
     (productId: string, warehouseId: string) => {
       const stockRecord = warehouseStocks.find(
         (item) =>
-          item.productId === productId &&
-          item.warehouseId === warehouseId &&
-          item.companyId === companyId,
+          String(item.productId) === String(productId) &&
+          String(item.warehouseId) === String(warehouseId) &&
+          String(item.companyId) === String(companyId),
       );
 
       if (stockRecord) {
         return number(stockRecord.quantity);
       }
 
-      const product = products.find((item) => item.id === productId);
+      const product = products.find(
+        (item) => String(item.id) === String(productId),
+      );
 
-      if (product && product.warehouseId === warehouseId) {
+      if (product && String(product.warehouseId) === String(warehouseId)) {
         return number(product.currentStock);
       }
 
@@ -343,9 +506,9 @@ export default function TransfersPage() {
     [warehouseStocks, products, companyId],
   );
 
-  /* =========================
+  /* =========================================================
      STOCK CHECK
-  ========================= */
+  ========================================================= */
 
   useEffect(() => {
     const check = async () => {
@@ -406,6 +569,11 @@ export default function TransfersPage() {
   const openEditModal = (transfer: Transfer) => {
     if (transfer.status !== "pending") {
       toast.error("يمكن تعديل التحويلات المعلقة فقط");
+      return;
+    }
+
+    if (String(transfer.companyId) !== String(companyId)) {
+      toast.error("لا تملك صلاحية تعديل هذا التحويل");
       return;
     }
 
@@ -476,9 +644,7 @@ export default function TransfersPage() {
       return false;
     }
 
-    if (
-      number(form.quantity) > getAvailableStock(product.id, fromWarehouse.id)
-    ) {
+    if (quantity > getAvailableStock(product.id, fromWarehouse.id)) {
       toast.error("الكمية المطلوبة أكبر من الرصيد المتاح");
       return false;
     }
@@ -495,9 +661,16 @@ export default function TransfersPage() {
 
     if (!validateForm()) return;
 
+    if (!companyId) {
+      toast.error("لم يتم تحديد الشركة");
+      return;
+    }
+
     setSaving(true);
 
     try {
+      const actor = getActorData(companyId);
+
       const product = products.find((item) => item.id === form.productId)!;
 
       const fromWarehouse = warehouses.find(
@@ -533,32 +706,71 @@ export default function TransfersPage() {
         notes: form.notes.trim(),
 
         status: "pending" as TransferStatus,
-
-        createdAt: editingTransfer?.createdAt || new Date().toISOString(),
       };
 
       if (editingTransfer) {
-        await API.patch(`/transfers/${editingTransfer.id}`, payload);
+        if (
+          String(editingTransfer.companyId) !== String(companyId) ||
+          editingTransfer.status !== "pending"
+        ) {
+          throw new Error("لا يمكن تعديل هذا التحويل");
+        }
+
+        const oldData = { ...editingTransfer };
+
+        const updatePayload = {
+          ...payload,
+          ...getUpdateMetadata(companyId),
+        };
+
+        const response = await API.patch(
+          `/transfers/${editingTransfer.id}`,
+          updatePayload,
+        );
+
+        await recordUpdateActivity(
+          "تحويلات المخزون",
+          `تعديل التحويل ${editingTransfer.transferNumber}`,
+          editingTransfer.id,
+          editingTransfer.transferNumber,
+          oldData,
+          response.data,
+        );
 
         toast.success("تم تحديث التحويل بنجاح");
       } else {
-        await API.post("/transfers", payload);
+        const createPayload = {
+          ...payload,
+          ...getCreateMetadata(companyId),
+        };
+
+        const response = await API.post("/transfers", createPayload);
+
+        await recordCreateActivity(
+          "تحويلات المخزون",
+          `إنشاء طلب تحويل ${payload.transferNumber}`,
+          String(response.data.id),
+          payload.transferNumber,
+          response.data,
+        );
 
         toast.success("تم إنشاء طلب التحويل بنجاح");
       }
 
       closeModal();
+
       await loadData(companyId);
     } catch (error) {
       console.error(error);
-      toast.error("تعذر حفظ التحويل");
+
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ التحويل");
     } finally {
       setSaving(false);
     }
   };
 
   /* =========================================================
-     WAREHOUSE STOCK RECORD HELPERS
+     FIND STOCK RECORD
   ========================================================= */
 
   const findStockRecord = async (productId: string, warehouseId: string) => {
@@ -572,26 +784,23 @@ export default function TransfersPage() {
 
     const records = response.data.filter(
       (item: WarehouseStock) =>
-        item.companyId === companyId &&
-        item.productId === productId &&
-        item.warehouseId === warehouseId,
+        String(item.companyId) === String(companyId) &&
+        String(item.productId) === String(productId) &&
+        String(item.warehouseId) === String(warehouseId),
     );
 
     return records[0] as WarehouseStock | undefined;
   };
 
-  /**
-   * تحديث رصيد مستودع معين.
-   *
-   * إذا لم يوجد سجل:
-   * يتم إنشاؤه بالكمية الجديدة.
-   */
+  /* =========================================================
+     UPDATE WAREHOUSE STOCK
+  ========================================================= */
 
   const setWarehouseStock = async (
     productId: string,
     warehouseId: string,
     newQuantity: number,
-  ) => {
+  ): Promise<StockChange> => {
     if (newQuantity < 0) {
       throw new Error("لا يمكن أن يكون رصيد المستودع سالبًا");
     }
@@ -603,45 +812,121 @@ export default function TransfersPage() {
       productId,
       warehouseId,
       quantity: Number(newQuantity.toFixed(3)),
-      updatedAt: new Date().toISOString(),
     };
 
     if (existing) {
-      await API.patch(`/warehouseStocks/${existing.id}`, payload);
+      const oldData = { ...existing };
+
+      const updatePayload = {
+        ...payload,
+        ...getUpdateMetadata(companyId),
+      };
+
+      const response = await API.patch(
+        `/warehouseStocks/${existing.id}`,
+        updatePayload,
+      );
+
+      await recordUpdateActivity(
+        "أرصدة المستودعات",
+        `تحديث رصيد المنتج ${productId} في المستودع ${warehouseId}`,
+        existing.id,
+        `${productId} - ${warehouseId}`,
+        oldData,
+        response.data,
+      );
 
       return {
-        action: "updated" as const,
+        action: "updated",
         id: existing.id,
         oldQuantity: number(existing.quantity),
+        oldData,
       };
     }
 
-    const response = await API.post("/warehouseStocks", payload);
+    const createPayload = {
+      ...payload,
+      ...getCreateMetadata(companyId),
+    };
+
+    const response = await API.post("/warehouseStocks", createPayload);
+
+    await recordCreateActivity(
+      "أرصدة المستودعات",
+      `إنشاء رصيد للمنتج ${productId} في المستودع ${warehouseId}`,
+      String(response.data.id),
+      `${productId} - ${warehouseId}`,
+      response.data,
+    );
 
     return {
-      action: "created" as const,
-      id: response.data.id,
+      action: "created",
+      id: String(response.data.id),
       oldQuantity: 0,
     };
   };
 
-  const rollbackWarehouseStock = async (record: {
-    action: "updated" | "created";
-    id: string;
-    oldQuantity: number;
-  }) => {
+  /* =========================================================
+     ROLLBACK WAREHOUSE STOCK
+  ========================================================= */
+
+  const rollbackWarehouseStock = async (record: StockChange) => {
     if (record.action === "updated") {
-      await API.patch(`/warehouseStocks/${record.id}`, {
+      const currentResponse = await API.get(`/warehouseStocks/${record.id}`);
+
+      const currentRecord = currentResponse.data;
+
+      if (String(currentRecord.companyId) !== String(companyId)) {
+        throw new Error("لا يمكن التراجع عن رصيد تابع لشركة أخرى");
+      }
+
+      const oldData = { ...currentRecord };
+
+      const originalData = record.oldData || {};
+
+      const payload = {
         quantity: record.oldQuantity,
-        updatedAt: new Date().toISOString(),
-      });
+        updatedAt: originalData.updatedAt || null,
+        updatedBy: originalData.updatedBy || null,
+        updatedByName: originalData.updatedByName || null,
+      };
+
+      const response = await API.patch(
+        `/warehouseStocks/${record.id}`,
+        payload,
+      );
+
+      await recordUpdateActivity(
+        "أرصدة المستودعات",
+        "التراجع عن تحديث رصيد المستودع بسبب فشل التحويل",
+        record.id,
+        record.id,
+        oldData,
+        response.data,
+      );
     } else {
+      const response = await API.get(`/warehouseStocks/${record.id}`);
+
+      const oldData = response.data;
+
+      if (String(oldData.companyId) !== String(companyId)) {
+        throw new Error("لا يمكن حذف رصيد تابع لشركة أخرى");
+      }
+
       await API.delete(`/warehouseStocks/${record.id}`);
+
+      await recordDeleteActivity(
+        "أرصدة المستودعات",
+        "حذف رصيد تم إنشاؤه أثناء تحويل لم يكتمل",
+        record.id,
+        record.id,
+        oldData,
+      );
     }
   };
 
   /* =========================================================
-     INVENTORY MOVEMENTS
+     CREATE INVENTORY MOVEMENT
   ========================================================= */
 
   const createMovement = async (
@@ -669,13 +954,26 @@ export default function TransfersPage() {
 
       date: transfer.date,
       notes: transfer.notes || "",
-
-      createdAt: new Date().toISOString(),
     };
 
-    const response = await API.post("/inventoryMovements", payload);
+    const createPayload = {
+      ...payload,
+      ...getCreateMetadata(companyId),
+    };
 
-    return response.data.id as string;
+    const response = await API.post("/inventoryMovements", createPayload);
+
+    await recordCreateActivity(
+      "حركات المخزون",
+      type === "transfer_out"
+        ? `تسجيل حركة خروج للمنتج ${transfer.productName} بسبب التحويل ${transfer.transferNumber}`
+        : `تسجيل حركة دخول للمنتج ${transfer.productName} بسبب التحويل ${transfer.transferNumber}`,
+      String(response.data.id),
+      `${transfer.transferNumber} - ${warehouseName}`,
+      response.data,
+    );
+
+    return String(response.data.id);
   };
 
   /* =========================================================
@@ -688,6 +986,11 @@ export default function TransfersPage() {
       return;
     }
 
+    if (String(transfer.companyId) !== String(companyId)) {
+      toast.error("لا تملك صلاحية اعتماد هذا التحويل");
+      return;
+    }
+
     if (transfer.fromWarehouseId === transfer.toWarehouseId) {
       toast.error("المستودع المرسل والمستقبل متطابقان");
       return;
@@ -695,25 +998,32 @@ export default function TransfersPage() {
 
     setSaving(true);
 
-    let sourceChange: {
-      action: "updated" | "created";
-      id: string;
-      oldQuantity: number;
-    } | null = null;
-
-    let destinationChange: {
-      action: "updated" | "created";
-      id: string;
-      oldQuantity: number;
-    } | null = null;
+    let sourceChange: StockChange | null = null;
+    let destinationChange: StockChange | null = null;
 
     const movementIds: string[] = [];
 
+    let transferWasUpdated = false;
+
     try {
-      // إعادة تحميل سجلات الرصيد قبل الاعتماد
+      const actor = getActorData(companyId);
+
+      // إعادة قراءة حالة التحويل من قاعدة البيانات لمنع اعتماد
+      // تحويل تم تعديله أو اعتماده من مستخدم آخر.
+      const latestTransferResponse = await API.get(`/transfers/${transfer.id}`);
+
+      const latestTransfer = latestTransferResponse.data as Transfer;
+
+      if (
+        String(latestTransfer.companyId) !== String(companyId) ||
+        latestTransfer.status !== "pending"
+      ) {
+        throw new Error("تم تغيير حالة التحويل. يرجى تحديث الصفحة.");
+      }
+
+      // إعادة تحميل سجلات الرصيد قبل الاعتماد.
       const [sourceStock, destinationStock] = await Promise.all([
         findStockRecord(transfer.productId, transfer.fromWarehouseId),
-
         findStockRecord(transfer.productId, transfer.toWarehouseId),
       ]);
 
@@ -723,14 +1033,12 @@ export default function TransfersPage() {
         throw new Error("لم يتم العثور على المنتج");
       }
 
-      // رصيد المصدر الحالي
       const sourceQuantity = sourceStock
         ? number(sourceStock.quantity)
         : product.warehouseId === transfer.fromWarehouseId
           ? number(product.currentStock)
           : 0;
 
-      // رصيد الوجهة الحالي
       const destinationQuantity = destinationStock
         ? number(destinationStock.quantity)
         : product.warehouseId === transfer.toWarehouseId
@@ -757,21 +1065,21 @@ export default function TransfersPage() {
         (destinationQuantity + transferQuantity).toFixed(3),
       );
 
-      // 1. خصم الكمية من المستودع المرسل
+      // 1. خصم الكمية من المستودع المرسل.
       sourceChange = await setWarehouseStock(
         transfer.productId,
         transfer.fromWarehouseId,
         newSourceQuantity,
       );
 
-      // 2. إضافة الكمية إلى المستودع المستقبل
+      // 2. إضافة الكمية إلى المستودع المستقبل.
       destinationChange = await setWarehouseStock(
         transfer.productId,
         transfer.toWarehouseId,
         newDestinationQuantity,
       );
 
-      // 3. تسجيل حركة خروج
+      // 3. تسجيل حركة خروج.
       const sourceMovementId = await createMovement(
         transfer,
         "transfer_out",
@@ -781,7 +1089,7 @@ export default function TransfersPage() {
 
       movementIds.push(sourceMovementId);
 
-      // 4. تسجيل حركة دخول
+      // 4. تسجيل حركة دخول.
       const destinationMovementId = await createMovement(
         transfer,
         "transfer_in",
@@ -791,10 +1099,36 @@ export default function TransfersPage() {
 
       movementIds.push(destinationMovementId);
 
-      // 5. اعتماد التحويل
-      await API.patch(`/transfers/${transfer.id}`, {
-        status: "completed",
-      });
+      // 5. اعتماد التحويل.
+      const oldTransferData = { ...latestTransfer };
+
+      const completionDate = new Date().toISOString();
+
+      const updatePayload = {
+        status: "completed" as TransferStatus,
+
+        ...getUpdateMetadata(companyId),
+
+        completedAt: completionDate,
+        completedBy: actor.userId,
+        completedByName: actor.userName,
+      };
+
+      const updateResponse = await API.patch(
+        `/transfers/${transfer.id}`,
+        updatePayload,
+      );
+
+      transferWasUpdated = true;
+
+      await recordUpdateActivity(
+        "تحويلات المخزون",
+        `اعتماد التحويل ${transfer.transferNumber}`,
+        transfer.id,
+        transfer.transferNumber,
+        oldTransferData,
+        updateResponse.data,
+      );
 
       toast.success(
         `تم التحويل بنجاح. المتبقي في المرسل: ${formatNumber(
@@ -806,16 +1140,38 @@ export default function TransfersPage() {
     } catch (error) {
       console.error("Transfer completion error:", error);
 
-      // محاولة التراجع عن الحركات التي تم إنشاؤها
+      // =====================================================
+      // ROLLBACK
+      // =====================================================
+
+      // 1. إذا تم تحديث حالة التحويل، نعيدها إلى معلّق.
+      if (transferWasUpdated) {
+        try {
+          await API.patch(`/transfers/${transfer.id}`, {
+            status: "pending",
+            completedAt: null,
+            completedBy: null,
+            completedByName: null,
+          });
+        } catch (rollbackError) {
+          console.error("Transfer status rollback failed:", rollbackError);
+        }
+      }
+
+      // 2. حذف حركات المخزون التي تم إنشاؤها.
       for (const id of movementIds) {
         try {
-          await API.delete(`/inventoryMovements/${id}`);
+          const response = await API.get(`/inventoryMovements/${id}`);
+
+          if (String(response.data.companyId) === String(companyId)) {
+            await API.delete(`/inventoryMovements/${id}`);
+          }
         } catch (rollbackError) {
           console.error("Movement rollback failed:", rollbackError);
         }
       }
 
-      // التراجع عن رصيد المستودع المستقبل
+      // 3. التراجع عن رصيد المستودع المستقبل.
       if (destinationChange) {
         try {
           await rollbackWarehouseStock(destinationChange);
@@ -824,7 +1180,7 @@ export default function TransfersPage() {
         }
       }
 
-      // التراجع عن رصيد المستودع المرسل
+      // 4. التراجع عن رصيد المستودع المرسل.
       if (sourceChange) {
         try {
           await rollbackWarehouseStock(sourceChange);
@@ -837,6 +1193,7 @@ export default function TransfersPage() {
         error instanceof Error ? error.message : "حدث خطأ أثناء تنفيذ التحويل";
 
       toast.error(message);
+
       await loadData(companyId);
     } finally {
       setSaving(false);
@@ -853,6 +1210,11 @@ export default function TransfersPage() {
       return;
     }
 
+    if (String(transfer.companyId) !== String(companyId)) {
+      toast.error("لا تملك صلاحية إلغاء هذا التحويل");
+      return;
+    }
+
     if (!window.confirm("هل تريد إلغاء هذا التحويل؟")) {
       return;
     }
@@ -860,9 +1222,27 @@ export default function TransfersPage() {
     try {
       setSaving(true);
 
-      await API.patch(`/transfers/${transfer.id}`, {
-        status: "cancelled",
+      const oldData = { ...transfer };
+
+      const actor = getActorData(companyId);
+
+      const response = await API.patch(`/transfers/${transfer.id}`, {
+        status: "cancelled" as TransferStatus,
+        ...getUpdateMetadata(companyId),
+
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: actor.userId,
+        cancelledByName: actor.userName,
       });
+
+      await recordUpdateActivity(
+        "تحويلات المخزون",
+        `إلغاء التحويل ${transfer.transferNumber}`,
+        transfer.id,
+        transfer.transferNumber,
+        oldData,
+        response.data,
+      );
 
       toast.success("تم إلغاء التحويل");
 
@@ -885,6 +1265,11 @@ export default function TransfersPage() {
       return;
     }
 
+    if (String(transfer.companyId) !== String(companyId)) {
+      toast.error("لا تملك صلاحية حذف هذا التحويل");
+      return;
+    }
+
     if (!window.confirm("هل تريد حذف طلب التحويل؟")) {
       return;
     }
@@ -892,7 +1277,17 @@ export default function TransfersPage() {
     try {
       setSaving(true);
 
+      const oldData = { ...transfer };
+
       await API.delete(`/transfers/${transfer.id}`);
+
+      await recordDeleteActivity(
+        "تحويلات المخزون",
+        `حذف طلب التحويل ${transfer.transferNumber}`,
+        transfer.id,
+        transfer.transferNumber,
+        oldData,
+      );
 
       toast.success("تم حذف التحويل");
 
@@ -1002,6 +1397,21 @@ export default function TransfersPage() {
     );
   }
 
+  if (!companyId) {
+    return (
+      <div
+        dir="rtl"
+        className="flex min-h-[400px] items-center justify-center p-5"
+      >
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center text-red-700">
+          <FiAlertCircle className="mx-auto mb-2 text-3xl" />
+          <p className="font-semibold">لا يمكن الوصول إلى بيانات الشركة</p>
+          <p className="mt-1 text-sm">يرجى تسجيل الدخول مجددًا.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div dir="rtl" className="space-y-5 p-3 text-slate-800 md:p-5">
       {/* ================= HEADER ================= */}
@@ -1023,7 +1433,7 @@ export default function TransfersPage() {
           <button
             onClick={() => loadData(companyId)}
             disabled={saving}
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
             <FiRefreshCw />
             تحديث
@@ -1031,7 +1441,8 @@ export default function TransfersPage() {
 
           <button
             onClick={openAddModal}
-            className="flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800"
+            disabled={saving}
+            className="flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
           >
             <FiPlus />
             تحويل جديد
@@ -1213,7 +1624,7 @@ export default function TransfersPage() {
                               onClick={() => completeTransfer(transfer)}
                               disabled={saving}
                               title="اعتماد التحويل"
-                              className="rounded-md p-2 text-emerald-600 hover:bg-emerald-50"
+                              className="rounded-md p-2 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
                             >
                               <FiCheckCircle />
                             </button>
@@ -1222,7 +1633,7 @@ export default function TransfersPage() {
                               onClick={() => cancelTransfer(transfer)}
                               disabled={saving}
                               title="إلغاء"
-                              className="rounded-md p-2 text-amber-600 hover:bg-amber-50"
+                              className="rounded-md p-2 text-amber-600 hover:bg-amber-50 disabled:opacity-40"
                             >
                               <FiXCircle />
                             </button>
@@ -1231,7 +1642,7 @@ export default function TransfersPage() {
                               onClick={() => deleteTransfer(transfer)}
                               disabled={saving}
                               title="حذف"
-                              className="rounded-md p-2 text-red-600 hover:bg-red-50"
+                              className="rounded-md p-2 text-red-600 hover:bg-red-50 disabled:opacity-40"
                             >
                               <FiTrash2 />
                             </button>
@@ -1527,7 +1938,7 @@ export default function TransfersPage() {
 
               <DetailRow
                 label="رمز المنتج"
-                value={selectedTransfer.productSKU}
+                value={selectedTransfer.productSKU || "-"}
               />
 
               <DetailRow
@@ -1555,6 +1966,41 @@ export default function TransfersPage() {
               />
 
               <DetailRow
+                label="أنشأ بواسطة"
+                value={selectedTransfer.createdByName || "غير محدد"}
+              />
+
+              <DetailRow
+                label="تاريخ الإنشاء"
+                value={
+                  selectedTransfer.createdAt
+                    ? new Date(selectedTransfer.createdAt).toLocaleString("ar")
+                    : "-"
+                }
+              />
+
+              {selectedTransfer.updatedByName && (
+                <DetailRow
+                  label="آخر تعديل بواسطة"
+                  value={selectedTransfer.updatedByName}
+                />
+              )}
+
+              {selectedTransfer.completedByName && (
+                <DetailRow
+                  label="اعتمد بواسطة"
+                  value={selectedTransfer.completedByName}
+                />
+              )}
+
+              {selectedTransfer.cancelledByName && (
+                <DetailRow
+                  label="ألغي بواسطة"
+                  value={selectedTransfer.cancelledByName}
+                />
+              )}
+
+              <DetailRow
                 label="ملاحظات"
                 value={selectedTransfer.notes || "لا توجد"}
               />
@@ -1577,8 +2023,9 @@ export default function TransfersPage() {
 
         <p>
           عند اعتماد التحويل يتم تحديث أرصدة المستودعات في warehouseStocks،
-          وتسجيل حركتي خروج ودخول في inventoryMovements. لا يتم تعديل الرصيد
-          الافتتاحي الموجود في سجل المنتج.
+          وتسجيل حركتي خروج ودخول في inventoryMovements، مع حفظ هوية المستخدم
+          الذي نفّذ العملية. لا يتم إنشاء قيد إيراد أو مصروف؛ لأن التحويل داخلي
+          ولا يغير إجمالي قيمة المخزون أو نتيجة قائمة الدخل.
         </p>
       </div>
     </div>

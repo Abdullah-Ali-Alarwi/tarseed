@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+
+import { supabase } from "@/lib/supabase";
 
 import {
   FiUser,
@@ -15,78 +16,221 @@ import {
   FiGlobe,
 } from "react-icons/fi";
 
-const API = "http://localhost:3001/users";
+type AccountType = "platform" | "erp";
+
+interface UserForm {
+  name: string;
+  username: string;
+  password: string;
+  companyname: string;
+}
+
+interface ExistingUser {
+  id: string;
+  extra: {
+    username?: string;
+  } | null;
+}
+
+// توحيد اسم المستخدم قبل المقارنة
+const normalizeUsername = (value: string) =>
+  value.trim().normalize("NFC").toLowerCase();
 
 export default function CreateUser() {
   const router = useRouter();
 
-  const [accountType, setAccountType] = useState("platform");
+  const [accountType, setAccountType] = useState<AccountType>("platform");
+
   const [loading, setLoading] = useState(false);
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<UserForm>({
     name: "",
     username: "",
     password: "",
     companyname: "",
   });
 
-  const handleChange = (e) => {
-    setForm({
-      ...form,
-      [e.target.name]: e.target.value,
-    });
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   };
 
-  const createUser = async (e) => {
+  const createUser = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    if (!form.name.trim() || !form.username.trim() || !form.password) {
+    if (loading) return;
+
+    const name = form.name.trim();
+    const username = form.username.trim().normalize("NFC");
+    const password = form.password;
+    const companyname = form.companyname.trim();
+
+    // =====================================
+    // 1. التحقق من البيانات
+    // =====================================
+
+    if (!name || !username || !password) {
       toast.error("يرجى تعبئة جميع الحقول المطلوبة");
       return;
     }
 
-    if (accountType === "owner" && !form.companyname.trim()) {
+    if (accountType === "erp" && !companyname) {
       toast.error("يرجى إدخال اسم المؤسسة");
       return;
     }
 
+    if (username.length < 3) {
+      toast.error("اسم المستخدم يجب أن يتكون من 3 أحرف على الأقل");
+      return;
+    }
+
+    if (password.length < 3) {
+      toast.error("كلمة المرور قصيرة جداً");
+      return;
+    }
+
+    let createdCompanyId: string | null = null;
+
     try {
       setLoading(true);
 
-      // التحقق من اسم المستخدم
-      const check = await axios.get(API, {
-        params: {
-          username: form.username.trim(),
-        },
+      // =====================================
+      // 2. التحقق من عدم تكرار اسم المستخدم
+      // =====================================
+
+      const { data: usersData, error: usersError } = await supabase
+        .from("users")
+        .select("id, extra");
+
+      if (usersError) {
+        console.error("Users Fetch Error:", usersError);
+
+        throw new Error(`تعذر قراءة المستخدمين: ${usersError.message}`);
+      }
+
+      const existingUsers = (usersData || []) as ExistingUser[];
+
+      const usernameExists = existingUsers.some((user) => {
+        const existingUsername = user.extra?.username || "";
+
+        return (
+          normalizeUsername(existingUsername) === normalizeUsername(username)
+        );
       });
 
-      if (check.data.length > 0) {
+      if (usernameExists) {
         toast.error("اسم المستخدم مستخدم بالفعل");
         return;
       }
 
-      // البيانات الأساسية
-      const userData = {
-        name: form.name.trim(),
-        username: form.username.trim(),
-        password: form.password,
+      // =====================================
+      // 3. تجهيز بيانات المستخدم
+      // =====================================
+
+      const userId = crypto.randomUUID();
+      const now = new Date().toISOString();
+
+      const userData: Record<string, any> = {
+        id: userId,
+
+        name,
+        username,
+        password,
 
         type: accountType,
 
         role: accountType === "platform" ? "platform_employee" : "owner",
 
-        companyname:
-          accountType === "platform" ? "WEZZAN" : form.companyname.trim(),
+        companyname: accountType === "platform" ? "WEZZAN" : companyname,
+
+        status: "active",
+        isActive: true,
+
+        createdAt: now,
+        updatedAt: now,
       };
 
-      // إنشاء معرف المؤسسة للمالك
-      if (accountType === "owner") {
-        userData.companyId = crypto.randomUUID();
-      } else {
-        userData.companyId = "wezzan-platform";
+      // =====================================
+      // 4. إنشاء المؤسسة إذا كان الحساب ERP
+      // =====================================
+
+      if (accountType === "erp") {
+        createdCompanyId = crypto.randomUUID();
+
+        const companyData = {
+          id: createdCompanyId,
+
+          name: companyname,
+          nameEn: "",
+
+          code: `CMP-${Date.now()}`,
+
+          country: "YE",
+          timezone: "Asia/Aden",
+          currency: "YER",
+          locale: "ar",
+
+          status: "active",
+          isActive: true,
+
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const { error: companyError } = await supabase
+          .from("companies")
+          .insert({
+            id: createdCompanyId,
+            extra: companyData,
+          });
+
+        if (companyError) {
+          console.error("Company Insert Error:", companyError);
+
+          throw new Error(`فشل إنشاء المؤسسة: ${companyError.message}`);
+        }
+
+        // ربط المستخدم بالمؤسسة
+        userData.companyId = createdCompanyId;
       }
 
-      await axios.post(API, userData);
+      // =====================================
+      // 5. إنشاء المستخدم في Supabase
+      // =====================================
+
+      const { error: userError } = await supabase.from("users").insert({
+        id: userId,
+        extra: userData,
+      });
+
+      if (userError) {
+        console.error("User Insert Error:", userError);
+
+        // =====================================
+        // 6. حذف المؤسسة إذا فشل إنشاء المستخدم
+        // =====================================
+
+        if (createdCompanyId) {
+          const { error: deleteError } = await supabase
+            .from("companies")
+            .delete()
+            .eq("id", createdCompanyId);
+
+          if (deleteError) {
+            console.error("Company Rollback Error:", deleteError);
+          }
+        }
+
+        throw new Error(`فشل إنشاء المستخدم: ${userError.message}`);
+      }
+
+      // =====================================
+      // 7. رسالة النجاح
+      // =====================================
 
       toast.success(
         accountType === "platform"
@@ -94,9 +238,24 @@ export default function CreateUser() {
           : "تم إنشاء المؤسسة والمالك بنجاح",
       );
 
+      // تفريغ النموذج
+      setForm({
+        name: "",
+        username: "",
+        password: "",
+        companyname: "",
+      });
+
+      // الانتقال إلى قائمة المستخدمين
       router.push("/wezzan/platform-users");
+      router.refresh();
     } catch (error) {
-      toast.error("حدث خطأ أثناء إنشاء الحساب");
+      console.error("Create User Error:", error);
+
+      const message =
+        error instanceof Error ? error.message : "حدث خطأ أثناء إنشاء الحساب";
+
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -111,6 +270,7 @@ export default function CreateUser() {
         {/* Header */}
         <div className="mb-8">
           <button
+            type="button"
             onClick={() => router.back()}
             className="mb-5 flex items-center gap-2 text-sm text-gray-500 hover:text-[#0E1F33]"
           >
@@ -129,7 +289,7 @@ export default function CreateUser() {
               </h1>
 
               <p className="mt-1 text-sm text-gray-500">
-                إنشاء مستخدم منصة أو مالك مؤسسة
+                إنشاء مستخدم منصة أو مالك مؤسسة جديدة
               </p>
             </div>
           </div>
@@ -177,17 +337,17 @@ export default function CreateUser() {
                 </span>
               </button>
 
-              {/* Owner */}
+              {/* Company Owner */}
               <button
                 type="button"
-                onClick={() => setAccountType("owner")}
+                onClick={() => setAccountType("erp")}
                 className={`relative rounded-2xl border-2 p-5 text-right transition ${
-                  accountType === "owner"
+                  accountType === "erp"
                     ? "border-blue-600 bg-blue-50"
                     : "border-gray-100 hover:border-gray-300"
                 }`}
               >
-                {accountType === "owner" && (
+                {accountType === "erp" && (
                   <FiCheckCircle className="absolute left-4 top-4 text-xl text-blue-600" />
                 )}
 
@@ -214,6 +374,7 @@ export default function CreateUser() {
               <h2 className="mb-5 font-bold text-[#0E1F33]">بيانات المستخدم</h2>
 
               <div className="grid gap-5 sm:grid-cols-2">
+                {/* Full Name */}
                 <div>
                   <label className="mb-2 block text-sm font-medium text-gray-700">
                     الاسم الكامل
@@ -225,9 +386,11 @@ export default function CreateUser() {
                     onChange={handleChange}
                     placeholder="أدخل الاسم الكامل"
                     className={inputClass}
+                    required
                   />
                 </div>
 
+                {/* Username */}
                 <div>
                   <label className="mb-2 block text-sm font-medium text-gray-700">
                     اسم المستخدم
@@ -240,9 +403,11 @@ export default function CreateUser() {
                     placeholder="username"
                     dir="ltr"
                     className={inputClass}
+                    required
                   />
                 </div>
 
+                {/* Password */}
                 <div className="sm:col-span-2">
                   <label className="mb-2 block text-sm font-medium text-gray-700">
                     كلمة المرور
@@ -259,12 +424,13 @@ export default function CreateUser() {
                       placeholder="أدخل كلمة المرور"
                       dir="ltr"
                       className={`${inputClass} pl-11`}
+                      required
                     />
                   </div>
                 </div>
 
                 {/* Company Name */}
-                {accountType === "owner" && (
+                {accountType === "erp" && (
                   <div className="sm:col-span-2">
                     <label className="mb-2 block text-sm font-medium text-gray-700">
                       اسم المؤسسة
@@ -279,6 +445,7 @@ export default function CreateUser() {
                         onChange={handleChange}
                         placeholder="مثال: شركة الجابري"
                         className={`${inputClass} pl-11`}
+                        required
                       />
                     </div>
                   </div>
@@ -299,6 +466,7 @@ export default function CreateUser() {
               <div className="grid gap-4 text-sm sm:grid-cols-2">
                 <div>
                   <p className="text-xs text-gray-500">نوع الحساب</p>
+
                   <p className="mt-1 font-bold text-[#0E1F33]">
                     {accountType === "platform"
                       ? "مستخدم المنصة"
@@ -307,14 +475,26 @@ export default function CreateUser() {
                 </div>
 
                 <div>
-                  <p className="text-xs text-gray-500">الوظيفة</p>
-                  <p className="mt-1 font-bold text-[#0E1F33]">
-                    {accountType === "platform" ? "موظف منصة" : "مالك المؤسسة"}
+                  <p className="text-xs text-gray-500">
+                    نوع المستخدم في قاعدة البيانات
+                  </p>
+
+                  <p className="mt-1 font-bold text-[#0E1F33]" dir="ltr">
+                    {accountType === "platform" ? "platform" : "erp"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-gray-500">الدور</p>
+
+                  <p className="mt-1 font-bold text-[#0E1F33]" dir="ltr">
+                    {accountType === "platform" ? "platform_employee" : "owner"}
                   </p>
                 </div>
 
                 <div>
                   <p className="text-xs text-gray-500">المؤسسة</p>
+
                   <p className="mt-1 font-bold text-[#0E1F33]">
                     {accountType === "platform"
                       ? "WEZZAN"
@@ -329,7 +509,8 @@ export default function CreateUser() {
               <button
                 type="button"
                 onClick={() => router.back()}
-                className="rounded-xl border border-gray-200 px-6 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                disabled={loading}
+                className="rounded-xl border border-gray-200 px-6 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
               >
                 إلغاء
               </button>
@@ -337,7 +518,7 @@ export default function CreateUser() {
               <button
                 type="submit"
                 disabled={loading}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#0E1F33] px-6 py-3 font-bold text-white transition hover:bg-blue-900 disabled:opacity-50"
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#0E1F33] px-6 py-3 font-bold text-white transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? "جاري إنشاء الحساب..." : "إنشاء الحساب"}
               </button>

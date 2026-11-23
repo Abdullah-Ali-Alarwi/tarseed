@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
@@ -12,13 +12,23 @@ import {
   FiPrinter,
   FiArrowUpCircle,
   FiArrowDownCircle,
+  FiAlertCircle,
 } from "react-icons/fi";
 
 import { toast } from "sonner";
 
 import { Account } from "../accounts/types";
 
+import { getCurrentActor, saveActivityLog } from "@/app/(erp)/erp/lib/activity";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
 
 // المستخدم الحالي
 interface CurrentUser {
@@ -31,7 +41,7 @@ interface CurrentUser {
   companyname?: string;
 }
 
-// تفاصيل القيد
+// القيد اليومي
 interface Journal {
   id: number | string;
   journalNumber: string;
@@ -52,15 +62,28 @@ interface JournalLine {
   description?: string;
 }
 
+// الرصيد الافتتاحي
+interface OpeningEntry {
+  id: number | string;
+  accountId: number | string;
+  date: string;
+  debit: number;
+  credit: number;
+  companyId: string;
+  description?: string;
+  reference?: string;
+}
+
 // حركة دفتر الأستاذ
 interface LedgerTransaction {
-  id: number | string;
-  journalId: number | string;
+  id: string;
+  journalId?: number | string;
   journalNumber: string;
   date: string;
   description: string;
   debit: number;
   credit: number;
+  source: "opening" | "journal";
   balance: number;
 }
 
@@ -103,24 +126,21 @@ const formatDate = (date: string) => {
 export default function LedgerPage() {
   const router = useRouter();
 
+  const activityViewLogged = useRef(false);
+
   // المستخدم والشركة
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-
   const [companyId, setCompanyId] = useState("");
-
   const [userLoading, setUserLoading] = useState(true);
-
   const [userError, setUserError] = useState("");
 
   // البيانات
   const [accounts, setAccounts] = useState<Account[]>([]);
-
   const [journals, setJournals] = useState<Journal[]>([]);
-
   const [journalLines, setJournalLines] = useState<JournalLine[]>([]);
+  const [openingEntries, setOpeningEntries] = useState<OpeningEntry[]>([]);
 
   const [loading, setLoading] = useState(false);
-
   const [error, setError] = useState("");
 
   // الفلاتر
@@ -144,11 +164,11 @@ export default function LedgerPage() {
           throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
         }
 
-        const response = await axios.get<CurrentUser[]>(`${API_URL}/users`, {
+        const response = await api.get<CurrentUser[]>("/users", {
           params: { username },
         });
 
-        const user = response.data[0];
+        const user = response.data.find((item) => item.username === username);
 
         if (!user) {
           throw new Error("المستخدم غير موجود");
@@ -163,7 +183,7 @@ export default function LedgerPage() {
         }
 
         setCurrentUser(user);
-        setCompanyId(user.companyId);
+        setCompanyId(String(user.companyId));
       } catch (err) {
         const message = axios.isAxiosError(err)
           ? err.response?.data?.message || "تعذر الاتصال بـ JSON Server"
@@ -177,10 +197,52 @@ export default function LedgerPage() {
       }
     };
 
-    getCurrentUser();
+    void getCurrentUser();
   }, []);
 
-  // جلب بيانات دفتر الأستاذ
+  // تسجيل نشاط المستخدم
+  const logLedgerActivity = useCallback(
+    async (
+      action: "view" | "print",
+      description: string,
+      account?: Account,
+    ) => {
+      try {
+        const actor = getCurrentActor();
+
+        if (!actor) {
+          console.warn("لم يتم العثور على هوية المستخدم في authUser");
+          return;
+        }
+
+        if (String(actor.companyId) !== String(companyId)) {
+          console.warn("شركة المستخدم في سجل النشاط لا تطابق الشركة الحالية");
+          return;
+        }
+
+        await saveActivityLog({
+          companyId: String(companyId),
+          userId: String(actor.userId),
+          userName: actor.userName,
+          username: actor.username,
+          userRole: actor.userRole,
+          action,
+          module: "accounting",
+          description,
+          recordId: account ? String(account.id) : "",
+          recordName: account
+            ? `${account.code} - ${account.name}`
+            : "دفتر الأستاذ العام",
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error("Ledger Activity Error:", err);
+      }
+    },
+    [companyId],
+  );
+
+  // تحميل بيانات دفتر الأستاذ
   const fetchLedgerData = useCallback(async () => {
     if (!companyId) return;
 
@@ -188,36 +250,50 @@ export default function LedgerPage() {
       setLoading(true);
       setError("");
 
-      const [accountsResponse, journalsResponse, linesResponse] =
-        await Promise.all([
-          axios.get<Account[]>(`${API_URL}/accounts`, {
-            params: { companyId },
-          }),
+      const [
+        accountsResponse,
+        journalsResponse,
+        linesResponse,
+        openingResponse,
+      ] = await Promise.all([
+        api.get<Account[]>("/accounts", {
+          params: { companyId },
+        }),
 
-          axios.get<Journal[]>(`${API_URL}/journals`, {
-            params: { companyId },
-          }),
+        api.get<Journal[]>("/journals", {
+          params: { companyId },
+        }),
 
-          axios.get<JournalLine[]>(`${API_URL}/journalLines`, {
-            params: { companyId },
-          }),
-        ]);
+        api.get<JournalLine[]>("/journalLines", {
+          params: { companyId },
+        }),
 
-      setAccounts(
-        accountsResponse.data.filter(
-          (account) => account.companyId === companyId,
-        ),
+        api.get<OpeningEntry[]>("/openingEntries", {
+          params: { companyId },
+        }),
+      ]);
+
+      // عزل بيانات الشركة
+      const companyAccounts = accountsResponse.data.filter(
+        (account) => String(account.companyId) === companyId,
       );
 
-      setJournals(
-        journalsResponse.data.filter(
-          (journal) => journal.companyId === companyId,
-        ),
+      const companyJournals = journalsResponse.data.filter(
+        (journal) => String(journal.companyId) === companyId,
       );
 
-      setJournalLines(
-        linesResponse.data.filter((line) => line.companyId === companyId),
+      const companyLines = linesResponse.data.filter(
+        (line) => String(line.companyId) === companyId,
       );
+
+      const companyOpeningEntries = openingResponse.data.filter(
+        (entry) => String(entry.companyId) === companyId,
+      );
+
+      setAccounts(companyAccounts);
+      setJournals(companyJournals);
+      setJournalLines(companyLines);
+      setOpeningEntries(companyOpeningEntries);
     } catch (err) {
       console.error("Fetch Ledger Error:", err);
 
@@ -237,11 +313,30 @@ export default function LedgerPage() {
     }
   }, [companyId, fetchLedgerData]);
 
+  // تسجيل فتح التقرير مرة واحدة
+  useEffect(() => {
+    if (
+      companyId &&
+      currentUser &&
+      !loading &&
+      !userLoading &&
+      !error &&
+      !activityViewLogged.current
+    ) {
+      activityViewLogged.current = true;
+
+      void logLedgerActivity("view", "عرض دفتر الأستاذ العام");
+    }
+  }, [companyId, currentUser, loading, userLoading, error, logLedgerActivity]);
+
   // الحسابات التي تقبل القيود فقط
   const postingAccounts = useMemo(() => {
     return accounts
       .filter(
-        (account) => account.allowPosting === true && account.isActive === true,
+        (account) =>
+          account.allowPosting === true &&
+          account.isActive !== false &&
+          account.isGroup !== true,
       )
       .sort((a, b) =>
         String(a.code).localeCompare(String(b.code), undefined, {
@@ -257,72 +352,102 @@ export default function LedgerPage() {
     );
   }, [postingAccounts, filters.accountId]);
 
-  // تحديد طبيعة الحساب
+  // طبيعة الحساب
   const accountNature =
     selectedAccount?.nature ||
     (selectedAccount?.type === "asset" || selectedAccount?.type === "expense"
       ? "debit"
       : "credit");
 
-  // حساب الحركات
+  // جميع الحركات للحساب
   const ledgerTransactions = useMemo(() => {
     if (!filters.accountId) return [];
 
+    const transactions: LedgerTransaction[] = [];
+
+    // إضافة الأرصدة الافتتاحية
+    openingEntries
+      .filter((entry) => String(entry.accountId) === filters.accountId)
+      .forEach((entry) => {
+        transactions.push({
+          id: `opening-${entry.id}`,
+          journalNumber: entry.reference || "رصيد افتتاحي",
+          date: entry.date,
+          description: entry.description || "الرصيد الافتتاحي",
+          debit: Number(entry.debit || 0),
+          credit: Number(entry.credit || 0),
+          source: "opening",
+          balance: 0,
+        });
+      });
+
+    // ربط القيود اليومية بحركات الحساب
     const journalMap = new Map(
       journals.map((journal) => [String(journal.id), journal]),
     );
 
-    return journalLines
+    journalLines
       .filter((line) => String(line.accountId) === filters.accountId)
-      .map((line) => {
+      .forEach((line) => {
         const journal = journalMap.get(String(line.journalId));
 
+        // لا نعتمد إلا القيود المرحلة
         if (!journal || journal.status !== "posted") {
-          return null;
+          return;
         }
 
-        return {
-          id: line.id,
+        transactions.push({
+          id: `journal-${line.id}`,
           journalId: journal.id,
           journalNumber: journal.journalNumber,
           date: journal.date,
           description: line.description || journal.description,
           debit: Number(line.debit || 0),
           credit: Number(line.credit || 0),
+          source: "journal",
           balance: 0,
-        };
-      })
-      .filter((item): item is LedgerTransaction => item !== null)
-      .sort((a, b) => {
-        const dateCompare = a.date.localeCompare(b.date);
-
-        if (dateCompare !== 0) {
-          return dateCompare;
-        }
-
-        return String(a.journalNumber).localeCompare(
-          String(b.journalNumber),
-          undefined,
-          { numeric: true },
-        );
+        });
       });
-  }, [filters.accountId, journalLines, journals]);
 
-  // الرصيد الافتتاحي قبل الفترة
+    return transactions.sort((a, b) => {
+      const dateCompare = a.date.localeCompare(b.date);
+
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+
+      // الأرصدة الافتتاحية تظهر قبل الحركات اليومية في التاريخ نفسه
+      if (a.source !== b.source) {
+        return a.source === "opening" ? -1 : 1;
+      }
+
+      return a.journalNumber.localeCompare(b.journalNumber, undefined, {
+        numeric: true,
+      });
+    });
+  }, [filters.accountId, openingEntries, journalLines, journals]);
+
+  // تحويل المدين والدائن إلى رصيد حسب طبيعة الحساب
+  const getSignedMovement = useCallback(
+    (transaction: { debit: number; credit: number }) => {
+      return accountNature === "debit"
+        ? transaction.debit - transaction.credit
+        : transaction.credit - transaction.debit;
+    },
+    [accountNature],
+  );
+
+  // الرصيد قبل الفترة
   const openingBalance = useMemo(() => {
     if (!filters.fromDate) return 0;
 
     return ledgerTransactions
       .filter((transaction) => transaction.date < filters.fromDate)
       .reduce(
-        (balance, transaction) =>
-          balance +
-          (accountNature === "debit"
-            ? transaction.debit - transaction.credit
-            : transaction.credit - transaction.debit),
+        (balance, transaction) => balance + getSignedMovement(transaction),
         0,
       );
-  }, [ledgerTransactions, filters.fromDate, accountNature]);
+  }, [ledgerTransactions, filters.fromDate, getSignedMovement]);
 
   // الحركات ضمن الفترة
   const filteredTransactions = useMemo(() => {
@@ -344,24 +469,19 @@ export default function LedgerPage() {
     });
   }, [ledgerTransactions, filters]);
 
-  // حساب الرصيد الجاري
+  // الرصيد الجاري
   const transactionsWithBalance = useMemo(() => {
     let balance = openingBalance;
 
     return filteredTransactions.map((transaction) => {
-      const movement =
-        accountNature === "debit"
-          ? transaction.debit - transaction.credit
-          : transaction.credit - transaction.debit;
-
-      balance += movement;
+      balance += getSignedMovement(transaction);
 
       return {
         ...transaction,
         balance,
       };
     });
-  }, [filteredTransactions, openingBalance, accountNature]);
+  }, [filteredTransactions, openingBalance, getSignedMovement]);
 
   // الإجماليات
   const totals = useMemo(() => {
@@ -387,18 +507,35 @@ export default function LedgerPage() {
     };
   }, [filteredTransactions, transactionsWithBalance, openingBalance]);
 
+  // وصف الرصيد مدين أو دائن
+  const getBalanceNature = (balance: number) => {
+    if (Math.abs(balance) < 0.001) return "متزن";
+
+    const isDebit = accountNature === "debit" ? balance > 0 : balance < 0;
+
+    return isDebit ? "مدين" : "دائن";
+  };
+
   // طباعة التقرير
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!selectedAccount) {
       toast.error("اختر حساباً أولاً");
       return;
     }
 
+    await logLedgerActivity(
+      "print",
+      `طباعة دفتر الأستاذ للحساب ${selectedAccount.code} - ${selectedAccount.name}`,
+      selectedAccount,
+    );
+
     window.print();
   };
 
   // فتح القيد
-  const handleViewJournal = (journalId: number | string) => {
+  const handleViewJournal = (journalId?: number | string) => {
+    if (!journalId) return;
+
     router.push(`/erp/accounting/journals/${journalId}`);
   };
 
@@ -468,17 +605,27 @@ export default function LedgerPage() {
           </p>
         </div>
 
-        <button
-          onClick={handlePrint}
-          disabled={!selectedAccount}
-          className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:opacity-50"
-        >
-          <FiPrinter size={18} />
-          طباعة التقرير
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => void fetchLedgerData()}
+            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700 shadow-sm hover:bg-slate-100"
+          >
+            <FiRefreshCw />
+            تحديث
+          </button>
+
+          <button
+            onClick={handlePrint}
+            disabled={!selectedAccount}
+            className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 font-medium text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
+          >
+            <FiPrinter size={18} />
+            طباعة التقرير
+          </button>
+        </div>
       </div>
 
-      {/* اختيار الحساب والفترة */}
+      {/* خيارات التقرير */}
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
         <div className="mb-5 flex items-center gap-2">
           <FiFilter className="text-blue-600" />
@@ -487,7 +634,6 @@ export default function LedgerPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {/* الحساب */}
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">
               الحساب
@@ -513,7 +659,6 @@ export default function LedgerPage() {
             </select>
           </div>
 
-          {/* من تاريخ */}
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">
               من تاريخ
@@ -532,7 +677,6 @@ export default function LedgerPage() {
             />
           </div>
 
-          {/* إلى تاريخ */}
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">
               إلى تاريخ
@@ -552,7 +696,6 @@ export default function LedgerPage() {
             />
           </div>
 
-          {/* البحث */}
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">
               البحث
@@ -596,13 +739,17 @@ export default function LedgerPage() {
         </div>
       </div>
 
-      {/* حالة التحميل والخطأ */}
+      {/* التحميل والأخطاء */}
       {loading ? (
         <div className="rounded-xl border border-slate-200 bg-white py-16 text-center text-slate-500">
           جارٍ تحميل دفتر الأستاذ...
         </div>
       ) : error ? (
         <div className="rounded-xl border border-red-200 bg-white py-16 text-center">
+          <div className="mb-3 flex justify-center text-red-500">
+            <FiAlertCircle size={30} />
+          </div>
+
           <p className="text-red-600">{error}</p>
 
           <button
@@ -650,13 +797,7 @@ export default function LedgerPage() {
                 </p>
 
                 <p className="mt-1 text-xs text-blue-600">
-                  {totals.closingBalance >= 0
-                    ? accountNature === "debit"
-                      ? "مدين"
-                      : "دائن"
-                    : accountNature === "debit"
-                      ? "دائن"
-                      : "مدين"}
+                  {getBalanceNature(totals.closingBalance)}
                 </p>
               </div>
             </div>
@@ -676,13 +817,7 @@ export default function LedgerPage() {
               </h3>
 
               <p className="mt-1 text-xs text-slate-400">
-                {openingBalance >= 0
-                  ? accountNature === "debit"
-                    ? "مدين"
-                    : "دائن"
-                  : accountNature === "debit"
-                    ? "دائن"
-                    : "مدين"}
+                {getBalanceNature(openingBalance)}
               </p>
             </div>
 
@@ -738,19 +873,22 @@ export default function LedgerPage() {
                     <th className="px-5 py-4 font-semibold">الرصيد</th>
 
                     <th className="px-5 py-4 text-center font-semibold">
+                      المصدر
+                    </th>
+
+                    <th className="px-5 py-4 text-center font-semibold print:hidden">
                       الإجراء
                     </th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {/* الرصيد الافتتاحي */}
                   <tr className="bg-blue-50/50">
                     <td
                       colSpan={3}
                       className="px-5 py-4 font-bold text-slate-700"
                     >
-                      الرصيد الافتتاحي
+                      الرصيد قبل الفترة
                     </td>
 
                     <td className="px-5 py-4">-</td>
@@ -759,16 +897,12 @@ export default function LedgerPage() {
 
                     <td className="px-5 py-4 font-bold text-blue-700">
                       {formatCurrency(Math.abs(openingBalance))}{" "}
-                      {openingBalance >= 0
-                        ? accountNature === "debit"
-                          ? "مدين"
-                          : "دائن"
-                        : accountNature === "debit"
-                          ? "دائن"
-                          : "مدين"}
+                      {getBalanceNature(openingBalance)}
                     </td>
 
-                    <td />
+                    <td className="px-5 py-4 text-xs text-blue-600">افتتاحي</td>
+
+                    <td className="print:hidden" />
                   </tr>
 
                   {transactionsWithBalance.map((transaction) => (
@@ -803,25 +937,35 @@ export default function LedgerPage() {
                       <td className="px-5 py-4 font-bold text-slate-800">
                         {formatCurrency(Math.abs(transaction.balance))}{" "}
                         <span className="text-xs text-slate-400">
-                          {transaction.balance >= 0
-                            ? accountNature === "debit"
-                              ? "مدين"
-                              : "دائن"
-                            : accountNature === "debit"
-                              ? "دائن"
-                              : "مدين"}
+                          {getBalanceNature(transaction.balance)}
                         </span>
                       </td>
 
-                      <td className="px-5 py-4 text-center">
-                        <button
-                          onClick={() =>
-                            handleViewJournal(transaction.journalId)
-                          }
-                          className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600 transition hover:bg-blue-100"
-                        >
-                          عرض القيد
-                        </button>
+                      <td className="px-5 py-4 text-xs">
+                        {transaction.source === "opening" ? (
+                          <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                            رصيد افتتاحي
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">
+                            قيد يومي
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-5 py-4 text-center print:hidden">
+                        {transaction.journalId ? (
+                          <button
+                            onClick={() =>
+                              handleViewJournal(transaction.journalId)
+                            }
+                            className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600 transition hover:bg-blue-100"
+                          >
+                            عرض القيد
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-400">-</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -829,7 +973,7 @@ export default function LedgerPage() {
                   {filteredTransactions.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         className="py-12 text-center text-slate-400"
                       >
                         لا توجد حركات خلال الفترة المحددة
@@ -838,7 +982,6 @@ export default function LedgerPage() {
                   )}
                 </tbody>
 
-                {/* الإجماليات */}
                 <tfoot className="border-t-2 border-slate-200 bg-slate-50">
                   <tr>
                     <td
@@ -860,7 +1003,7 @@ export default function LedgerPage() {
                       {formatCurrency(Math.abs(totals.closingBalance))}
                     </td>
 
-                    <td />
+                    <td colSpan={2} />
                   </tr>
                 </tfoot>
               </table>

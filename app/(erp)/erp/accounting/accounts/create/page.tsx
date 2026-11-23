@@ -1,323 +1,1627 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+
 import { useRouter } from "next/navigation";
-import axios from "axios";
-
-import { FiArrowRight, FiPlus, FiLayers } from "react-icons/fi";
-
 import { toast } from "sonner";
 
-import AccountForm from "../components/AccountForm";
-import { useAccounts } from "../hooks/useAccounts";
-import { AccountFormData } from "../types";
+import {
+  FiArrowRight,
+  FiSave,
+  FiRefreshCw,
+  FiPlus,
+  FiBookOpen,
+  FiFolder,
+  FiDollarSign,
+  FiLayers,
+} from "react-icons/fi";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import {
+  getAccounts,
+  createAccount as createAccountApi,
+  type Account,
+  type AccountType,
+  type AccountNature,
+} from "@/lib/api/accounts";
+
+import { getUserByUsername, type User } from "@/lib/api/users";
+
+// =====================================================
+// Types
+// =====================================================
 
 interface CurrentUser {
-  id: number | string;
+  id: string;
   name: string;
   username: string;
-  type: string;
-  role: string;
-  companyId?: string;
+  companyId: string;
   companyname?: string;
 }
 
-function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
-
-  const cookie = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith(`${name}=`));
-
-  if (!cookie) return null;
-
-  return decodeURIComponent(cookie.substring(name.length + 1));
+interface AccountCategory {
+  value: AccountType;
+  label: string;
+  code: string;
+  nature: AccountNature;
 }
+
+interface AccountForm {
+  name: string;
+  type: AccountType;
+  parentId: string;
+  isGroup: boolean;
+  description: string;
+}
+
+interface DefaultAccount {
+  code: string;
+  name: string;
+  type: AccountType;
+  nature: AccountNature;
+  parentCode?: string;
+  level: number;
+  isGroup: boolean;
+  allowPosting: boolean;
+}
+
+// =====================================================
+// Account Categories
+// =====================================================
+
+const accountCategories: AccountCategory[] = [
+  {
+    value: "asset",
+    label: "الأصول",
+    code: "1",
+    nature: "debit",
+  },
+  {
+    value: "liability",
+    label: "الالتزامات",
+    code: "2",
+    nature: "credit",
+  },
+  {
+    value: "equity",
+    label: "حقوق الملكية",
+    code: "3",
+    nature: "credit",
+  },
+  {
+    value: "revenue",
+    label: "الإيرادات",
+    code: "4",
+    nature: "credit",
+  },
+  {
+    value: "expense",
+    label: "المصروفات",
+    code: "6",
+    nature: "debit",
+  },
+];
+
+// =====================================================
+// Default Accounts
+// =====================================================
+
+const defaultAccounts: DefaultAccount[] = [
+  // ===================================================
+  // الأصول
+  // ===================================================
+
+  {
+    code: "1",
+    name: "الأصول",
+    type: "asset",
+    nature: "debit",
+    level: 1,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "11",
+    name: "الأصول المتداولة",
+    type: "asset",
+    nature: "debit",
+    parentCode: "1",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "111",
+    name: "النقدية",
+    type: "asset",
+    nature: "debit",
+    parentCode: "11",
+    level: 3,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "1111",
+    name: "الصندوق",
+    type: "asset",
+    nature: "debit",
+    parentCode: "111",
+    level: 4,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "1112",
+    name: "البنك",
+    type: "asset",
+    nature: "debit",
+    parentCode: "111",
+    level: 4,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "112",
+    name: "العملاء",
+    type: "asset",
+    nature: "debit",
+    parentCode: "11",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "113",
+    name: "المخزون",
+    type: "asset",
+    nature: "debit",
+    parentCode: "11",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "114",
+    name: "ضريبة القيمة المضافة المدخلة",
+    type: "asset",
+    nature: "debit",
+    parentCode: "11",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "12",
+    name: "الأصول غير المتداولة",
+    type: "asset",
+    nature: "debit",
+    parentCode: "1",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "121",
+    name: "الأثاث والتجهيزات",
+    type: "asset",
+    nature: "debit",
+    parentCode: "12",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "122",
+    name: "الأجهزة والمعدات",
+    type: "asset",
+    nature: "debit",
+    parentCode: "12",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+
+  // ===================================================
+  // الالتزامات
+  // ===================================================
+
+  {
+    code: "2",
+    name: "الالتزامات",
+    type: "liability",
+    nature: "credit",
+    level: 1,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "21",
+    name: "الالتزامات المتداولة",
+    type: "liability",
+    nature: "credit",
+    parentCode: "2",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "211",
+    name: "الموردون",
+    type: "liability",
+    nature: "credit",
+    parentCode: "21",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "212",
+    name: "ضريبة القيمة المضافة المستحقة",
+    type: "liability",
+    nature: "credit",
+    parentCode: "21",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "213",
+    name: "الرواتب المستحقة",
+    type: "liability",
+    nature: "credit",
+    parentCode: "21",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "22",
+    name: "الالتزامات طويلة الأجل",
+    type: "liability",
+    nature: "credit",
+    parentCode: "2",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "221",
+    name: "القروض طويلة الأجل",
+    type: "liability",
+    nature: "credit",
+    parentCode: "22",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+
+  // ===================================================
+  // حقوق الملكية
+  // ===================================================
+
+  {
+    code: "3",
+    name: "حقوق الملكية",
+    type: "equity",
+    nature: "credit",
+    level: 1,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "31",
+    name: "رأس المال",
+    type: "equity",
+    nature: "credit",
+    parentCode: "3",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "311",
+    name: "رأس المال",
+    type: "equity",
+    nature: "credit",
+    parentCode: "31",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "312",
+    name: "الأرباح المحتجزة",
+    type: "equity",
+    nature: "credit",
+    parentCode: "31",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "313",
+    name: "المسحوبات الشخصية",
+    type: "equity",
+    nature: "debit",
+    parentCode: "31",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+
+  // ===================================================
+  // الإيرادات
+  // ===================================================
+
+  {
+    code: "4",
+    name: "الإيرادات",
+    type: "revenue",
+    nature: "credit",
+    level: 1,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "41",
+    name: "إيرادات النشاط",
+    type: "revenue",
+    nature: "credit",
+    parentCode: "4",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "411",
+    name: "إيرادات مبيعات العسل",
+    type: "revenue",
+    nature: "credit",
+    parentCode: "41",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "412",
+    name: "إيرادات مبيعات الزيوت",
+    type: "revenue",
+    nature: "credit",
+    parentCode: "41",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "413",
+    name: "إيرادات العمرة",
+    type: "revenue",
+    nature: "credit",
+    parentCode: "41",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "414",
+    name: "إيرادات أخرى",
+    type: "revenue",
+    nature: "credit",
+    parentCode: "41",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+
+  // ===================================================
+  // تكلفة المبيعات
+  // تصنف حالياً ضمن expense لأن AccountType لا يحتوي cogs
+  // ===================================================
+
+  {
+    code: "5",
+    name: "تكلفة المبيعات",
+    type: "expense",
+    nature: "debit",
+    level: 1,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "51",
+    name: "تكلفة البضاعة والخدمات",
+    type: "expense",
+    nature: "debit",
+    parentCode: "5",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "511",
+    name: "تكلفة مبيعات العسل والزيوت",
+    type: "expense",
+    nature: "debit",
+    parentCode: "51",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "512",
+    name: "تكلفة خدمات العمرة",
+    type: "expense",
+    nature: "debit",
+    parentCode: "51",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+
+  // ===================================================
+  // المصروفات
+  // ===================================================
+
+  {
+    code: "6",
+    name: "المصروفات",
+    type: "expense",
+    nature: "debit",
+    level: 1,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "61",
+    name: "المصروفات التشغيلية والإدارية",
+    type: "expense",
+    nature: "debit",
+    parentCode: "6",
+    level: 2,
+    isGroup: true,
+    allowPosting: false,
+  },
+  {
+    code: "611",
+    name: "الرواتب والأجور",
+    type: "expense",
+    nature: "debit",
+    parentCode: "61",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "612",
+    name: "الإيجار",
+    type: "expense",
+    nature: "debit",
+    parentCode: "61",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "613",
+    name: "الكهرباء والمياه",
+    type: "expense",
+    nature: "debit",
+    parentCode: "61",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "614",
+    name: "النقل والمواصلات",
+    type: "expense",
+    nature: "debit",
+    parentCode: "61",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "615",
+    name: "التسويق والإعلان",
+    type: "expense",
+    nature: "debit",
+    parentCode: "61",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "616",
+    name: "مصروفات إدارية وعمومية",
+    type: "expense",
+    nature: "debit",
+    parentCode: "61",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+  {
+    code: "617",
+    name: "الصيانة",
+    type: "expense",
+    nature: "debit",
+    parentCode: "61",
+    level: 3,
+    isGroup: false,
+    allowPosting: true,
+  },
+];
+
+// =====================================================
+// Helpers
+// =====================================================
+
+function getAccountType(account: Account): AccountType {
+  return account.type || account.accountType || "asset";
+}
+
+function sortAccounts(accounts: Account[]): Account[] {
+  return [...accounts].sort((a, b) =>
+    a.code.localeCompare(b.code, undefined, {
+      numeric: true,
+    }),
+  );
+}
+
+// =====================================================
+// Generate Account Code
+// =====================================================
+
+function generateAccountCode(
+  parent: Account | undefined,
+  allAccounts: Account[],
+  category: AccountCategory,
+): string {
+  if (!parent) {
+    return category.code;
+  }
+
+  const parentId = String(parent.id || "");
+
+  const children = allAccounts.filter(
+    (account) => String(account.parentId || "") === parentId,
+  );
+
+  const usedNumbers = new Set<number>();
+
+  children.forEach((account) => {
+    const code = String(account.code);
+    const parentCode = String(parent.code);
+
+    if (!code.startsWith(parentCode)) return;
+
+    const suffix = code.slice(parentCode.length);
+
+    if (!suffix || !/^\d+$/.test(suffix)) return;
+
+    const number = Number(suffix);
+
+    if (Number.isInteger(number) && number > 0) {
+      usedNumbers.add(number);
+    }
+  });
+
+  // اختيار أول رقم غير مستخدم بدلاً من أكبر رقم + 1
+  let nextNumber = 1;
+
+  while (usedNumbers.has(nextNumber)) {
+    nextNumber++;
+  }
+
+  return `${parent.code}${nextNumber}`;
+}
+
+// =====================================================
+// Get Current Username
+// =====================================================
+
+function getCurrentUsername(): string {
+  const cookie = document.cookie
+    .split(";")
+    .find((item) => item.trim().startsWith("username="));
+
+  const cookieUsername = cookie
+    ? decodeURIComponent(cookie.split("=").slice(1).join("="))
+    : "";
+
+  let storedUser: Partial<User> | null = null;
+
+  try {
+    storedUser = JSON.parse(localStorage.getItem("authUser") || "null");
+  } catch {
+    storedUser = null;
+  }
+
+  return cookieUsername || storedUser?.username || "";
+}
+
+// =====================================================
+// Page
+// =====================================================
 
 export default function CreateAccountPage() {
   const router = useRouter();
 
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
 
-  const [companyId, setCompanyId] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
-  const [userLoading, setUserLoading] = useState(true);
-
-  const [userError, setUserError] = useState("");
-
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [addingDefaults, setAddingDefaults] = useState(false);
 
-  // تحديد المستخدم والشركة الحالية
-  useEffect(() => {
-    const getCurrentUser = async () => {
-      try {
-        setUserLoading(true);
+  const [form, setForm] = useState<AccountForm>({
+    name: "",
+    type: "asset",
+    parentId: "",
+    isGroup: false,
+    description: "",
+  });
 
-        const username = getCookie("username");
+  // ===================================================
+  // Selected Category
+  // ===================================================
 
-        if (!username) {
-          throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
-        }
+  const selectedCategory = useMemo(() => {
+    return (
+      accountCategories.find((category) => category.value === form.type) ||
+      accountCategories[0]
+    );
+  }, [form.type]);
 
-        const response = await axios.get<CurrentUser[]>(`${API_URL}/users`, {
-          params: { username },
-        });
+  // ===================================================
+  // Fetch Current User
+  // ===================================================
 
-        const user = response.data[0];
+  const getCurrentUser = useCallback(async (): Promise<CurrentUser | null> => {
+    try {
+      const username = getCurrentUsername();
 
-        if (!user) {
-          throw new Error("المستخدم غير موجود");
-        }
-
-        if (user.type === "platform") {
-          throw new Error("لا يمكن لمستخدم المنصة إضافة حسابات ERP");
-        }
-
-        if (!user.companyId) {
-          throw new Error("المستخدم غير مرتبط بأي شركة");
-        }
-
-        setCurrentUser(user);
-        setCompanyId(user.companyId);
-      } catch (error) {
-        const message = axios.isAxiosError(error)
-          ? error.response?.data?.message || "تعذر الاتصال بـ JSON Server"
-          : error instanceof Error
-            ? error.message
-            : "حدث خطأ غير متوقع";
-
-        setUserError(message);
-      } finally {
-        setUserLoading(false);
+      if (!username) {
+        throw new Error("لم يتم العثور على المستخدم الحالي");
       }
-    };
 
-    getCurrentUser();
+      const currentUser = await getUserByUsername(username);
+
+      if (!currentUser) {
+        throw new Error("المستخدم غير موجود");
+      }
+
+      if (currentUser.type === "platform" || !currentUser.companyId) {
+        throw new Error("هذا الحساب غير مرتبط بمؤسسة");
+      }
+
+      if (currentUser.isActive === false || currentUser.status !== "active") {
+        throw new Error("حساب المستخدم غير نشط");
+      }
+
+      return {
+        id: String(currentUser.id || ""),
+        name: currentUser.name,
+        username: currentUser.username,
+        companyId: String(currentUser.companyId),
+        companyname: currentUser.companyname,
+      };
+    } catch (error) {
+      console.error("Get current user error:", error);
+
+      toast.error(
+        error instanceof Error ? error.message : "تعذر تحديد المستخدم الحالي",
+      );
+
+      return null;
+    }
   }, []);
 
-  // حسابات الشركة
-  const {
-    accounts,
-    loading,
-    createAccount,
-    fetchAccounts,
-    getMissingDefaultAccounts,
-    addDefaultAccounts,
-  } = useAccounts(companyId);
+  // ===================================================
+  // Fetch Accounts
+  // ===================================================
 
-  // الحسابات الرئيسية الافتراضية الناقصة
-  const missingDefaultAccounts = getMissingDefaultAccounts(accounts);
+  const fetchAccounts = useCallback(
+    async (companyId: string): Promise<Account[]> => {
+      const result = await getAccounts(companyId);
 
-  // إضافة الحسابات الرئيسية الافتراضية
-  const handleAddDefaults = async () => {
+      const companyAccounts = result.filter(
+        (account) => String(account.companyId) === String(companyId),
+      );
+
+      const sorted = sortAccounts(companyAccounts);
+
+      setAccounts(sorted);
+
+      return sorted;
+    },
+    [],
+  );
+
+  // ===================================================
+  // Load Data
+  // ===================================================
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+
+    try {
+      const currentUser = await getCurrentUser();
+
+      if (!currentUser) {
+        setUser(null);
+        return;
+      }
+
+      setUser(currentUser);
+
+      await fetchAccounts(currentUser.companyId);
+    } catch (error) {
+      console.error("Load data error:", error);
+
+      toast.error("تعذر تحميل الحسابات");
+    } finally {
+      setLoading(false);
+    }
+  }, [getCurrentUser, fetchAccounts]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // ===================================================
+  // Selected Type Accounts
+  // ===================================================
+
+  const selectedTypeAccounts = useMemo(() => {
+    return sortAccounts(
+      accounts.filter((account) => getAccountType(account) === form.type),
+    );
+  }, [accounts, form.type]);
+
+  // ===================================================
+  // Parent Accounts
+  // ===================================================
+
+  const parentAccounts = useMemo(() => {
+    return selectedTypeAccounts.filter(
+      (account) => account.isGroup && account.isActive !== false && account.id,
+    );
+  }, [selectedTypeAccounts]);
+
+  // ===================================================
+  // Selected Parent
+  // ===================================================
+
+  const selectedParent = useMemo(() => {
+    return accounts.find(
+      (account) => String(account.id || "") === form.parentId,
+    );
+  }, [accounts, form.parentId]);
+
+  // ===================================================
+  // Suggested Code
+  // ===================================================
+
+  const suggestedCode = useMemo(() => {
+    return generateAccountCode(selectedParent, accounts, selectedCategory);
+  }, [selectedParent, accounts, selectedCategory]);
+
+  // ===================================================
+  // Handle Change
+  // ===================================================
+
+  const handleChange = (
+    e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
+  ) => {
+    const { name, value } = e.target;
+
+    setForm((previous) => {
+      if (name === "type") {
+        return {
+          ...previous,
+          type: value as AccountType,
+          parentId: "",
+        };
+      }
+
+      return {
+        ...previous,
+        [name]: value,
+      };
+    });
+  };
+
+  // ===================================================
+  // Add Default Accounts
+  // ===================================================
+
+  const addDefaultAccounts = async () => {
+    if (!user?.companyId) {
+      toast.error("لم يتم تحديد المؤسسة");
+      return;
+    }
+
     try {
       setAddingDefaults(true);
 
-      const addedCount = await addDefaultAccounts();
+      // جلب أحدث البيانات قبل الإضافة
+      const existingAccounts = await getAccounts(user.companyId);
 
-      await fetchAccounts();
-
-      toast.success(`تمت إضافة ${addedCount} حسابات رئيسية بنجاح`);
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "تعذرت إضافة الحسابات الرئيسية",
+      const companyAccounts = existingAccounts.filter(
+        (account) => String(account.companyId) === String(user.companyId),
       );
 
-      await fetchAccounts();
+      const existingCodes = new Set(
+        companyAccounts.map((account) => String(account.code)),
+      );
+
+      const missingAccounts = defaultAccounts.filter(
+        (account) => !existingCodes.has(account.code),
+      );
+
+      if (missingAccounts.length === 0) {
+        setAccounts(sortAccounts(companyAccounts));
+
+        toast.info("جميع الحسابات الافتراضية موجودة بالفعل");
+        return;
+      }
+
+      // خريطة تربط رقم الحساب بمعرفه
+      const accountIds = new Map<string, string>();
+
+      // الاحتفاظ بمعرفات الحسابات الموجودة
+      defaultAccounts.forEach((account) => {
+        const existing = companyAccounts.find(
+          (item) => String(item.code) === account.code,
+        );
+
+        if (existing?.id) {
+          accountIds.set(account.code, String(existing.id));
+        }
+      });
+
+      // إنشاء معرفات للحسابات الجديدة
+      missingAccounts.forEach((account) => {
+        accountIds.set(account.code, crypto.randomUUID());
+      });
+
+      // ترتيب الحسابات حسب المستوى لضمان إنشاء الأب قبل الابن
+      const sortedMissing = [...missingAccounts].sort(
+        (a, b) => a.level - b.level,
+      );
+
+      let created = 0;
+
+      for (const account of sortedMissing) {
+        const parentId = account.parentCode
+          ? accountIds.get(account.parentCode)
+          : undefined;
+
+        // لا ننشئ حساباً فرعياً إذا لم نجد الأب
+        if (account.parentCode && !parentId) {
+          throw new Error(`تعذر تحديد الحساب الأب للحساب ${account.code}`);
+        }
+
+        const accountData = {
+          id: accountIds.get(account.code),
+
+          companyId: user.companyId,
+
+          code: account.code,
+          name: account.name,
+
+          type: account.type,
+          accountType: account.type,
+
+          nature: account.nature,
+
+          parentId: parentId || null,
+          parentCode: account.parentCode,
+
+          level: account.level,
+
+          isGroup: account.isGroup,
+          allowPosting: account.allowPosting,
+
+          isActive: true,
+          balance: 0,
+
+          isSystem: true,
+
+          createdAt: new Date().toISOString(),
+        };
+
+        await createAccountApi(accountData);
+
+        created++;
+      }
+
+      await fetchAccounts(user.companyId);
+
+      toast.success(`تمت إضافة ${created} حساباً بنجاح`);
+    } catch (error) {
+      console.error("Add default accounts error:", error);
+
+      // تحديث البيانات لمعرفة ما تم حفظه فعلياً
+      try {
+        await fetchAccounts(user.companyId);
+      } catch (fetchError) {
+        console.error(fetchError);
+      }
+
+      toast.error(
+        "حدث خطأ أثناء إضافة الحسابات. تحقق من الحسابات المحفوظة قبل إعادة المحاولة.",
+      );
     } finally {
       setAddingDefaults(false);
     }
   };
 
-  // إضافة حساب جديد
-  const handleSubmit = async (data: AccountFormData) => {
-    if (!companyId) {
-      toast.error("لم يتم تحديد الشركة الحالية");
+  // ===================================================
+  // Create Account
+  // ===================================================
+
+  const createAccount = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!user?.companyId) {
+      toast.error("المؤسسة غير محددة");
       return;
     }
 
-    if (missingDefaultAccounts.length > 0) {
-      toast.error("يجب إضافة الحسابات الرئيسية أولاً");
+    const name = form.name.trim();
+
+    if (!name) {
+      toast.error("يرجى إدخال اسم الحساب");
       return;
+    }
+
+    // التحقق من تكرار رقم الحساب
+    const codeExists = accounts.some(
+      (account) => String(account.code) === String(suggestedCode),
+    );
+
+    if (codeExists) {
+      toast.error(
+        "رقم الحساب المقترح موجود بالفعل. حدّث البيانات وحاول مرة أخرى.",
+      );
+
+      return;
+    }
+
+    // التحقق من الحساب الأب
+    if (form.parentId && !selectedParent) {
+      toast.error("الحساب الأب المحدد غير موجود");
+      return;
+    }
+
+    if (selectedParent && !selectedParent.isGroup) {
+      toast.error("لا يمكن إضافة حساب فرعي تحت حساب تفصيلي");
+      return;
+    }
+
+    if (selectedParent && getAccountType(selectedParent) !== form.type) {
+      toast.error("يجب أن يكون الحساب الأب من التصنيف نفسه");
+      return;
+    }
+
+    // التحقق من وجود الحساب الرئيسي
+    if (!selectedParent) {
+      const rootExists = accounts.some(
+        (account) =>
+          String(account.code) === selectedCategory.code &&
+          getAccountType(account) === form.type,
+      );
+
+      if (rootExists) {
+        toast.error(
+          "هذا التصنيف موجود بالفعل. اختر حساباً أباً لإضافة الحساب تحته.",
+        );
+
+        return;
+      }
     }
 
     try {
-      await createAccount(data);
+      setSaving(true);
 
-      toast.success("تمت إضافة الحساب بنجاح");
+      const accountData = {
+        companyId: user.companyId,
 
-      router.push("/erp/accounting/accounts");
+        code: suggestedCode,
+        name,
+
+        type: form.type,
+        accountType: form.type,
+
+        nature: selectedCategory.nature,
+
+        parentId: selectedParent?.id || null,
+        parentCode: selectedParent?.code,
+
+        level: selectedParent ? (selectedParent.level || 1) + 1 : 1,
+
+        isGroup: form.isGroup,
+        allowPosting: !form.isGroup,
+
+        isActive: true,
+        balance: 0,
+
+        description: form.description.trim(),
+
+        isSystem: false,
+
+        createdAt: new Date().toISOString(),
+      };
+
+      await createAccountApi(accountData);
+
+      toast.success(`تم إنشاء الحساب ${suggestedCode} بنجاح`);
+
+      setForm((previous) => ({
+        ...previous,
+        name: "",
+        description: "",
+      }));
+
+      await fetchAccounts(user.companyId);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "حدث خطأ أثناء إضافة الحساب",
-      );
+      console.error("Create account error:", error);
+
+      toast.error("حدث خطأ أثناء إنشاء الحساب");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleCancel = () => {
-    router.push("/erp/accounting/accounts");
-  };
+  // ===================================================
+  // Render Account Tree
+  // ===================================================
 
-  // تحميل المستخدم
-  if (userLoading) {
-    return (
-      <div
-        dir="rtl"
-        className="flex min-h-screen items-center justify-center bg-slate-50"
-      >
-        <div className="text-center">
-          <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />
-
-          <p className="text-sm text-slate-500">
-            جارٍ تحميل بيانات المستخدم...
-          </p>
-        </div>
-      </div>
+  const renderAccountTree = (
+    parentId: string,
+    depth = 0,
+    visited: Set<string> = new Set(),
+  ): ReactNode => {
+    const children = sortAccounts(
+      accounts.filter(
+        (account) => String(account.parentId || "") === parentId && account.id,
+      ),
     );
-  }
 
-  // خطأ المستخدم
-  if (userError || !companyId) {
-    return (
-      <div
-        dir="rtl"
-        className="flex min-h-screen items-center justify-center bg-slate-50 p-5"
-      >
-        <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
-          <h2 className="font-bold text-red-600">تعذر فتح صفحة إضافة الحساب</h2>
+    return children.map((account) => {
+      const accountId = String(account.id);
 
-          <p className="mt-3 text-sm text-slate-600">
-            {userError || "لم يتم تحديد الشركة الحالية"}
-          </p>
+      // منع الدوران في العلاقات الهرمية
+      if (visited.has(accountId)) {
+        return null;
+      }
 
-          <button
-            onClick={handleCancel}
-            className="mt-5 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white"
+      const nextVisited = new Set(visited);
+
+      nextVisited.add(accountId);
+
+      return (
+        <div key={accountId}>
+          <div
+            className="flex items-center gap-3 border-b border-gray-100 px-4 py-3 text-sm"
+            style={{
+              paddingRight: `${16 + depth * 24}px`,
+            }}
           >
-            العودة
-          </button>
-        </div>
-      </div>
-    );
-  }
+            {account.isGroup ? (
+              <FiFolder className="shrink-0 text-amber-500" />
+            ) : (
+              <FiDollarSign className="shrink-0 text-green-600" />
+            )}
 
-  return (
-    <div
-      dir="rtl"
-      className="min-h-screen space-y-6 bg-slate-50 p-5 text-slate-800"
-    >
-      {/* العنوان */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={handleCancel}
-          className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100"
-          title="العودة"
-        >
-          <FiArrowRight size={20} />
-        </button>
-
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">إضافة حساب جديد</h1>
-
-          <p className="mt-1 text-sm text-slate-500">
-            إضافة حساب جديد إلى دليل الحسابات
-          </p>
-
-          <p className="mt-2 text-sm text-blue-700">
-            الشركة:{" "}
-            <span className="font-semibold">
-              {currentUser?.companyname || "الشركة الحالية"}
+            <span className="min-w-14 font-bold text-blue-700" dir="ltr">
+              {account.code}
             </span>
-          </p>
-        </div>
-      </div>
 
-      {/* النموذج */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-6 flex items-center gap-3 border-b border-slate-200 pb-4">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-            <FiPlus size={22} />
+            <span className="flex-1 font-medium text-gray-700">
+              {account.name}
+            </span>
+
+            <span className="hidden text-xs text-gray-400 sm:block">
+              {account.nature === "debit" ? "مدين" : "دائن"}
+            </span>
+
+            <span className="rounded-md bg-gray-100 px-2 py-1 text-[10px] text-gray-500">
+              {account.isGroup ? "تجميعي" : "تفصيلي"}
+            </span>
           </div>
 
-          <div>
-            <h2 className="font-bold text-slate-800">بيانات الحساب</h2>
+          {account.isGroup &&
+            renderAccountTree(accountId, depth + 1, nextVisited)}
+        </div>
+      );
+    });
+  };
 
-            <p className="mt-1 text-xs text-slate-500">
-              سيتم إنشاء رقم الحساب تلقائياً حسب موقعه في شجرة الحسابات
+  // ===================================================
+  // Loading
+  // ===================================================
+
+  if (loading) {
+    return (
+      <main
+        dir="rtl"
+        className="flex min-h-screen items-center justify-center bg-[#F4F6FA]"
+      >
+        <div className="flex items-center gap-3 text-[#0E1F33]">
+          <FiRefreshCw className="animate-spin text-xl" />
+          جاري تحميل الحسابات...
+        </div>
+      </main>
+    );
+  }
+
+  // ===================================================
+  // User Not Found
+  // ===================================================
+
+  if (!user) {
+    return (
+      <main
+        dir="rtl"
+        className="flex min-h-screen items-center justify-center bg-[#F4F6FA]"
+      >
+        <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+          <h2 className="font-bold text-red-600">تعذر تحديد المؤسسة الحالية</h2>
+
+          <button
+            onClick={() => router.push("/erp/dashboard")}
+            className="mt-5 rounded-xl bg-[#0E1F33] px-6 py-3 text-sm font-bold text-white"
+          >
+            العودة للرئيسية
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  // ===================================================
+  // UI
+  // ===================================================
+
+  return (
+    <main dir="rtl" className="min-h-screen bg-[#F4F6FA] px-4 py-8 sm:px-6">
+      <div className="mx-auto max-w-5xl">
+        {/* Header */}
+
+        <div className="mb-7 flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+          <div>
+            <button
+              onClick={() => router.back()}
+              className="mb-4 flex items-center gap-2 text-sm text-gray-500 hover:text-[#0E1F33]"
+            >
+              <FiArrowRight />
+              العودة
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#0E1F33] text-2xl text-white">
+                <FiBookOpen />
+              </div>
+
+              <div>
+                <h1 className="text-2xl font-bold text-[#0E1F33]">
+                  دليل الحسابات
+                </h1>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  إنشاء وإدارة الحسابات المحاسبية
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-100 bg-white px-5 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">المؤسسة الحالية</p>
+
+            <p className="mt-1 font-bold text-[#0E1F33]">
+              {user.companyname || "المؤسسة"}
             </p>
           </div>
         </div>
 
-        {loading ? (
-          <div className="py-10 text-center text-slate-500">
-            جارٍ تحميل الحسابات...
-          </div>
-        ) : missingDefaultAccounts.length > 0 ? (
-          /* الحسابات الرئيسية الناقصة */
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
-            <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
-                <FiLayers size={22} />
-              </div>
+        {/* Default Accounts */}
 
-              <div>
-                <h3 className="font-bold text-amber-900">
-                  يجب تجهيز دليل الحسابات أولاً
-                </h3>
+        <div className="mb-7 rounded-3xl border border-blue-100 bg-white p-6 shadow-sm">
+          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="flex items-center gap-2 font-bold text-[#0E1F33]">
+                <FiLayers className="text-blue-600" />
+                دليل الحسابات الافتراضي
+              </h2>
 
-                <p className="mt-1 text-sm leading-6 text-amber-800">
-                  لم تتم إضافة بعض الحسابات الرئيسية لهذه الشركة. أضفها أولاً
-                  حتى تتمكن من اختيار الحساب الأب عند إنشاء الحسابات الفرعية.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {missingDefaultAccounts.map((account) => (
-                <div
-                  key={account.code}
-                  className="flex items-center gap-3 rounded-lg border border-amber-200 bg-white p-3"
-                >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 font-bold text-slate-700">
-                    {account.code}
-                  </span>
-
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {account.name}
-                    </p>
-
-                    <p className="text-xs text-slate-400">حساب رئيسي</p>
-                  </div>
-                </div>
-              ))}
+              <p className="mt-2 text-sm leading-7 text-gray-500">
+                إضافة الهيكل المحاسبي الأساسي تلقائياً، مع ترقيم الحسابات وتحديد
+                طبيعتها وربط الحسابات الفرعية بالحسابات الرئيسية.
+              </p>
             </div>
 
             <button
-              onClick={handleAddDefaults}
+              onClick={addDefaultAccounts}
               disabled={addingDefaults}
-              className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              <FiPlus size={18} />
+              {addingDefaults ? (
+                <FiRefreshCw className="animate-spin" />
+              ) : (
+                <FiPlus />
+              )}
 
-              {addingDefaults
-                ? "جارٍ إضافة الحسابات..."
-                : "إضافة الحسابات الرئيسية"}
+              {addingDefaults ? "جاري الإضافة..." : "إضافة الحسابات الافتراضية"}
             </button>
           </div>
-        ) : (
-          /* نموذج الحساب */
-          <AccountForm
-            accounts={accounts}
-            onSubmit={handleSubmit}
-            onCancel={handleCancel}
-          />
-        )}
+        </div>
+
+        {/* Statistics */}
+
+        <div className="mb-7 grid gap-4 sm:grid-cols-3">
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">إجمالي الحسابات</p>
+
+            <p className="mt-3 text-2xl font-bold text-[#0E1F33]">
+              {accounts.length}
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">الحسابات التجميعية</p>
+
+            <p className="mt-3 text-2xl font-bold text-[#0E1F33]">
+              {accounts.filter((account) => account.isGroup).length}
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">الحسابات التفصيلية</p>
+
+            <p className="mt-3 text-2xl font-bold text-[#0E1F33]">
+              {
+                accounts.filter(
+                  (account) =>
+                    !account.isGroup && account.allowPosting !== false,
+                ).length
+              }
+            </p>
+          </div>
+        </div>
+
+        {/* Create Form */}
+
+        <div className="mb-7 overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm">
+          <div className="border-b border-gray-100 px-6 py-5">
+            <h2 className="font-bold text-[#0E1F33]">إضافة حساب جديد</h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              اختر التصنيف والحساب الأب وسيولد النظام رقم الحساب تلقائياً.
+            </p>
+          </div>
+
+          <form onSubmit={createAccount} className="space-y-6 p-6 sm:p-8">
+            {/* Category */}
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-gray-700">
+                التصنيف الرئيسي
+              </label>
+
+              <select
+                name="type"
+                value={form.type}
+                onChange={handleChange}
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-sm outline-none focus:border-blue-500"
+              >
+                {accountCategories.map((category) => (
+                  <option key={category.value} value={category.value}>
+                    {category.code} - {category.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Parent */}
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-gray-700">
+                الحساب الأب
+              </label>
+
+              <select
+                name="parentId"
+                value={form.parentId}
+                onChange={handleChange}
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="">
+                  {accounts.some(
+                    (account) =>
+                      account.code === selectedCategory.code &&
+                      getAccountType(account) === form.type,
+                  )
+                    ? "اختر الحساب الأب"
+                    : "إنشاء الحساب الرئيسي للتصنيف"}
+                </option>
+
+                {parentAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.code} - {account.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Suggested Code */}
+
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
+              <p className="text-xs text-blue-600">
+                رقم الحساب الذي سيولده النظام
+              </p>
+
+              <p
+                className="mt-2 text-3xl font-bold tracking-wider text-[#0E1F33]"
+                dir="ltr"
+              >
+                {suggestedCode}
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-3 text-xs">
+                <span className="rounded-lg bg-white px-3 py-2 text-gray-600">
+                  الطبيعة:{" "}
+                  <strong>
+                    {selectedCategory.nature === "debit" ? "مدين" : "دائن"}
+                  </strong>
+                </span>
+
+                <span className="rounded-lg bg-white px-3 py-2 text-gray-600">
+                  التصنيف: <strong>{selectedCategory.label}</strong>
+                </span>
+              </div>
+            </div>
+
+            {/* Name */}
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-gray-700">
+                اسم الحساب
+              </label>
+
+              <input
+                name="name"
+                value={form.name}
+                onChange={handleChange}
+                placeholder="مثال: الصندوق الرئيسي"
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-sm outline-none focus:border-blue-500"
+                required
+              />
+            </div>
+
+            {/* Group */}
+
+            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-gray-200 p-4">
+              <input
+                type="checkbox"
+                checked={form.isGroup}
+                onChange={(e) =>
+                  setForm((previous) => ({
+                    ...previous,
+                    isGroup: e.target.checked,
+                  }))
+                }
+                className="h-4 w-4 accent-blue-600"
+              />
+
+              <div>
+                <p className="text-sm font-semibold text-gray-700">
+                  حساب تجميعي
+                </p>
+
+                <p className="mt-1 text-xs text-gray-400">
+                  يمكن إضافة حسابات فرعية تحته، ولا يستخدم في القيود اليومية.
+                </p>
+              </div>
+            </label>
+
+            {/* Nature */}
+
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <p className="text-sm font-semibold text-gray-700">
+                طبيعة الحساب
+              </p>
+
+              <p className="mt-2 text-sm text-gray-600">
+                {selectedCategory.nature === "debit"
+                  ? "مدين (Debit)"
+                  : "دائن (Credit)"}
+              </p>
+
+              <p className="mt-1 text-xs text-gray-400">
+                يحدد النظام طبيعة الحساب تلقائياً بناءً على تصنيفه.
+              </p>
+            </div>
+
+            {/* Description */}
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-gray-700">
+                وصف الحساب (اختياري)
+              </label>
+
+              <textarea
+                name="description"
+                value={form.description}
+                onChange={handleChange}
+                rows={3}
+                placeholder="وصف الحساب..."
+                className="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-sm outline-none focus:border-blue-500"
+              />
+            </div>
+
+            {/* Submit */}
+
+            <div className="flex flex-col-reverse gap-3 border-t border-gray-100 pt-6 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="rounded-xl border border-gray-200 px-6 py-3.5 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                إلغاء
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#0E1F33] px-6 py-3.5 font-bold text-white hover:bg-blue-900 disabled:opacity-50"
+              >
+                {saving ? <FiRefreshCw className="animate-spin" /> : <FiSave />}
+
+                {saving ? "جاري الحفظ..." : "حفظ الحساب"}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* Accounts Tree */}
+
+        <div className="overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm">
+          <div className="border-b border-gray-100 px-6 py-5">
+            <h2 className="font-bold text-[#0E1F33]">شجرة الحسابات</h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              الحسابات المسجلة في المؤسسة مرتبة حسب التسلسل الهرمي.
+            </p>
+          </div>
+
+          {accounts.length === 0 ? (
+            <div className="p-10 text-center text-sm text-gray-400">
+              لا توجد حسابات حتى الآن. يمكنك إضافة دليل الحسابات الافتراضي.
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {accountCategories.map((category) => {
+                const roots = sortAccounts(
+                  accounts.filter(
+                    (account) =>
+                      getAccountType(account) === category.value &&
+                      !account.parentId,
+                  ),
+                );
+
+                if (roots.length === 0) return null;
+
+                return (
+                  <div key={category.value}>
+                    <div className="bg-gray-50 px-5 py-3 font-bold text-[#0E1F33]">
+                      {category.code} - {category.label}
+                      <span className="mr-2 text-xs font-normal text-gray-400">
+                        {category.nature === "debit" ? "مدين" : "دائن"}
+                      </span>
+                    </div>
+
+                    {roots.map((root) => (
+                      <div key={root.id}>
+                        <div className="flex items-center gap-3 border-b border-gray-100 px-4 py-3 text-sm">
+                          {root.isGroup ? (
+                            <FiFolder className="text-amber-500" />
+                          ) : (
+                            <FiDollarSign className="text-green-600" />
+                          )}
+
+                          <span className="font-bold text-blue-700" dir="ltr">
+                            {root.code}
+                          </span>
+
+                          <span className="flex-1 font-semibold text-gray-700">
+                            {root.name}
+                          </span>
+
+                          <span className="rounded-md bg-gray-100 px-2 py-1 text-[10px] text-gray-500">
+                            {root.isGroup ? "تجميعي" : "تفصيلي"}
+                          </span>
+                        </div>
+
+                        {root.id &&
+                          root.isGroup &&
+                          renderAccountTree(
+                            String(root.id),
+                            1,
+                            new Set([String(root.id)]),
+                          )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+
+              {/* الحسابات التي لا تملك حساباً أباً صالحاً */}
+
+              {accounts.some((account) => {
+                if (!account.parentId) return false;
+
+                return !accounts.some(
+                  (parent) => String(parent.id) === String(account.parentId),
+                );
+              }) && (
+                <div>
+                  <div className="bg-amber-50 px-5 py-3 font-bold text-amber-800">
+                    حسابات تحتاج إلى مراجعة
+                  </div>
+
+                  {sortAccounts(
+                    accounts.filter((account) => {
+                      if (!account.parentId) return false;
+
+                      return !accounts.some(
+                        (parent) =>
+                          String(parent.id) === String(account.parentId),
+                      );
+                    }),
+                  ).map((account) => (
+                    <div
+                      key={account.id}
+                      className="flex items-center gap-3 border-b border-gray-100 px-4 py-3 text-sm"
+                    >
+                      <FiDollarSign className="text-amber-500" />
+
+                      <span className="font-bold text-blue-700" dir="ltr">
+                        {account.code}
+                      </span>
+
+                      <span className="flex-1 text-gray-700">
+                        {account.name}
+                      </span>
+
+                      <span className="text-xs text-amber-600">
+                        الحساب الأب غير موجود
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+
+        <p className="mt-6 text-center text-xs text-gray-400">
+          WEZZAN ERP — Accounting Management
+        </p>
       </div>
-    </div>
+    </main>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 
 import { Account, AccountFormData, AccountType } from "../types";
 
@@ -43,7 +44,14 @@ function isDescendant(
   accounts: Account[],
   accountId: number,
   parentId: number,
+  visited = new Set<number>(),
 ): boolean {
+  if (visited.has(accountId)) {
+    return false;
+  }
+
+  visited.add(accountId);
+
   const account = accounts.find((item) => item.id === accountId);
 
   if (!account || account.parentId === null) {
@@ -54,7 +62,7 @@ function isDescendant(
     return true;
   }
 
-  return isDescendant(accounts, account.parentId, parentId);
+  return isDescendant(accounts, account.parentId, parentId, visited);
 }
 
 // ترتيب الحسابات حسب الشجرة الهرمية
@@ -194,7 +202,7 @@ export default function AccountForm({
     return accounts.some((account) => account.parentId === initialData.id);
   }, [accounts, initialData?.id]);
 
-  // تعبئة النموذج عند التعديل
+  // تعبئة النموذج عند الإضافة أو التعديل
   useEffect(() => {
     if (initialData) {
       setFormData({
@@ -209,11 +217,11 @@ export default function AccountForm({
         description: initialData.description || "",
       });
     } else {
-      setFormData(emptyForm);
+      setFormData({ ...emptyForm });
     }
 
     setError("");
-  }, [initialData?.id]);
+  }, [initialData]);
 
   // الحسابات المتاحة لاختيار الأب
   const availableParents = useMemo(() => {
@@ -235,26 +243,27 @@ export default function AccountForm({
 
   // توليد رقم الحساب تلقائياً عند اختيار الأب
   useEffect(() => {
+    // في وضع التعديل نحافظ على رقم الحساب الأصلي
+    if (isEditing) {
+      return;
+    }
+
     if (!formData.parentId) {
       setFormData((prev) => ({
         ...prev,
-        code: initialData?.code || "",
+        code: "",
       }));
 
       return;
     }
 
-    const newCode = generateAccountCode(
-      accounts,
-      formData.parentId,
-      initialData?.id,
-    );
+    const newCode = generateAccountCode(accounts, formData.parentId);
 
     setFormData((prev) => ({
       ...prev,
       code: newCode,
     }));
-  }, [accounts, formData.parentId, initialData?.id]);
+  }, [accounts, formData.parentId, isEditing]);
 
   // تغيير نوع الحساب
   const handleTypeChange = (type: AccountType) => {
@@ -285,6 +294,7 @@ export default function AccountForm({
         code: "",
       }));
 
+      setError("");
       return;
     }
 
@@ -300,12 +310,17 @@ export default function AccountForm({
       return;
     }
 
+    if (!parent.isActive) {
+      setError("لا يمكن اختيار حساب أب غير فعال.");
+      return;
+    }
+
     if (parent.type !== formData.type) {
       setError("يجب أن يكون نوع الحساب مطابقاً لنوع الحساب الأب.");
       return;
     }
 
-    const newCode = generateAccountCode(accounts, parentId, initialData?.id);
+    const newCode = generateAccountCode(accounts, parentId);
 
     if (!newCode) {
       setError(
@@ -360,6 +375,11 @@ export default function AccountForm({
 
     if (!parent) {
       setError("الحساب الأب غير موجود.");
+      return false;
+    }
+
+    if (!parent.isActive) {
+      setError("الحساب الأب غير فعال.");
       return false;
     }
 
@@ -424,7 +444,7 @@ export default function AccountForm({
       return false;
     }
 
-    // ضبط قبول القيود تلقائياً
+    // ضبط قبول القيود
     if (formData.isGroup && formData.allowPosting) {
       setError("الحساب التجميعي لا يمكن أن يقبل القيود.");
       return false;
@@ -439,7 +459,7 @@ export default function AccountForm({
   };
 
   // حفظ الحساب
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (!validateForm()) return;
@@ -616,7 +636,7 @@ export default function AccountForm({
         </p>
       </div>
 
-      {/* نوع الحساب: تجميعي أو نهائي */}
+      {/* تصنيف الحساب */}
       <div>
         <label className={labelClass}>تصنيف الحساب</label>
 

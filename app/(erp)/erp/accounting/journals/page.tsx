@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
@@ -14,12 +15,23 @@ import {
   FiClock,
   FiEye,
   FiEdit,
+  FiUser,
+  FiCalendar,
 } from "react-icons/fi";
 
 import { toast } from "sonner";
 
+import { saveActivityLog } from "@/app/(erp)/erp/lib/activity";
+
 // JSON Server
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
 
 // أنواع البيانات
 
@@ -42,11 +54,26 @@ interface Journal {
   description: string;
   reference?: string;
   status: JournalStatus;
+
   totalDebit: number;
   totalCredit: number;
+
   companyId: string;
+
   createdBy?: string;
+  createdById?: string;
+  createdByName?: string;
   createdAt?: string;
+
+  updatedBy?: string;
+  updatedById?: string;
+  updatedByName?: string;
+  updatedAt?: string;
+
+  postedBy?: string;
+  postedById?: string;
+  postedByName?: string;
+  postedAt?: string;
 }
 
 interface JournalLine {
@@ -65,6 +92,7 @@ interface JournalFilters {
   status: FilterStatus;
 }
 
+// تنسيق العملة
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat("ar-YE", {
     minimumFractionDigits: 2,
@@ -72,14 +100,36 @@ const formatCurrency = (value: number) => {
   }).format(value || 0);
 };
 
-const formatDate = (date: string) => {
+// تنسيق التاريخ
+const formatDate = (date?: string) => {
   if (!date) return "-";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "-";
 
   return new Intl.DateTimeFormat("ar-YE", {
     year: "numeric",
     month: "long",
     day: "numeric",
-  }).format(new Date(date));
+  }).format(parsedDate);
+};
+
+// تنسيق الوقت
+const formatDateTime = (date?: string) => {
+  if (!date) return "-";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("ar-YE", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsedDate);
 };
 
 // قراءة Cookie
@@ -123,8 +173,13 @@ export default function JournalsPage() {
     status: "all",
   });
 
+  // منع تكرار تسجيل مشاهدة الصفحة
+  const activityLogged = useRef(false);
+
   // تحديد المستخدم والشركة
   useEffect(() => {
+    let mounted = true;
+
     const getCurrentUser = async () => {
       try {
         setUserLoading(true);
@@ -136,11 +191,11 @@ export default function JournalsPage() {
           throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
         }
 
-        const response = await axios.get<CurrentUser[]>(`${API_URL}/users`, {
+        const response = await api.get<CurrentUser[]>("/users", {
           params: { username },
         });
 
-        const user = response.data[0];
+        const user = response.data.find((item) => item.username === username);
 
         if (!user) {
           throw new Error("المستخدم غير موجود");
@@ -154,8 +209,10 @@ export default function JournalsPage() {
           throw new Error("المستخدم غير مرتبط بأي شركة");
         }
 
+        if (!mounted) return;
+
         setCurrentUser(user);
-        setCompanyId(user.companyId);
+        setCompanyId(String(user.companyId));
       } catch (err) {
         const message = axios.isAxiosError(err)
           ? err.response?.data?.message || "تعذر الاتصال بـ JSON Server"
@@ -163,14 +220,38 @@ export default function JournalsPage() {
             ? err.message
             : "حدث خطأ غير متوقع";
 
-        setUserError(message);
+        if (mounted) {
+          setUserError(message);
+        }
       } finally {
-        setUserLoading(false);
+        if (mounted) {
+          setUserLoading(false);
+        }
       }
     };
 
-    getCurrentUser();
+    void getCurrentUser();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  // تسجيل مشاهدة صفحة القيود
+  useEffect(() => {
+    if (!currentUser || !companyId || activityLogged.current) {
+      return;
+    }
+
+    activityLogged.current = true;
+
+    void saveActivityLog({
+      action: "view",
+      module: "accounting.journals",
+      description: "عرض صفحة القيود اليومية",
+      recordName: "القيود اليومية",
+    });
+  }, [currentUser, companyId]);
 
   // جلب القيود وتفاصيلها
   const fetchJournals = useCallback(async () => {
@@ -181,22 +262,22 @@ export default function JournalsPage() {
       setError("");
 
       const [journalsResponse, linesResponse] = await Promise.all([
-        axios.get<Journal[]>(`${API_URL}/journals`, {
+        api.get<Journal[]>("/journals", {
           params: { companyId },
         }),
 
-        axios.get<JournalLine[]>(`${API_URL}/journalLines`, {
+        api.get<JournalLine[]>("/journalLines", {
           params: { companyId },
         }),
       ]);
 
       // التأكد من الشركة الحالية
       const companyJournals = journalsResponse.data.filter(
-        (journal) => journal.companyId === companyId,
+        (journal) => String(journal.companyId) === companyId,
       );
 
       const companyLines = linesResponse.data.filter(
-        (line) => line.companyId === companyId,
+        (line) => String(line.companyId) === companyId,
       );
 
       setJournals(companyJournals);
@@ -220,13 +301,20 @@ export default function JournalsPage() {
     }
   }, [companyId, fetchJournals]);
 
-  // حسابات الشركة فقط
-  const companyJournals = useMemo(
-    () => journals.filter((journal) => journal.companyId === companyId),
-    [journals, companyId],
-  );
+  // قيود الشركة الحالية
+  const companyJournals = useMemo(() => {
+    return journals.filter(
+      (journal) => String(journal.companyId) === companyId,
+    );
+  }, [journals, companyId]);
 
-  // الإحصائيات
+  // القيود المرحلة فقط
+  const postedJournals = useMemo(() => {
+    return companyJournals.filter((journal) => journal.status === "posted");
+  }, [companyJournals]);
+
+  // حساب الإحصائيات من سطور القيود المرحلة
+  // حتى تتوافق مع البيانات المستخدمة في القوائم المالية
   const stats = useMemo(() => {
     const total = companyJournals.length;
 
@@ -234,17 +322,29 @@ export default function JournalsPage() {
       (journal) => journal.status === "draft",
     ).length;
 
-    const posted = companyJournals.filter(
-      (journal) => journal.status === "posted",
-    ).length;
+    const posted = postedJournals.length;
 
     const cancelled = companyJournals.filter(
       (journal) => journal.status === "cancelled",
     ).length;
 
-    const totalDebit = companyJournals
-      .filter((journal) => journal.status === "posted")
-      .reduce((sum, journal) => sum + Number(journal.totalDebit || 0), 0);
+    const postedIds = new Set(
+      postedJournals.map((journal) => String(journal.id)),
+    );
+
+    const postedLines = journalLines.filter((line) =>
+      postedIds.has(String(line.journalId)),
+    );
+
+    const totalDebit = postedLines.reduce(
+      (sum, line) => sum + Number(line.debit || 0),
+      0,
+    );
+
+    const totalCredit = postedLines.reduce(
+      (sum, line) => sum + Number(line.credit || 0),
+      0,
+    );
 
     return {
       total,
@@ -252,8 +352,9 @@ export default function JournalsPage() {
       posted,
       cancelled,
       totalDebit,
+      totalCredit,
     };
-  }, [companyJournals]);
+  }, [companyJournals, postedJournals, journalLines]);
 
   // البحث والتصفية
   const filteredJournals = useMemo(() => {
@@ -261,9 +362,19 @@ export default function JournalsPage() {
       const search = filters.search.trim().toLowerCase();
 
       const searchMatch =
-        String(journal.journalNumber).toLowerCase().includes(search) ||
-        journal.description.toLowerCase().includes(search) ||
+        String(journal.journalNumber || "")
+          .toLowerCase()
+          .includes(search) ||
+        String(journal.description || "")
+          .toLowerCase()
+          .includes(search) ||
         String(journal.reference || "")
+          .toLowerCase()
+          .includes(search) ||
+        String(journal.createdByName || "")
+          .toLowerCase()
+          .includes(search) ||
+        String(journal.createdBy || "")
           .toLowerCase()
           .includes(search);
 
@@ -279,6 +390,11 @@ export default function JournalsPage() {
     return journalLines.filter(
       (line) => String(line.journalId) === String(journalId),
     ).length;
+  };
+
+  // معلومات منشئ القيد
+  const getCreatorName = (journal: Journal) => {
+    return journal.createdByName || journal.createdBy || "غير محدد";
   };
 
   // حالة القيد
@@ -310,13 +426,18 @@ export default function JournalsPage() {
   };
 
   // عرض القيد
-  const handleView = (id: number | string) => {
-    router.push(`/erp/accounting/journals/${id}`);
+  const handleView = (journal: Journal) => {
+    if (String(journal.companyId) !== companyId) {
+      toast.error("لا يمكنك عرض قيد تابع لشركة أخرى");
+      return;
+    }
+
+    router.push(`/erp/accounting/journals/${journal.id}`);
   };
 
   // تعديل القيد
   const handleEdit = (journal: Journal) => {
-    if (journal.companyId !== companyId) {
+    if (String(journal.companyId) !== companyId) {
       toast.error("لا يمكنك تعديل قيد تابع لشركة أخرى");
       return;
     }
@@ -470,6 +591,39 @@ export default function JournalsPage() {
         </div>
       </div>
 
+      {/* ملخص التوازن */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm text-slate-500">إجمالي المدين المرحّل</p>
+
+          <p className="mt-2 text-lg font-bold text-blue-700">
+            {formatCurrency(stats.totalDebit)}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm text-slate-500">إجمالي الدائن المرحّل</p>
+
+          <p className="mt-2 text-lg font-bold text-green-700">
+            {formatCurrency(stats.totalCredit)}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm text-slate-500">الفرق بين المدين والدائن</p>
+
+          <p
+            className={`mt-2 text-lg font-bold ${
+              Math.abs(stats.totalDebit - stats.totalCredit) < 0.01
+                ? "text-green-700"
+                : "text-red-600"
+            }`}
+          >
+            {formatCurrency(stats.totalDebit - stats.totalCredit)}
+          </p>
+        </div>
+      </div>
+
       {/* البحث والتصفية */}
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -487,7 +641,7 @@ export default function JournalsPage() {
                   search: e.target.value,
                 }))
               }
-              placeholder="ابحث برقم القيد أو البيان أو المرجع..."
+              placeholder="ابحث برقم القيد أو البيان أو المرجع أو المستخدم..."
               className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-3 pr-10 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </div>
@@ -503,8 +657,11 @@ export default function JournalsPage() {
             className="rounded-lg border border-slate-300 bg-white p-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
             <option value="all">جميع حالات القيود</option>
+
             <option value="draft">مسودة</option>
+
             <option value="posted">مرحّل</option>
+
             <option value="cancelled">ملغي</option>
           </select>
         </div>
@@ -567,7 +724,7 @@ export default function JournalsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1000px] text-right text-sm">
+            <table className="w-full min-w-[1250px] text-right text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
                   <th className="px-5 py-4 font-semibold">رقم القيد</th>
@@ -581,6 +738,10 @@ export default function JournalsPage() {
                   <th className="px-5 py-4 font-semibold">المدين</th>
 
                   <th className="px-5 py-4 font-semibold">الدائن</th>
+
+                  <th className="px-5 py-4 font-semibold">منشئ القيد</th>
+
+                  <th className="px-5 py-4 font-semibold">تاريخ الإنشاء</th>
 
                   <th className="px-5 py-4 font-semibold">الحالة</th>
 
@@ -603,7 +764,7 @@ export default function JournalsPage() {
                         {journal.journalNumber}
                       </td>
 
-                      <td className="px-5 py-4 whitespace-nowrap text-slate-600">
+                      <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                         {formatDate(journal.date)}
                       </td>
 
@@ -632,6 +793,22 @@ export default function JournalsPage() {
                       </td>
 
                       <td className="px-5 py-4">
+                        <div className="flex items-center gap-2 text-slate-700">
+                          <FiUser className="text-slate-400" size={15} />
+
+                          <span>{getCreatorName(journal)}</span>
+                        </div>
+                      </td>
+
+                      <td className="whitespace-nowrap px-5 py-4 text-xs text-slate-500">
+                        <div className="flex items-center gap-2">
+                          <FiCalendar className="text-slate-400" size={14} />
+
+                          {formatDateTime(journal.createdAt)}
+                        </div>
+                      </td>
+
+                      <td className="px-5 py-4">
                         <span
                           className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${status.className}`}
                         >
@@ -642,7 +819,7 @@ export default function JournalsPage() {
                       <td className="px-5 py-4">
                         <div className="flex items-center justify-center gap-2">
                           <button
-                            onClick={() => handleView(journal.id)}
+                            onClick={() => handleView(journal)}
                             title="عرض القيد"
                             className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition hover:bg-blue-100"
                           >

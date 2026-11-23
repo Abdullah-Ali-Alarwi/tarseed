@@ -12,7 +12,6 @@ import {
   FiShoppingCart,
   FiShoppingBag,
   FiUsers,
-  FiTruck,
   FiDollarSign,
   FiFileText,
   FiBriefcase,
@@ -20,6 +19,7 @@ import {
   FiUser,
   FiClock,
   FiLogOut,
+  FiTruck,
 } from "react-icons/fi";
 
 export default function Sidebar() {
@@ -29,7 +29,7 @@ export default function Sidebar() {
   const [role, setRole] = useState("");
   const [userName, setUserName] = useState("");
 
-  // قراءة بيانات المستخدم من Cookies
+  // قراءة بيانات المستخدم
   useEffect(() => {
     const cookies = Object.fromEntries(
       document.cookie
@@ -59,15 +59,20 @@ export default function Sidebar() {
     return () => clearInterval(timer);
   }, []);
 
-  // تسجيل الخروج
+  // تسجيل الخروج ومنع الرجوع
   const logout = () => {
+    // حذف جميع بيانات تسجيل الدخول
     ["token", "type", "username", "role"].forEach((key) => {
-      document.cookie = `${key}=; path=/; max-age=0`;
+      document.cookie = `${key}=; path=/; max-age=0; SameSite=Lax`;
     });
 
+    // حذف بيانات المستخدم المحلية
+    localStorage.removeItem("authUser");
+    localStorage.removeItem("authRole");
     localStorage.removeItem("erp-sidebar-open-menu");
 
-    window.location.href = "/login";
+    // الانتقال إلى تسجيل الدخول مع استبدال الصفحة الحالية
+    window.location.replace("/login");
   };
 
   // الأقسام الرئيسية
@@ -77,43 +82,46 @@ export default function Sidebar() {
       url: "/erp",
       icon: FiHome,
     },
-
     {
       title: "المشتريات",
       url: "/erp/purchases",
       icon: FiShoppingBag,
     },
-
+    {
+      title: "الموردون",
+      url: "/erp/suppliers",
+      icon: FiTruck,
+    },
     {
       title: "المبيعات",
       url: "/erp/sales",
       icon: FiShoppingCart,
     },
-
+    {
+      title: "العملاء",
+      url: "/erp/customers",
+      icon: FiUsers,
+    },
     {
       title: "المخزون",
       url: "/erp/inventory",
       icon: FiBriefcase,
     },
-
     {
       title: "المستخدمون",
       url: "/erp/users",
       icon: FiUsers,
     },
-
     {
       title: "المحاسبة",
       url: "/erp/accounting",
       icon: FiDollarSign,
     },
-
     {
       title: "التقارير",
       url: "/erp/reports",
       icon: FiFileText,
     },
-
     {
       title: "الإعدادات",
       url: "/erp/tools",
@@ -121,13 +129,13 @@ export default function Sidebar() {
     },
   ];
 
-  // إظهار جميع الأقسام للمالك فقط
+  // صلاحيات عرض الأقسام
   const visibleMenus =
     role.toLowerCase() === "owner"
       ? menus
       : menus.filter((menu) => menu.title === "المشتريات");
 
-  // تحديد الرابط النشط
+  // الرابط النشط
   const isLinkActive = (url: string) => {
     if (url === "/erp") {
       return pathname === "/erp" || pathname === "/erp/dashboard";
@@ -177,7 +185,6 @@ export default function Sidebar() {
               `}
             >
               <Icon size={19} />
-
               <span className="flex-1">{menu.title}</span>
             </Link>
           );
@@ -199,8 +206,7 @@ export default function Sidebar() {
       <div className="mt-3 shrink-0 border-t border-[#36536F] pt-3">
         <div className="flex items-center justify-between gap-2 text-gray-300">
           <div className="flex min-w-0 items-center gap-1">
-            <FiUser size={14} className="shrink-0" />
-
+            <FiUser size={14} />
             <span className="truncate text-[12px]">{userName}</span>
           </div>
 
@@ -208,7 +214,6 @@ export default function Sidebar() {
 
           <div className="flex shrink-0 items-center gap-1">
             <FiClock size={12} />
-
             <span className="text-[12px]" dir="ltr">
               {time}
             </span>

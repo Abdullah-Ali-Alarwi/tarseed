@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
+import type { ReactNode } from "react";
 
 import {
   FiArrowRight,
@@ -28,44 +28,20 @@ import { toast } from "sonner";
 // API
 // ==========================================
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import {
+  getAccounts,
+  type Account,
+  type AccountType,
+} from "@/lib/api/accounts";
+
+import { getUserByUsername } from "@/lib/api/users";
 
 // ==========================================
 // Types
 // ==========================================
 
-type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
-
-interface Account {
-  id: number | string;
-  companyId: string;
-
-  code: string;
-  name: string;
-  nameEn?: string;
-
-  parentId: number | null;
-  type: AccountType;
-  nature: "debit" | "credit";
-
-  level: number;
-
-  isGroup: boolean;
-  allowPosting: boolean;
-  isActive: boolean;
-
-  description?: string;
-  createdAt?: string;
-}
-
-interface CurrentUser {
-  id: number | string;
-  username: string;
-  type: string;
-  companyId?: string | number;
-}
-
 interface TreeNode extends Account {
+  treeKey: string;
   children: TreeNode[];
 }
 
@@ -85,6 +61,36 @@ function getCookie(name: string): string | null {
   return decodeURIComponent(cookie.substring(name.length + 1));
 }
 
+function getCurrentUsername(): string | null {
+  // قراءة اسم المستخدم من Cookie
+  const cookieUsername = getCookie("username");
+
+  if (cookieUsername) {
+    return cookieUsername;
+  }
+
+  // الرجوع إلى localStorage
+  if (typeof window !== "undefined") {
+    try {
+      const authUser = localStorage.getItem("authUser");
+
+      if (authUser) {
+        const user = JSON.parse(authUser);
+
+        return user.username || null;
+      }
+    } catch (error) {
+      console.error("Read authUser error:", error);
+    }
+  }
+
+  return null;
+}
+
+// ==========================================
+// Account Types
+// ==========================================
+
 const accountTypes: {
   value: AccountType;
   label: string;
@@ -100,45 +106,101 @@ function getAccountTypeName(type: AccountType) {
   return accountTypes.find((item) => item.value === type)?.label || "غير محدد";
 }
 
+function isAccountActive(account: Account): boolean {
+  return account.isActive !== false && account.status !== "inactive";
+}
+
+function getAccountParentId(account: Account): string {
+  return String(account.parentId ?? "");
+}
+
 // ==========================================
 // Build Tree
 // ==========================================
 
 function buildAccountTree(accounts: Account[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
-
-  accounts.forEach((account) => {
-    map.set(String(account.id), {
-      ...account,
-      children: [],
-    });
-  });
-
   const roots: TreeNode[] = [];
 
-  accounts.forEach((account) => {
-    const node = map.get(String(account.id));
+  // إنشاء عقد الشجرة
+  accounts.forEach((account, index) => {
+    const treeKey = account.id ? String(account.id) : `account-${index}`;
+
+    const node: TreeNode = {
+      ...account,
+      treeKey,
+      children: [],
+    };
+
+    map.set(treeKey, node);
+  });
+
+  // ربط الحسابات الرئيسية بالفرعية
+  accounts.forEach((account, index) => {
+    const treeKey = account.id ? String(account.id) : `account-${index}`;
+
+    const node = map.get(treeKey);
 
     if (!node) return;
 
-    if (account.parentId !== null && map.has(String(account.parentId))) {
-      map.get(String(account.parentId))!.children.push(node);
+    const parentId = getAccountParentId(account);
+
+    // الحساب الرئيسي
+    if (!parentId) {
+      roots.push(node);
+      return;
+    }
+
+    const parent = map.get(parentId);
+
+    // الحساب الأب موجود
+    if (parent && parent !== node) {
+      parent.children.push(node);
     } else {
+      // حساب يتيم أو لا يوجد حساب أب مطابق
       roots.push(node);
     }
   });
 
-  const sortNodes = (nodes: TreeNode[]) => {
+  // ترتيب الحسابات حسب الرقم
+  const sortNodes = (nodes: TreeNode[], visited = new Set<string>()) => {
     nodes.sort((a, b) =>
       String(a.code).localeCompare(String(b.code), undefined, {
         numeric: true,
       }),
     );
 
-    nodes.forEach((node) => sortNodes(node.children));
+    nodes.forEach((node) => {
+      if (visited.has(node.treeKey)) return;
+
+      visited.add(node.treeKey);
+
+      sortNodes(node.children, visited);
+    });
   };
 
   sortNodes(roots);
+
+  // معالجة الحسابات التي قد تكون ضمن علاقة دائرية
+  const visited = new Set<string>();
+
+  const markVisited = (nodes: TreeNode[]) => {
+    nodes.forEach((node) => {
+      if (visited.has(node.treeKey)) return;
+
+      visited.add(node.treeKey);
+      markVisited(node.children);
+    });
+  };
+
+  markVisited(roots);
+
+  map.forEach((node) => {
+    if (!visited.has(node.treeKey)) {
+      roots.push(node);
+      markVisited([node]);
+    }
+  });
 
   return roots;
 }
@@ -155,13 +217,16 @@ function filterTree(
   return nodes.reduce<TreeNode[]>((result, node) => {
     const filteredChildren = filterTree(node.children, search, typeFilter);
 
+    const searchText = search.toLowerCase();
+
     const matchesSearch =
       !search ||
-      node.name.toLowerCase().includes(search.toLowerCase()) ||
-      node.code.toLowerCase().includes(search.toLowerCase()) ||
-      node.nameEn?.toLowerCase().includes(search.toLowerCase());
+      node.name.toLowerCase().includes(searchText) ||
+      node.code.toLowerCase().includes(searchText) ||
+      node.nameEn?.toLowerCase().includes(searchText);
 
-    const matchesType = typeFilter === "all" || node.type === typeFilter;
+    const matchesType =
+      typeFilter === "all" || (node.accountType ?? node.type) === typeFilter;
 
     if ((matchesSearch && matchesType) || filteredChildren.length > 0) {
       result.push({
@@ -193,8 +258,6 @@ export default function AccountsTreePage() {
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const [showInactive, setShowInactive] = useState(false);
-
   // ========================================
   // Load Data
   // ========================================
@@ -204,22 +267,21 @@ export default function AccountsTreePage() {
     setError("");
 
     try {
-      const username = getCookie("username");
+      // الحصول على المستخدم الحالي
+      const username = getCurrentUsername();
 
       if (!username) {
         throw new Error("لم يتم العثور على المستخدم الحالي");
       }
 
-      const userResponse = await axios.get<CurrentUser[]>(`${API_URL}/users`, {
-        params: { username },
-      });
-
-      const user = userResponse.data.find((item) => item.username === username);
+      // جلب المستخدم من API
+      const user = await getUserByUsername(username);
 
       if (!user) {
         throw new Error("المستخدم غير موجود");
       }
 
+      // منع مستخدم المنصة من الوصول إلى دليل حسابات الشركة
       if (user.type === "platform") {
         throw new Error("لا يمكن لمستخدم المنصة عرض دليل حسابات الشركة");
       }
@@ -228,30 +290,38 @@ export default function AccountsTreePage() {
         throw new Error("المستخدم غير مرتبط بشركة");
       }
 
+      if (user.isActive === false || user.status === "inactive") {
+        throw new Error("حساب المستخدم غير نشط");
+      }
+
       const currentCompanyId = String(user.companyId);
 
       setCompanyId(currentCompanyId);
 
-      const response = await axios.get<Account[]>(`${API_URL}/accounts`, {
-        params: {
-          companyId: currentCompanyId,
-        },
-      });
+      // جلب حسابات الشركة
+      const companyAccounts = await getAccounts(currentCompanyId);
 
-      const companyAccounts = response.data.filter(
+      // التأكد من أن الحسابات تتبع الشركة الحالية
+      const filteredAccounts = companyAccounts.filter(
         (account) => String(account.companyId) === currentCompanyId,
       );
 
-      setAccounts(companyAccounts);
+      setAccounts(filteredAccounts);
 
       // فتح المستوى الأول تلقائياً
-      const rootIds = companyAccounts
-        .filter((account) => account.parentId === null)
-        .map((account) => String(account.id));
+      const rootIds = filteredAccounts
+        .filter(
+          (account) =>
+            account.parentId === null ||
+            account.parentId === undefined ||
+            account.parentId === "",
+        )
+        .map((account) => String(account.id))
+        .filter(Boolean);
 
       setExpanded(new Set(rootIds));
     } catch (err) {
-      console.error(err);
+      console.error("Load accounts error:", err);
 
       const message =
         err instanceof Error ? err.message : "تعذر تحميل شجرة الحسابات";
@@ -277,11 +347,12 @@ export default function AccountsTreePage() {
 
       groups: accounts.filter((account) => account.isGroup).length,
 
-      posting: accounts.filter((account) => account.allowPosting).length,
+      posting: accounts.filter((account) => account.allowPosting === true)
+        .length,
 
-      active: accounts.filter((account) => account.isActive).length,
+      active: accounts.filter((account) => isAccountActive(account)).length,
 
-      inactive: accounts.filter((account) => !account.isActive).length,
+      inactive: accounts.filter((account) => !isAccountActive(account)).length,
     };
   }, [accounts]);
 
@@ -294,13 +365,15 @@ export default function AccountsTreePage() {
   const filteredTree = useMemo(() => {
     let result = filterTree(tree, search.trim(), typeFilter);
 
+    // تصفية حسب الحالة
     if (statusFilter !== "all") {
       const filterStatus = (nodes: TreeNode[]): TreeNode[] =>
         nodes.reduce<TreeNode[]>((acc, node) => {
           const children = filterStatus(node.children);
 
-          const matchesStatus =
-            statusFilter === "active" ? node.isActive : !node.isActive;
+          const active = isAccountActive(node);
+
+          const matchesStatus = statusFilter === "active" ? active : !active;
 
           if (matchesStatus || children.length > 0) {
             acc.push({
@@ -339,7 +412,8 @@ export default function AccountsTreePage() {
   function expandAll() {
     const ids = accounts
       .filter((account) => account.isGroup)
-      .map((account) => String(account.id));
+      .map((account) => String(account.id))
+      .filter(Boolean);
 
     setExpanded(new Set(ids));
   }
@@ -352,19 +426,35 @@ export default function AccountsTreePage() {
   // Render Tree Node
   // ========================================
 
-  function renderNode(node: TreeNode, depth = 0): React.ReactNode {
+  function renderNode(
+    node: TreeNode,
+    depth = 0,
+    path = new Set<string>(),
+  ): ReactNode {
+    // منع الدوران اللانهائي في حالة وجود بيانات دائرية
+    if (path.has(node.treeKey)) {
+      return null;
+    }
+
+    const currentPath = new Set(path);
+    currentPath.add(node.treeKey);
+
     const hasChildren = node.children.length > 0;
 
     const isExpanded =
-      search.trim().length > 0 ? true : expanded.has(String(node.id));
+      search.trim().length > 0 ? true : expanded.has(node.treeKey);
 
     const isGroup = node.isGroup;
 
+    const isActive = isAccountActive(node);
+
+    const accountType = node.accountType ?? node.type;
+
     return (
-      <div key={node.id}>
+      <div key={node.treeKey}>
         <div
           className={`group flex min-w-[700px] items-center border-b border-gray-100 transition hover:bg-blue-50/50 ${
-            !node.isActive ? "opacity-60" : ""
+            !isActive ? "opacity-60" : ""
           }`}
           style={{
             paddingRight: `${depth * 28 + 12}px`,
@@ -375,7 +465,7 @@ export default function AccountsTreePage() {
             {hasChildren ? (
               <button
                 type="button"
-                onClick={() => toggleExpand(String(node.id))}
+                onClick={() => toggleExpand(node.treeKey)}
                 className="rounded-md p-1.5 text-gray-500 hover:bg-gray-200"
                 title={isExpanded ? "طي الحسابات" : "توسيع الحسابات"}
               >
@@ -415,7 +505,7 @@ export default function AccountsTreePage() {
               {node.name}
             </span>
 
-            {!node.isActive && (
+            {!isActive && (
               <span className="rounded bg-red-50 px-2 py-0.5 text-[10px] text-red-600">
                 غير نشط
               </span>
@@ -425,7 +515,7 @@ export default function AccountsTreePage() {
           {/* Type */}
           <div className="w-32 shrink-0 px-3 py-4">
             <span className="text-xs text-gray-600">
-              {getAccountTypeName(node.type)}
+              {getAccountTypeName(accountType)}
             </span>
           </div>
 
@@ -458,8 +548,9 @@ export default function AccountsTreePage() {
               onClick={() =>
                 router.push(`/erp/accounting/accounts/${node.id}/statement`)
               }
+              disabled={!node.id}
               title="كشف حساب"
-              className="rounded-lg p-2 text-gray-500 opacity-0 transition hover:bg-blue-100 hover:text-blue-700 group-hover:opacity-100"
+              className="rounded-lg p-2 text-gray-500 opacity-0 transition hover:bg-blue-100 hover:text-blue-700 group-hover:opacity-100 disabled:cursor-not-allowed"
             >
               <FiEye size={15} />
             </button>
@@ -469,7 +560,9 @@ export default function AccountsTreePage() {
         {/* Children */}
         {hasChildren && isExpanded && (
           <div>
-            {node.children.map((child) => renderNode(child, depth + 1))}
+            {node.children.map((child) =>
+              renderNode(child, depth + 1, currentPath),
+            )}
           </div>
         )}
       </div>
@@ -655,7 +748,9 @@ export default function AccountsTreePage() {
             className="rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
           >
             <option value="all">جميع الحالات</option>
+
             <option value="active">الحسابات النشطة</option>
+
             <option value="inactive">الحسابات غير النشطة</option>
           </select>
         </div>
@@ -782,7 +877,7 @@ function StatCard({
 }: {
   title: string;
   value: number;
-  icon: React.ReactNode;
+  icon: ReactNode;
   color: string;
 }) {
   const colors: Record<string, string> = {

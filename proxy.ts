@@ -1,84 +1,84 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-
-const permissions = {
-
-  platform: [
-    "/wezzan",
-   
-  ],
-
-
-  owner: [
-    "/accounting",
-    "/customers",
-    "/dashboard",
-    "/inventory",
-    "/products",
-    "/purchases",
-    "/sales",
-    "/suppliers",
-    "/users",
-  ],
-};
-
-export function proxy(request) {
-
+export function proxy(request: NextRequest) {
   const token = request.cookies.get("token")?.value;
   const type = request.cookies.get("type")?.value;
+  const role = request.cookies.get("role")?.value;
 
-  // الصفحة المطلوبة
   const path = request.nextUrl.pathname;
+
+  // إعداد منع التخزين المؤقت
+  const noCache = (response: NextResponse) => {
+    response.headers.set(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, max-age=0"
+    );
+
+    response.headers.set("Pragma", "no-cache");
+    response.headers.set("Expires", "0");
+
+    return response;
+  };
 
   // 1. التحقق من تسجيل الدخول
   if (!token || !type) {
-    return NextResponse.redirect(
-      new URL("/login", request.url)
+    return noCache(
+      NextResponse.redirect(new URL("/login", request.url))
     );
   }
 
-  // 2. التحقق من نوع الحساب
-  const allowedPages = permissions[type];
+  // 2. تحديد الصلاحيات
+  let allowedPages: string[] = [];
 
-  if (!allowedPages) {
-    return NextResponse.redirect(
-      new URL("/login", request.url)
+  if (type === "platform") {
+    allowedPages = [
+      "/wezzan",
+    ];
+  }
+
+ else if (type === "erp" || type === "owner") {
+  allowedPages = [
+    "/erp",
+  ];
+}
+
+  // 3. منع الحسابات غير المعروفة
+  if (allowedPages.length === 0) {
+    return noCache(
+      NextResponse.redirect(new URL("/login", request.url))
     );
   }
 
-  // 3. التحقق من صلاحية الوصول للصفحة
+  // 4. التحقق من صلاحية الصفحة
   const isAllowed = allowedPages.some((page) => {
-    return path === page || path.startsWith(page + "/");
+    return (
+      path === page ||
+      path.startsWith(page + "/")
+    );
   });
 
-  // 4. منع الدخول إذا لم تكن الصفحة مسموحة
+  // 5. إعادة توجيه المستخدم عند عدم امتلاكه الصلاحية
   if (!isAllowed) {
     const redirectPath =
       type === "platform"
         ? "/wezzan/dashboard"
-        : "/dashboard";
+        : "/erp/dashboard";
 
-    return NextResponse.redirect(
-      new URL(redirectPath, request.url)
+    return noCache(
+      NextResponse.redirect(
+        new URL(redirectPath, request.url)
+      )
     );
   }
 
-  // 5. السماح بالدخول
-  return NextResponse.next();
+  // 6. السماح بالدخول
+  return noCache(NextResponse.next());
 }
 
-// الصفحات التي نريد تطبيق الحماية عليها
+// الصفحات المحمية
 export const config = {
   matcher: [
     "/wezzan/:path*",
-    "/accounting/:path*",
-    "/customers/:path*",
-    "/dashboard/:path*",
-    "/inventory/:path*",
-    "/products/:path*",
-    "/purchases/:path*",
-    "/sales/:path*",
-    "/suppliers/:path*",
-    "/users/:path*",
+    "/erp/:path*",
   ],
 };

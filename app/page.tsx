@@ -115,9 +115,15 @@ export default function HomePage() {
 
             <Link
               href="#contact"
-              className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition"
+              className="bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition"
             >
               ابدأ الآن
+            </Link>
+            <Link
+              href="/createAccount"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition"
+            >
+              انشاء حساب
             </Link>
           </div>
 

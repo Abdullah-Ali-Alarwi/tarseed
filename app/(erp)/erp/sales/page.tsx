@@ -169,7 +169,7 @@ export default function SalesPage() {
           </div>
 
           <Link
-            href="/sales/new"
+            href="/erp/sales/new"
             className="flex h-8 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 text-[10px] font-bold text-white shadow-sm transition hover:bg-blue-700"
           >
             <FiPlus size={14} />
@@ -463,4 +463,3 @@ export default function SalesPage() {
     </main>
   );
 }
-

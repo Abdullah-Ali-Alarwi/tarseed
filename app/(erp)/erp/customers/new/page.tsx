@@ -84,7 +84,7 @@ export default function NewCustomerPage() {
       });
 
       // الانتقال إلى كشف حساب العميل
-      router.push(`/customers/${created.id}`);
+      router.push(`/erp/customers/${created.id}`);
     } catch (error) {
       console.error("Error adding customer:", error);
 
@@ -408,7 +408,9 @@ export default function NewCustomerPage() {
                         <span className="text-gray-500">الرصيد الافتتاحي</span>
 
                         <span className="font-semibold text-gray-900">
-                          {numericPreviewBalance.toLocaleString("ar-SA-u-nu-latn")}
+                          {numericPreviewBalance.toLocaleString(
+                            "ar-SA-u-nu-latn",
+                          )}
                         </span>
                       </div>
                     </div>
@@ -468,4 +470,3 @@ export default function NewCustomerPage() {
     </main>
   );
 }
-

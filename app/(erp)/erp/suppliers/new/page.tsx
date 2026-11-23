@@ -1,271 +1,545 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import axios from "axios";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   FiArrowRight,
   FiSave,
-  FiTruck,
+  FiRefreshCw,
+  FiUser,
   FiPhone,
   FiMapPin,
-  FiDollarSign,
+  FiFileText,
+  FiCreditCard,
+  FiAlertCircle,
+  FiCheckCircle,
 } from "react-icons/fi";
 import { toast } from "sonner";
 
-import { useERPStore } from "@/Store/erpStore";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: { "Content-Type": "application/json" },
+});
+
+type AnyRecord = Record<string, any>;
 
 export default function NewSupplierPage() {
   const router = useRouter();
 
-  // ======================================================
-  // ERP Store
-  // ======================================================
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const addSupplier = useERPStore((state) => state.addSupplier);
+  const [companyId, setCompanyId] = useState("");
+  const [companyName, setCompanyName] = useState("");
 
-  // ======================================================
-  // Form State
-  // ======================================================
+  const [accounts, setAccounts] = useState<AnyRecord[]>([]);
 
-  const [supplierName, setSupplierName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
-  const [balance, setBalance] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    phone: "",
+    address: "",
+    accountCode: "2101",
+    accountName: "",
+    notes: "",
+  });
 
-  // ======================================================
-  // حفظ المورد
-  // ======================================================
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // =====================================
+  // تحميل بيانات المستخدم والشركة
+  // =====================================
 
-    const name = supplierName.trim();
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
 
-    // التحقق من اسم المورد
-    if (!name) {
-      toast.error("اسم المورد مطلوب");
-      return;
+      const storedUser = localStorage.getItem("authUser");
+
+      if (!storedUser) {
+        toast.error("يرجى تسجيل الدخول أولاً");
+        router.push("/login");
+        return;
+      }
+
+      const authUser = JSON.parse(storedUser);
+
+      if (authUser.type === "platform") {
+        toast.error("لا يمكن لمستخدم المنصة إضافة مورد");
+        router.push("/wezzan/dashboard");
+        return;
+      }
+
+      const username = authUser.username;
+
+      const usersResponse = await api.get("/users", {
+        params: { username },
+      });
+
+      const user = usersResponse.data.find(
+        (item: AnyRecord) => item.username === username,
+      );
+
+      if (!user?.companyId) {
+        toast.error("المستخدم غير مرتبط بشركة");
+        return;
+      }
+
+      const currentCompanyId = String(user.companyId);
+
+      setCompanyId(currentCompanyId);
+
+      const [companiesRes, accountsRes] = await Promise.all([
+        api.get("/companies", {
+          params: { id: currentCompanyId },
+        }),
+        api.get("/accounts", {
+          params: { companyId: currentCompanyId },
+        }),
+      ]);
+
+      const company = companiesRes.data.find(
+        (item: AnyRecord) => String(item.id) === currentCompanyId,
+      );
+
+      setCompanyName(company?.name || company?.companyName || "");
+
+      const activeAccounts = accountsRes.data.filter(
+        (account: AnyRecord) =>
+          account.isActive !== false &&
+          account.status !== "inactive" &&
+          account.isGroup !== true,
+      );
+
+      setAccounts(activeAccounts);
+
+      const supplierAccount = activeAccounts.find(
+        (account: AnyRecord) => String(account.code) === "2101",
+      );
+
+      if (supplierAccount) {
+        setForm((prev) => ({
+          ...prev,
+          accountCode: String(supplierAccount.code),
+          accountName: supplierAccount.name,
+        }));
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("تعذر تحميل بيانات الشركة والحسابات");
+    } finally {
+      setLoading(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // =====================================
+  // تحديث الحقول
+  // =====================================
+
+  const handleChange = (field: string, value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+
+    setErrors((prev) => ({
+      ...prev,
+      [field]: "",
+    }));
+  };
+
+  // =====================================
+  // اختيار الحساب المحاسبي
+  // =====================================
+
+  const handleAccountChange = (accountId: string) => {
+    const account = accounts.find((item) => String(item.id) === accountId);
+
+    setForm((prev) => ({
+      ...prev,
+      accountCode: account ? String(account.code) : "",
+      accountName: account?.name || "",
+    }));
+  };
+
+  // =====================================
+  // التحقق من البيانات
+  // =====================================
+
+  const validate = () => {
+    const newErrors: Record<string, string> = {};
+
+    if (!form.name.trim()) {
+      newErrors.name = "اسم المورد مطلوب";
     }
 
-    const numericBalance = Number(balance) || 0;
+    if (!form.accountCode || !form.accountName) {
+      newErrors.accountCode = "يرجى اختيار الحساب المحاسبي";
+    }
 
-    setIsSaving(true);
+    if (!companyId) {
+      newErrors.company = "تعذر تحديد الشركة";
+    }
+
+    setErrors(newErrors);
+
+    if (Object.keys(newErrors).length > 0) {
+      toast.error("يرجى مراجعة الحقول المطلوبة");
+      return false;
+    }
+
+    return true;
+  };
+
+  // =====================================
+  // حفظ المورد
+  // =====================================
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (saving || !validate()) return;
 
     try {
-      // ==================================================
-      // إضافة المورد
-      // الـ ERP Store يقوم تلقائياً بـ:
-      // 1. إنشاء ID للمورد
-      // 2. إنشاء حساب للمورد
-      // 3. ربط الحساب بالمورد
-      // 4. إنشاء الحساب تحت 2101
-      // ==================================================
+      setSaving(true);
 
-      const createdSupplier = addSupplier({
-        name,
-        phone: phone.trim() || undefined,
-        address: address.trim() || undefined,
-        balance: numericBalance,
+      // التأكد من عدم تكرار اسم المورد داخل الشركة
+      const suppliersResponse = await api.get("/suppliers", {
+        params: { companyId },
+      });
+
+      const duplicate = suppliersResponse.data.some(
+        (supplier: AnyRecord) =>
+          supplier.name?.trim().toLowerCase() ===
+          form.name.trim().toLowerCase(),
+      );
+
+      if (duplicate) {
+        toast.error("يوجد مورد بنفس الاسم في هذه الشركة");
+        return;
+      }
+
+      const now = new Date().toISOString();
+
+      const supplier = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        companyId,
+
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        address: form.address.trim(),
+
+        // ربط المورد بحساب الموردين
+        accountCode: form.accountCode,
+        accountName: form.accountName,
+
+        // الرصيد الابتدائي صفر
+        balance: 0,
+
+        notes: form.notes.trim(),
+
+        status: "active",
         isActive: true,
-      });
 
-      toast.success("تمت إضافة المورد بنجاح", {
-        description: `تم إضافة المورد ${name}`,
-      });
+        createdAt: now,
+        updatedAt: now,
+      };
 
-      // الانتقال إلى كشف حساب المورد
-      router.push(`/suppliers/${createdSupplier.id}`);
-    } catch (error) {
-      console.error("Error adding supplier:", error);
+      await api.post("/suppliers", supplier);
 
-      const message =
-        error instanceof Error ? error.message : "حدث خطأ أثناء إضافة المورد";
+      toast.success("تمت إضافة المورد بنجاح");
 
-      toast.error(message);
+      router.push("/suppliers");
+      router.refresh();
+    } catch (error: any) {
+      console.error("Create supplier error:", error);
 
-      setIsSaving(false);
+      toast.error(
+        error?.response?.data?.message || "حدث خطأ أثناء إضافة المورد",
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
-  // ======================================================
-  // UI
-  // ======================================================
+  // =====================================
+  // التحميل
+  // =====================================
+
+  if (loading) {
+    return (
+      <div dir="rtl" className="flex min-h-[60vh] items-center justify-center">
+        <FiRefreshCw className="animate-spin text-2xl text-[#0E1F33]" />
+      </div>
+    );
+  }
+
+  // =====================================
+  // الواجهة
+  // =====================================
 
   return (
-    <main dir="rtl" className="min-h-screen bg-gray-50 p-3 sm:p-4 lg:p-5">
-      {/* Header */}
+    <div
+      dir="rtl"
+      className="min-h-screen bg-gray-50 p-3 text-sm text-gray-800 sm:p-6"
+    >
+      {/* رأس الصفحة */}
 
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
-          <div className="mb-1 flex items-center gap-2">
-            <Link
-              href="/suppliers"
-              className="rounded-lg p-1.5 text-gray-500 transition hover:bg-white hover:text-amber-600"
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => router.push("/suppliers")}
+              className="rounded-lg border border-gray-200 bg-white p-2 hover:bg-gray-100"
             >
-              <FiArrowRight size={19} />
-            </Link>
+              <FiArrowRight size={17} />
+            </button>
 
-            <h1 className="text-xl font-bold text-gray-800">إضافة مورد</h1>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">
+                إضافة مورد جديد
+              </h1>
+
+              <p className="mt-1 text-xs text-gray-500">
+                تسجيل بيانات المورد وربطه بالحسابات المحاسبية
+              </p>
+            </div>
           </div>
+        </div>
 
-          <p className="mr-9 text-xs text-gray-500">
-            إضافة مورد جديد إلى النظام
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-2">
+          <p className="text-[11px] text-gray-500">الشركة</p>
+
+          <p className="font-semibold text-[#0E1F33]">
+            {companyName || `الشركة ${companyId}`}
           </p>
         </div>
       </div>
 
-      {/* Form */}
+      <form onSubmit={handleSubmit}>
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          {/* بيانات المورد */}
 
-      <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
-        <div className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
-          {/* Form Header */}
+          <div className="space-y-5 lg:col-span-2">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-5 flex items-center gap-2 font-bold text-gray-900">
+                <FiUser className="text-[#0E1F33]" />
+                المعلومات الأساسية
+              </h2>
 
-          <div className="border-b border-gray-100 bg-gray-50/70 px-4 py-4 sm:px-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
-                <FiTruck size={20} />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <label className="mb-2 block text-xs font-semibold text-gray-600">
+                    اسم المورد
+                    <span className="mr-1 text-red-500">*</span>
+                  </label>
+
+                  <input
+                    value={form.name}
+                    onChange={(e) => handleChange("name", e.target.value)}
+                    placeholder="أدخل اسم المورد"
+                    className={`h-11 w-full rounded-lg border px-3 outline-none transition focus:border-[#0E1F33] ${
+                      errors.name ? "border-red-400" : "border-gray-200"
+                    }`}
+                  />
+
+                  {errors.name && (
+                    <p className="mt-1 text-xs text-red-500">{errors.name}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-gray-600">
+                    <FiPhone />
+                    رقم الهاتف
+                  </label>
+
+                  <input
+                    value={form.phone}
+                    onChange={(e) => handleChange("phone", e.target.value)}
+                    placeholder="مثال: 777000000"
+                    type="tel"
+                    className="h-11 w-full rounded-lg border border-gray-200 px-3 outline-none focus:border-[#0E1F33]"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-gray-600">
+                    <FiMapPin />
+                    العنوان
+                  </label>
+
+                  <input
+                    value={form.address}
+                    onChange={(e) => handleChange("address", e.target.value)}
+                    placeholder="المدينة أو العنوان"
+                    className="h-11 w-full rounded-lg border border-gray-200 px-3 outline-none focus:border-[#0E1F33]"
+                  />
+                </div>
               </div>
+            </section>
+
+            {/* الحساب المحاسبي */}
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-5 flex items-center gap-2 font-bold text-gray-900">
+                <FiCreditCard className="text-[#0E1F33]" />
+                الربط المحاسبي
+              </h2>
 
               <div>
-                <h2 className="text-sm font-bold text-gray-800">
-                  بيانات المورد
-                </h2>
+                <label className="mb-2 block text-xs font-semibold text-gray-600">
+                  حساب المورد
+                  <span className="mr-1 text-red-500">*</span>
+                </label>
 
-                <p className="mt-0.5 text-[11px] text-gray-400">
-                  أدخل البيانات الأساسية للمورد
-                </p>
+                <select
+                  value={
+                    accounts.find(
+                      (account) => String(account.code) === form.accountCode,
+                    )?.id || ""
+                  }
+                  onChange={(e) => handleAccountChange(e.target.value)}
+                  className={`h-11 w-full rounded-lg border bg-white px-3 outline-none focus:border-[#0E1F33] ${
+                    errors.accountCode ? "border-red-400" : "border-gray-200"
+                  }`}
+                >
+                  <option value="">اختر الحساب المحاسبي</option>
+
+                  {accounts
+                    .filter((account) => String(account.code).startsWith("21"))
+                    .map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.code} - {account.name}
+                      </option>
+                    ))}
+                </select>
+
+                {errors.accountCode && (
+                  <p className="mt-1 text-xs text-red-500">
+                    {errors.accountCode}
+                  </p>
+                )}
+
+                {form.accountCode && (
+                  <div className="mt-3 flex items-center gap-2 rounded-lg bg-green-50 p-3 text-xs text-green-800">
+                    <FiCheckCircle />
+                    الحساب المحدد: {form.accountCode} - {form.accountName}
+                  </div>
+                )}
               </div>
-            </div>
+
+              <div className="mt-4 rounded-lg bg-blue-50 p-3 text-xs leading-6 text-blue-900">
+                <strong>ملاحظة محاسبية:</strong>
+                <br />
+                ربط المورد بحساب الموردين يسمح بتسجيل المشتريات الآجلة عليه. لا
+                يتم إنشاء قيد محاسبي عند إنشاء المورد نفسه.
+              </div>
+            </section>
+
+            {/* الملاحظات */}
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 flex items-center gap-2 font-bold text-gray-900">
+                <FiFileText />
+                ملاحظات إضافية
+              </h2>
+
+              <textarea
+                value={form.notes}
+                onChange={(e) => handleChange("notes", e.target.value)}
+                rows={4}
+                placeholder="أي معلومات إضافية عن المورد..."
+                className="w-full resize-none rounded-lg border border-gray-200 p-3 outline-none focus:border-[#0E1F33]"
+              />
+            </section>
           </div>
 
-          {/* Fields */}
+          {/* ملخص المورد */}
 
-          <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-5">
-            {/* اسم المورد */}
+          <div className="space-y-4">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 font-bold text-gray-900">ملخص المورد</h2>
 
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium text-gray-700">
-                اسم المورد
-                <span className="mr-1 text-red-500">*</span>
-              </label>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs text-gray-500">اسم المورد</p>
 
-              <div className="relative">
-                <FiTruck
-                  size={16}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                />
+                  <p className="mt-1 font-semibold text-gray-900">
+                    {form.name || "لم يتم الإدخال"}
+                  </p>
+                </div>
 
-                <input
-                  type="text"
-                  value={supplierName}
-                  onChange={(event) => setSupplierName(event.target.value)}
-                  placeholder="أدخل اسم المورد"
-                  className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pr-9 pl-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                  autoFocus
-                />
+                <div className="border-t border-gray-100 pt-3">
+                  <p className="text-xs text-gray-500">رقم الهاتف</p>
+
+                  <p className="mt-1 font-semibold">{form.phone || "—"}</p>
+                </div>
+
+                <div className="border-t border-gray-100 pt-3">
+                  <p className="text-xs text-gray-500">الحساب المحاسبي</p>
+
+                  <p className="mt-1 font-semibold">
+                    {form.accountCode
+                      ? `${form.accountCode} - ${form.accountName}`
+                      : "لم يتم الاختيار"}
+                  </p>
+                </div>
+
+                <div className="border-t border-gray-100 pt-3">
+                  <p className="text-xs text-gray-500">الرصيد الابتدائي</p>
+
+                  <p className="mt-1 text-lg font-bold text-[#0E1F33]">0.00</p>
+                </div>
               </div>
-            </div>
+            </section>
 
-            {/* الهاتف */}
+            <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <div className="flex items-start gap-2 text-amber-800">
+                <FiAlertCircle className="mt-0.5 shrink-0" />
 
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-gray-700">
-                رقم الهاتف
-              </label>
+                <div>
+                  <p className="font-bold">تنبيه</p>
 
-              <div className="relative">
-                <FiPhone
-                  size={16}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                />
-
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
-                  placeholder="مثال: 734434443"
-                  className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pr-9 pl-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                />
+                  <p className="mt-1 text-xs leading-6">
+                    تأكد من صحة بيانات المورد والحساب المحاسبي. ستُستخدم هذه
+                    البيانات عند إنشاء فواتير الشراء.
+                  </p>
+                </div>
               </div>
-            </div>
-
-            {/* الرصيد */}
-
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-gray-700">
-                الرصيد الافتتاحي
-              </label>
-
-              <div className="relative">
-                <FiDollarSign
-                  size={16}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                />
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={balance}
-                  onChange={(event) => setBalance(event.target.value)}
-                  placeholder="0"
-                  className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pr-9 pl-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                />
-              </div>
-            </div>
-
-            {/* العنوان */}
-
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium text-gray-700">
-                العنوان
-              </label>
-
-              <div className="relative">
-                <FiMapPin
-                  size={16}
-                  className="absolute right-3 top-3 text-gray-400"
-                />
-
-                <textarea
-                  value={address}
-                  onChange={(event) => setAddress(event.target.value)}
-                  placeholder="أدخل عنوان المورد"
-                  rows={3}
-                  className="w-full resize-none rounded-lg border border-gray-200 bg-white py-2.5 pr-9 pl-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Footer */}
-
-          <div className="flex flex-col-reverse gap-2 border-t border-gray-100 bg-gray-50/50 px-4 py-3 sm:flex-row sm:justify-end sm:px-5">
-            {/* إلغاء */}
-
-            <Link
-              href="/suppliers"
-              className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
-            >
-              إلغاء
-            </Link>
-
-            {/* حفظ */}
-
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-5 py-2 text-xs font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <FiSave size={15} />
-
-              {isSaving ? "جاري الحفظ..." : "حفظ المورد"}
-            </button>
+            </section>
           </div>
         </div>
+
+        {/* أزرار الحفظ */}
+
+        <div className="mt-6 flex flex-col-reverse justify-end gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => router.push("/suppliers")}
+            className="h-11 rounded-lg border border-gray-200 bg-white px-6 font-semibold hover:bg-gray-50"
+          >
+            إلغاء
+          </button>
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex h-11 items-center justify-center gap-2 rounded-lg bg-[#0E1F33] px-8 font-semibold text-white transition hover:bg-[#193653] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? <FiRefreshCw className="animate-spin" /> : <FiSave />}
+
+            {saving ? "جارٍ الحفظ..." : "حفظ المورد"}
+          </button>
+        </div>
       </form>
-    </main>
+    </div>
   );
 }
