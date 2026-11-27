@@ -25,21 +25,7 @@ const purchaseLinks = [
     href: "/erp/purchases/invoices",
     icon: FiShoppingBag,
   },
-  {
-    name: "قائمة المشتريات",
-    href: "/erp/purchases/list",
-    icon: FiClipboard,
-  },
-  {
-    name: "الموردون",
-    href: "/erp/suppliers",
-    icon: FiTruck,
-  },
-  {
-    name: "سداد الموردين",
-    href: "/erp/purchases/payments",
-    icon: FiDollarSign,
-  },
+
   {
     name: "مرتجعات المشتريات",
     href: "/erp/purchases/returns",

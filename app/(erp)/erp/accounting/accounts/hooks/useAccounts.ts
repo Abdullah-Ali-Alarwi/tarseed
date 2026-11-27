@@ -11,390 +11,439 @@ import {
 } from "@/lib/api/accounts";
 
 import { getProducts } from "@/lib/api/products";
-import { getWarehouseStocks } from "@/lib/api/warehouseStocks";
+import { getWarehouseStocks } from "@/lib/api/warehouses";
 
-import { Account, AccountFormData, AccountId } from "../types";
+import type {
+  Account,
+  AccountFormData,
+  AccountId,
+} from "../types";
 
-// =====================================
-// الحسابات الرئيسية الافتراضية
-// =====================================
+// ==========================================
+// Default Accounts
+// ==========================================
 
-const defaultAccounts = [
+const defaultAccounts: Partial<Account>[] = [
   {
     code: "1",
     name: "الأصول",
     nameEn: "Assets",
     type: "asset",
-    parentId: null,
     nature: "debit",
+    level: 1,
     isGroup: true,
     allowPosting: false,
+    isSystem: true,
+    isActive: true,
+    balance: 0,
   },
   {
     code: "2",
     name: "الالتزامات",
     nameEn: "Liabilities",
     type: "liability",
-    parentId: null,
     nature: "credit",
+    level: 1,
     isGroup: true,
     allowPosting: false,
+    isSystem: true,
+    isActive: true,
+    balance: 0,
   },
   {
     code: "3",
     name: "حقوق الملكية",
     nameEn: "Equity",
     type: "equity",
-    parentId: null,
     nature: "credit",
+    level: 1,
     isGroup: true,
     allowPosting: false,
+    isSystem: true,
+    isActive: true,
+    balance: 0,
   },
   {
     code: "4",
     name: "الإيرادات",
     nameEn: "Revenue",
     type: "revenue",
-    parentId: null,
     nature: "credit",
+    level: 1,
     isGroup: true,
     allowPosting: false,
+    isSystem: true,
+    isActive: true,
+    balance: 0,
   },
   {
     code: "5",
     name: "المصروفات",
     nameEn: "Expenses",
     type: "expense",
-    parentId: null,
     nature: "debit",
+    level: 1,
     isGroup: true,
     allowPosting: false,
+    isSystem: true,
+    isActive: true,
+    balance: 0,
   },
-] as const;
+];
 
-// =====================================
+// ==========================================
 // Hook
-// =====================================
+// ==========================================
 
-export function useAccounts(companyId: string) {
+export function useAccounts(companyId?: string) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inventoryValue, setInventoryValue] = useState(0);
 
-  // =====================================
-  // حساب قيمة المخزون
-  // =====================================
+  // ==========================================
+  // Calculate Inventory Value
+  // ==========================================
 
   const calculateInventoryValue = useCallback(async () => {
     if (!companyId) {
-      setInventoryValue(0);
       return 0;
     }
 
-    const [products, stocks] = await Promise.all([
-      getProducts(companyId),
-      getWarehouseStocks(companyId),
-    ]);
+    try {
+      const [products, warehouseStocks] = await Promise.all([
+        getProducts(companyId),
+        getWarehouseStocks(companyId),
+      ]);
 
-    const trackedProducts = products.filter(
-      (product) =>
-        String(product.companyId) === String(companyId) &&
-        product.trackInventory !== false
-    );
-
-    const companyStocks = stocks.filter(
-      (stock) =>
-        String(stock.companyId) === String(companyId)
-    );
-
-    // تجميع الكميات حسب المنتج
-    const quantities = new Map<string, number>();
-
-    for (const stock of companyStocks) {
-      const productId = String(stock.productId);
-
-      quantities.set(
-        productId,
-        (quantities.get(productId) || 0) +
-          Number(stock.quantity || 0)
+      const productsMap = new Map(
+        products.map((product: any) => [
+          String(product.id),
+          Number(product.purchasePrice ?? 0),
+        ])
       );
+
+      const total = warehouseStocks.reduce(
+        (sum: number, stock: any) => {
+          const productPrice =
+            productsMap.get(String(stock.productId)) ?? 0;
+
+          const quantity = Number(
+            stock.quantity ?? stock.currentQuantity ?? 0
+          );
+
+          return sum + quantity * productPrice;
+        },
+        0
+      );
+
+      setInventoryValue(total);
+
+      return total;
+    } catch (err) {
+      console.error("Error calculating inventory value:", err);
+      setInventoryValue(0);
+      return 0;
     }
-
-    // حساب قيمة المخزون
-    const total = trackedProducts.reduce((sum, product) => {
-      const quantity =
-        quantities.get(String(product.id)) || 0;
-
-      const purchasePrice = Number(
-        product.purchasePrice || 0
-      );
-
-      return sum + quantity * purchasePrice;
-    }, 0);
-
-    setInventoryValue(total);
-
-    return total;
   }, [companyId]);
 
-  // =====================================
-  // جلب الحسابات
-  // =====================================
+  // ==========================================
+  // Fetch Accounts
+  // ==========================================
 
   const fetchAccounts = useCallback(async () => {
     if (!companyId) {
-      setAccounts([]);
-      setInventoryValue(0);
-      return [];
+      return;
     }
 
     try {
       setLoading(true);
       setError(null);
 
-      const [companyAccounts, currentInventoryValue] =
-        await Promise.all([
-          getAccounts(companyId),
-          calculateInventoryValue(),
-        ]);
+      const [accountsData] = await Promise.all([
+        getAccounts(companyId),
+        calculateInventoryValue(),
+      ]);
 
-      const updatedAccounts = companyAccounts.map(
-        (account) => {
-          if (String(account.code) === "1104") {
-            return {
-              ...account,
-              balance: currentInventoryValue,
-            };
-          }
-
+      const updatedAccounts = accountsData.map((account: Account) => {
+        if (account.code === "1104") {
           return {
             ...account,
-            balance: Number(account.balance || 0),
+            balance: inventoryValue,
           };
         }
-      );
 
-      setAccounts(updatedAccounts as Account[]);
+        return account;
+      });
 
-      return updatedAccounts as Account[];
+      setAccounts(updatedAccounts);
     } catch (err) {
-      console.error("Fetch accounts error:", err);
-
-      setError("تعذر تحميل الحسابات أو بيانات المخزون");
-
-      throw err;
+      console.error("Error fetching accounts:", err);
+      setError("حدث خطأ أثناء تحميل الحسابات");
     } finally {
       setLoading(false);
     }
-  }, [companyId, calculateInventoryValue]);
+  }, [companyId, calculateInventoryValue, inventoryValue]);
 
-  // =====================================
-  // الحسابات الرئيسية غير المضافة
-  // =====================================
+  // ==========================================
+  // Get Missing Default Accounts
+  // ==========================================
 
   const getMissingDefaultAccounts = useCallback(
     (currentAccounts: Account[] = accounts) => {
       return defaultAccounts.filter(
         (defaultAccount) =>
           !currentAccounts.some(
-            (account) =>
-              String(account.code) === defaultAccount.code &&
-              (account.parentId === null ||
-                account.parentId === undefined ||
-                account.parentId === "")
+            (account) => account.code === defaultAccount.code
           )
       );
     },
     [accounts]
   );
 
-  // =====================================
-  // إضافة الحسابات الرئيسية الافتراضية
-  // =====================================
+  // ==========================================
+  // Add Default Accounts
+  // ==========================================
 
-  const addDefaultAccounts = async () => {
+  const addDefaultAccounts = useCallback(async () => {
     if (!companyId) {
-      throw new Error("لم يتم تحديد الشركة الحالية");
+      throw new Error("لم يتم تحديد الشركة");
     }
 
-    const currentAccounts = await getAccounts(companyId);
+    try {
+      const missingAccounts = getMissingDefaultAccounts();
 
-    const missingAccounts =
-      getMissingDefaultAccounts(currentAccounts as Account[]);
-
-    if (missingAccounts.length === 0) {
-      throw new Error("الحسابات الرئيسية موجودة مسبقاً");
-    }
-
-    for (const account of missingAccounts) {
-      await createAccountApi({
-        ...account,
-        companyId,
-        isActive: true,
-        balance: 0,
-      });
-    }
-
-    await fetchAccounts();
-
-    return missingAccounts.length;
-  };
-
-  // =====================================
-  // إنشاء حساب جديد
-  // =====================================
-
-  const createAccount = async (data: AccountFormData) => {
-    if (!companyId) {
-      throw new Error("لم يتم تحديد الشركة الحالية");
-    }
-
-    const newAccount = await createAccountApi({
-      ...data,
-      companyId,
-      isActive: true,
-      balance: 0,
-      createdAt: new Date().toISOString(),
-    });
-
-    await fetchAccounts();
-
-    return newAccount;
-  };
-
-  // =====================================
-  // التحقق من ملكية الحساب
-  // =====================================
-
-  const getCompanyAccount = async (id: AccountId) => {
-    const account = await getAccountById(String(id));
-
-    if (!account) {
-      throw new Error("الحساب غير موجود");
-    }
-
-    if (
-      String(account.companyId) !== String(companyId)
-    ) {
-      throw new Error("هذا الحساب لا يتبع الشركة الحالية");
-    }
-
-    return account;
-  };
-
-  // =====================================
-  // تعديل حساب
-  // =====================================
-
-  const updateAccount = async (
-    id: AccountId,
-    data: AccountFormData
-  ) => {
-    if (!companyId) {
-      throw new Error("لم يتم تحديد الشركة الحالية");
-    }
-
-    await getCompanyAccount(id);
-
-    const updatedAccount = await updateAccountApi(
-      String(id),
-      {
-        ...data,
-        companyId,
+      if (missingAccounts.length === 0) {
+        return;
       }
-    );
 
-    await fetchAccounts();
-
-    return updatedAccount;
-  };
-
-  // =====================================
-  // حذف حساب
-  // =====================================
-
-  const deleteAccount = async (id: AccountId) => {
-    if (!companyId) {
-      throw new Error("لم يتم تحديد الشركة الحالية");
-    }
-
-    const account = await getCompanyAccount(id);
-
-    if (String(account.code) === "1104") {
-      throw new Error(
-        "لا يمكن حذف حساب المخزون المرتبط بنظام المستودعات"
-      );
-    }
-
-    await deleteAccountApi(String(id));
-
-    await fetchAccounts();
-  };
-
-  // =====================================
-  // تفعيل وإيقاف الحساب
-  // =====================================
-
-  const toggleAccountStatus = async (id: AccountId) => {
-    if (!companyId) {
-      throw new Error("لم يتم تحديد الشركة الحالية");
-    }
-
-    const account = await getCompanyAccount(id);
-
-    if (
-      String(account.code) === "1104" &&
-      account.isActive
-    ) {
-      throw new Error(
-        "لا يمكن إيقاف حساب المخزون أثناء استخدام نظام المستودعات"
-      );
-    }
-
-    const updatedAccount = await updateAccountApi(
-      String(id),
-      {
-        isActive: !account.isActive,
+      for (const account of missingAccounts) {
+        await createAccountApi({
+          ...account,
+          companyId,
+          isActive: true,
+          balance: 0,
+          createdAt: new Date().toISOString(),
+        } as any);
       }
-    );
 
-    await fetchAccounts();
+      await fetchAccounts();
+    } catch (err) {
+      console.error("Error adding default accounts:", err);
+      throw err;
+    }
+  }, [companyId, getMissingDefaultAccounts, fetchAccounts]);
 
-    return updatedAccount;
-  };
+  // ==========================================
+  // Create Account
+  // ==========================================
 
-  // =====================================
-  // تحميل الحسابات عند تحديد الشركة
-  // =====================================
+  const createAccount = useCallback(
+    async (data: AccountFormData) => {
+      if (!companyId) {
+        throw new Error("لم يتم تحديد الشركة");
+      }
+
+      try {
+        const newAccount = {
+          ...data,
+          companyId,
+          isActive: true,
+          balance: 0,
+          createdAt: new Date().toISOString(),
+        };
+
+        const result = await createAccountApi(newAccount as any);
+
+        await fetchAccounts();
+
+        return result;
+      } catch (err) {
+        console.error("Error creating account:", err);
+        throw err;
+      }
+    },
+    [companyId, fetchAccounts]
+  );
+
+  // ==========================================
+  // Get Company Account
+  // ==========================================
+
+  const getCompanyAccount = useCallback(
+    async (id: AccountId) => {
+      if (!companyId) {
+        return null;
+      }
+
+      try {
+        const account = await getAccountById(
+          String(id),
+          companyId
+        );
+
+        if (!account || account.companyId !== companyId) {
+          return null;
+        }
+
+        return account;
+      } catch (err) {
+        console.error("Error getting account:", err);
+        return null;
+      }
+    },
+    [companyId]
+  );
+
+  // ==========================================
+  // Update Account
+  // ==========================================
+
+  const updateAccount = useCallback(
+    async (id: AccountId, data: AccountFormData) => {
+      if (!companyId) {
+        throw new Error("لم يتم تحديد الشركة");
+      }
+
+      try {
+        const existingAccount = await getCompanyAccount(id);
+
+        if (!existingAccount) {
+          throw new Error("الحساب غير موجود أو لا يتبع هذه الشركة");
+        }
+
+        const result = await updateAccountApi(
+          String(id),
+          {
+            ...data,
+            companyId,
+            updatedAt: new Date().toISOString(),
+          } as any,
+          companyId
+        );
+
+        await fetchAccounts();
+
+        return result;
+      } catch (err) {
+        console.error("Error updating account:", err);
+        throw err;
+      }
+    },
+    [companyId, getCompanyAccount, fetchAccounts]
+  );
+
+  // ==========================================
+  // Delete Account
+  // ==========================================
+
+  const deleteAccount = useCallback(
+    async (id: AccountId) => {
+      if (!companyId) {
+        throw new Error("لم يتم تحديد الشركة");
+      }
+
+      try {
+        const account = await getCompanyAccount(id);
+
+        if (!account) {
+          throw new Error("الحساب غير موجود أو لا يتبع هذه الشركة");
+        }
+
+        if (account.code === "1104") {
+          throw new Error("لا يمكن حذف حساب المخزون");
+        }
+
+        if (account.isSystem) {
+          throw new Error("لا يمكن حذف الحسابات الأساسية للنظام");
+        }
+
+        const result = await deleteAccountApi(
+          String(id),
+          companyId
+        );
+
+        await fetchAccounts();
+
+        return result;
+      } catch (err) {
+        console.error("Error deleting account:", err);
+        throw err;
+      }
+    },
+    [companyId, getCompanyAccount, fetchAccounts]
+  );
+
+  // ==========================================
+  // Toggle Account Status
+  // ==========================================
+
+  const toggleAccountStatus = useCallback(
+    async (id: AccountId) => {
+      if (!companyId) {
+        throw new Error("لم يتم تحديد الشركة");
+      }
+
+      try {
+        const account = await getCompanyAccount(id);
+
+        if (!account) {
+          throw new Error("الحساب غير موجود أو لا يتبع هذه الشركة");
+        }
+
+        const isActive =
+          account.isActive !== false &&
+          account.status !== "inactive";
+
+        if (account.code === "1104" && isActive) {
+          throw new Error("لا يمكن إيقاف حساب المخزون");
+        }
+
+        const result = await updateAccountApi(
+          String(id),
+          {
+            isActive: !isActive,
+            updatedAt: new Date().toISOString(),
+          } as any,
+          companyId
+        );
+
+        await fetchAccounts();
+
+        return result;
+      } catch (err) {
+        console.error("Error toggling account status:", err);
+        throw err;
+      }
+    },
+    [companyId, getCompanyAccount, fetchAccounts]
+  );
+
+  // ==========================================
+  // Load Accounts
+  // ==========================================
 
   useEffect(() => {
-    if (!companyId) {
-      setAccounts([]);
-      setInventoryValue(0);
-      setLoading(false);
-      return;
+    if (companyId) {
+      fetchAccounts();
     }
-
-    fetchAccounts().catch((err) => {
-      console.error("Initial accounts loading error:", err);
-    });
   }, [companyId, fetchAccounts]);
 
-  // =====================================
-  // القيم والدوال المتاحة للصفحات
-  // =====================================
+  // ==========================================
+  // Return
+  // ==========================================
 
   return {
-    accounts,
-    loading,
-    error,
-    inventoryValue,
+    accounts: companyId ? accounts : [],
+    loading: companyId ? loading : false,
+    error: companyId ? error : null,
+    inventoryValue: companyId ? inventoryValue : 0,
 
     fetchAccounts,
     calculateInventoryValue,
 
     createAccount,
+    getCompanyAccount,
     updateAccount,
     deleteAccount,
     toggleAccountStatus,

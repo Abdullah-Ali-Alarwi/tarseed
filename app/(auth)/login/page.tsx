@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
-import api from "@/lib/axios";
+import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function LoginPage() {
@@ -21,39 +20,115 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const value = identifier.trim();
+      const username = identifier.trim();
 
-      // البحث باستخدام اسم المستخدم أو البريد الإلكتروني
-      const isEmail = value.includes("@");
+      if (!username || !password) {
+        throw new Error("يرجى إدخال اسم المستخدم وكلمة المرور");
+      }
 
-      const { data } = await api.get("/users", {
-        params: {
-          select: "*",
-          [isEmail ? "email" : "username"]: `eq.${value}`,
-          password: `eq.${password}`,
+      // 1. البحث عن البريد الداخلي باستخدام اسم المستخدم
+      const { data: authEmail, error: emailError } = await supabase.rpc(
+        "get_auth_email_by_username",
+        {
+          p_username: username,
         },
-      });
+      );
 
-      // التحقق من بيانات الدخول
-      if (!data || data.length === 0) {
+      if (emailError) {
+        console.error("Username Lookup Error:", emailError);
+        throw new Error("تعذر التحقق من اسم المستخدم");
+      }
+
+      if (!authEmail) {
         throw new Error("اسم المستخدم أو كلمة المرور غير صحيحة");
       }
 
-      const user = data[0];
+      // 2. تسجيل الدخول باستخدام Supabase Auth
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: authEmail,
+          password,
+        });
 
-      // التحقق من حالة الحساب
+      if (authError || !authData.user) {
+        console.error("Supabase Auth Details:", {
+          message: authError?.message,
+          status: authError?.status,
+          code: authError?.code,
+        });
+
+        throw new Error("اسم المستخدم أو كلمة المرور غير صحيحة");
+      }
+
+      // 3. جلب بيانات المستخدم المرتبط بحساب Auth
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select(
+          `
+          id,
+          username,
+          email,
+          name,
+          type,
+          role,
+          companyId,
+          companyname,
+          ownerId,
+          isActive,
+          status,
+          auth_user_id
+        `,
+        )
+        .eq("auth_user_id", authData.user.id)
+        .maybeSingle();
+
+      if (userError) {
+        console.error("User Data Error:", userError);
+
+        await supabase.auth.signOut();
+
+        throw new Error("تعذر تحميل بيانات المستخدم");
+      }
+
+      if (!user) {
+        await supabase.auth.signOut();
+
+        throw new Error("لا يوجد سجل مستخدم مرتبط بحساب الدخول");
+      }
+
+      // 4. التأكد من تطابق اسم المستخدم
+      if (user.username !== username) {
+        await supabase.auth.signOut();
+
+        throw new Error("بيانات الحساب غير متطابقة");
+      }
+
+      // 5. التحقق من حالة الحساب
       if (user.isActive !== true || user.status !== "active") {
+        await supabase.auth.signOut();
+
         throw new Error("الحساب غير نشط، يرجى التواصل مع المسؤول");
       }
 
-      // التحقق من نوع الحساب
+      // 6. التحقق من نوع الحساب
       if (!["platform", "erp", "owner"].includes(user.type)) {
+        await supabase.auth.signOut();
+
         throw new Error("نوع الحساب غير معروف");
       }
 
-      // تجهيز بيانات المستخدم
+      // 7. التحقق من ارتباط مستخدم ERP بالشركة
+      if ((user.type === "erp" || user.type === "owner") && !user.companyId) {
+        await supabase.auth.signOut();
+
+        throw new Error("هذا الحساب غير مرتبط بأي شركة");
+      }
+
+      // 8. تجهيز بيانات المستخدم
       const authUser = {
         id: user.id,
+        auth_user_id: authData.user.id,
+
         username: user.username,
         email: user.email,
         name: user.name,
@@ -69,14 +144,19 @@ export default function LoginPage() {
         status: user.status,
       };
 
-      // حفظ بيانات المستخدم
+      // 9. حفظ بيانات المستخدم في localStorage
       localStorage.setItem("authUser", JSON.stringify(authUser));
 
-      // حفظ بيانات المصادقة في Cookies ليقرأها proxy.ts
+      // 10. إعداد Cookies للتوافق مع proxy.ts الحالي
+      // هذه القيم مؤقتة للتوجيه فقط وليست وسيلة حماية أمنية.
       const cookieOptions = "path=/; max-age=86400; SameSite=Lax";
 
       document.cookie = `token=${encodeURIComponent(
         String(user.id),
+      )}; ${cookieOptions}`;
+
+      document.cookie = `username=${encodeURIComponent(
+        user.username,
       )}; ${cookieOptions}`;
 
       document.cookie = `type=${encodeURIComponent(
@@ -87,7 +167,7 @@ export default function LoginPage() {
         user.role || "",
       )}; ${cookieOptions}`;
 
-      // تحديد الصفحة حسب نوع الحساب
+      // 11. التوجيه حسب نوع الحساب
       if (user.type === "platform") {
         router.replace("/wezzan/dashboard");
       } else {
@@ -96,20 +176,9 @@ export default function LoginPage() {
     } catch (err) {
       console.error("Login Error:", err);
 
-      if (axios.isAxiosError(err)) {
-        setError(
-          err.response?.data?.message ||
-            err.response?.data?.details ||
-            err.response?.data?.hint ||
-            (err.response
-              ? `حدث خطأ: ${err.response.status}`
-              : "تعذر الاتصال بالخادم"),
-        );
-      } else {
-        setError(
-          err instanceof Error ? err.message : "حدث خطأ أثناء تسجيل الدخول",
-        );
-      }
+      setError(
+        err instanceof Error ? err.message : "حدث خطأ أثناء تسجيل الدخول",
+      );
     } finally {
       setLoading(false);
     }
@@ -130,17 +199,17 @@ export default function LoginPage() {
 
         {/* Login Form */}
         <form onSubmit={handleLogin} className="space-y-5">
-          {/* Username / Email */}
+          {/* Username */}
           <div>
             <label className="mb-2 block text-sm font-semibold text-gray-700">
-              اسم المستخدم أو البريد الإلكتروني
+              اسم المستخدم
             </label>
 
             <input
               type="text"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="أدخل اسم المستخدم أو البريد الإلكتروني"
+              placeholder="أدخل اسم المستخدم"
               autoComplete="username"
               required
               disabled={loading}

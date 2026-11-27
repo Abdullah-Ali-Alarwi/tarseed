@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
 import {
   FiArrowRight,
@@ -15,41 +14,134 @@ import {
 } from "react-icons/fi";
 import { toast } from "sonner";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import { supabase } from "@/lib/supabase";
 
-const api = axios.create({
-  baseURL: API_URL,
-  headers: { "Content-Type": "application/json" },
-});
+/* =====================================================
+   Types
+===================================================== */
 
 type AnyRecord = Record<string, any>;
 
-type PurchaseItem = {
+type PaymentMethod = "cash" | "bank" | "credit";
+
+interface Supplier {
+  id: string;
+  companyId: string;
+  name: string;
+  phone?: string;
+  accountId?: string;
+  accountCode?: string;
+  accountName?: string;
+  balance?: number;
+  status?: string;
+  isActive?: boolean;
+}
+
+interface Product {
+  id: string;
+  companyId: string;
+  name: string;
+  sku?: string;
+  code?: string;
+  barcode?: string;
+  unitId?: string;
+  unitName?: string;
+  purchasePrice?: number;
+  currentStock?: number;
+  isActive?: boolean;
+  status?: string;
+}
+
+interface Warehouse {
+  id: string;
+  companyId: string;
+  name: string;
+  code?: string;
+  isActive?: boolean;
+  status?: string;
+}
+
+interface Unit {
+  id: string;
+  companyId: string;
+  name: string;
+  symbol?: string;
+}
+
+interface Account {
+  id: string;
+  companyId: string;
+  code: string;
+  name: string;
+  isGroup?: boolean;
+  isActive?: boolean;
+  status?: string;
+  type?: string;
+  nature?: string;
+}
+
+interface PurchaseItem {
   id: string;
   productId: string;
   productName: string;
   productCode: string;
   warehouseId: string;
   warehouseName: string;
+  unit: string;
   quantity: number;
   price: number;
   discount: number;
   total: number;
+}
+
+/* =====================================================
+   Helpers
+===================================================== */
+
+const today = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 };
 
-type PaymentMethod = "cash" | "bank" | "credit";
+const createId = () => crypto.randomUUID();
 
-const today = () => new Date().toISOString().slice(0, 10);
+const normalize = (value: any) => String(value ?? "");
 
-const createId = () =>
-  `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-const money = (value: number) =>
-  new Intl.NumberFormat("ar-SA", {
+const money = (value: number | string | undefined) =>
+  new Intl.NumberFormat("ar-SA-u-nu-latn", {
     maximumFractionDigits: 2,
   }).format(Number(value) || 0);
 
-const normalize = (value: any) => String(value ?? "");
+const activeRecord = (item: AnyRecord) =>
+  item.isActive !== false &&
+  item.status !== "inactive" &&
+  item.status !== "disabled";
+
+/* =====================================================
+   Initial Item
+===================================================== */
+
+const createEmptyItem = (): PurchaseItem => ({
+  id: createId(),
+  productId: "",
+  productName: "",
+  productCode: "",
+  warehouseId: "",
+  warehouseName: "",
+  unit: "",
+  quantity: 1,
+  price: 0,
+  discount: 0,
+  total: 0,
+});
+
+/* =====================================================
+   Component
+===================================================== */
 
 export default function NewPurchasePage() {
   const router = useRouter();
@@ -60,43 +152,33 @@ export default function NewPurchasePage() {
   const [companyId, setCompanyId] = useState("");
   const [companyName, setCompanyName] = useState("");
 
-  // المستخدم الحالي
   const [currentUser, setCurrentUser] = useState<AnyRecord | null>(null);
 
-  const [suppliers, setSuppliers] = useState<AnyRecord[]>([]);
-  const [products, setProducts] = useState<AnyRecord[]>([]);
-  const [warehouses, setWarehouses] = useState<AnyRecord[]>([]);
-  const [accounts, setAccounts] = useState<AnyRecord[]>([]);
-  const [warehouseStocks, setWarehouseStocks] = useState<AnyRecord[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+
+  /* بيانات الفاتورة */
 
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [date, setDate] = useState(today());
+
   const [supplierId, setSupplierId] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+
   const [paymentAccountId, setPaymentAccountId] = useState("");
+
   const [taxRate, setTaxRate] = useState(0);
   const [invoiceDiscount, setInvoiceDiscount] = useState(0);
   const [notes, setNotes] = useState("");
 
-  const [items, setItems] = useState<PurchaseItem[]>([
-    {
-      id: createId(),
-      productId: "",
-      productName: "",
-      productCode: "",
-      warehouseId: "",
-      warehouseName: "",
-      quantity: 1,
-      price: 0,
-      discount: 0,
-      total: 0,
-    },
-  ]);
+  const [items, setItems] = useState<PurchaseItem[]>([createEmptyItem()]);
 
-  // =========================================
-  // المستخدم الذي نفذ العملية
-  // =========================================
+  /* =====================================================
+     المستخدم الحالي
+  ===================================================== */
 
   const actorName =
     currentUser?.name ||
@@ -109,37 +191,19 @@ export default function NewPurchasePage() {
       createdBy: actorName,
       createdById: normalize(currentUser?.id),
       createdByUsername: normalize(currentUser?.username),
-      createdByRole: normalize(currentUser?.role),
+      createdByRole: normalize(currentUser?.role || currentUser?.roleName),
       createdByType: normalize(currentUser?.type),
     }),
     [currentUser, actorName],
   );
 
-  // =========================================
-  // البيانات المختارة
-  // =========================================
+  /* =====================================================
+     البيانات المختارة
+  ===================================================== */
 
   const selectedSupplier = useMemo(
-    () => suppliers.find((item) => normalize(item.id) === supplierId),
+    () => suppliers.find((supplier) => normalize(supplier.id) === supplierId),
     [suppliers, supplierId],
-  );
-
-  const inventoryAccount = useMemo(
-    () =>
-      accounts.find(
-        (item) =>
-          normalize(item.code) === "1104" &&
-          item.isGroup !== true &&
-          item.status !== "inactive" &&
-          item.isActive !== false,
-      ) ||
-      accounts.find(
-        (item) =>
-          normalize(item.code) === "1104" &&
-          item.status !== "inactive" &&
-          item.isActive !== false,
-      ),
-    [accounts],
   );
 
   const paymentAccounts = useMemo(
@@ -148,10 +212,10 @@ export default function NewPurchasePage() {
         const code = normalize(account.code);
 
         return (
-          (code === "1101" || code.startsWith("1102")) &&
           account.isGroup !== true &&
+          account.isActive !== false &&
           account.status !== "inactive" &&
-          account.isActive !== false
+          (code === "1101" || code.startsWith("1102"))
         );
       }),
     [accounts],
@@ -165,9 +229,9 @@ export default function NewPurchasePage() {
     [paymentAccounts, paymentAccountId],
   );
 
-  // =========================================
-  // الحسابات
-  // =========================================
+  /* =====================================================
+     الحسابات
+  ===================================================== */
 
   const subtotal = useMemo(
     () =>
@@ -176,7 +240,8 @@ export default function NewPurchasePage() {
           sum +
           Math.max(
             0,
-            Number(item.quantity) * Number(item.price) - Number(item.discount),
+            Number(item.quantity || 0) * Number(item.price || 0) -
+              Number(item.discount || 0),
           ),
         0,
       ),
@@ -198,9 +263,9 @@ export default function NewPurchasePage() {
     [items],
   );
 
-  // =========================================
-  // تحميل بيانات الشركة والمستخدم
-  // =========================================
+  /* =====================================================
+     تحميل بيانات Supabase
+  ===================================================== */
 
   const loadData = useCallback(async () => {
     try {
@@ -222,108 +287,136 @@ export default function NewPurchasePage() {
         return;
       }
 
-      const username = authUser.username;
-
-      if (!username) {
-        toast.error("بيانات المستخدم غير مكتملة");
-        return;
-      }
-
-      // جلب المستخدم من قاعدة البيانات
-      const usersResponse = await api.get("/users", {
-        params: { username },
-      });
-
-      const user = usersResponse.data.find(
-        (item: AnyRecord) => item.username === username,
-      );
-
-      if (!user || !user.companyId) {
+      if (!authUser.companyId) {
         toast.error("المستخدم غير مرتبط بشركة");
         return;
       }
 
-      const currentCompanyId = normalize(user.companyId);
-
-      // حفظ المستخدم الحالي
-      setCurrentUser({
-        ...user,
-        name:
-          user.name ||
-          user.fullName ||
-          authUser.name ||
-          authUser.fullName ||
-          user.username,
-      });
+      const currentCompanyId = normalize(authUser.companyId);
 
       setCompanyId(currentCompanyId);
+      setCurrentUser(authUser);
 
       const [
-        companiesRes,
-        suppliersRes,
-        productsRes,
-        warehousesRes,
-        accountsRes,
-        stocksRes,
-        purchasesRes,
+        companyResult,
+        suppliersResult,
+        productsResult,
+        warehousesResult,
+        unitsResult,
+        accountsResult,
+        purchasesResult,
       ] = await Promise.all([
-        api.get("/companies", {
-          params: { id: currentCompanyId },
-        }),
-        api.get("/suppliers", {
-          params: { companyId: currentCompanyId },
-        }),
-        api.get("/products", {
-          params: { companyId: currentCompanyId },
-        }),
-        api.get("/warehouses", {
-          params: { companyId: currentCompanyId },
-        }),
-        api.get("/accounts", {
-          params: { companyId: currentCompanyId },
-        }),
-        api.get("/warehouseStocks", {
-          params: { companyId: currentCompanyId },
-        }),
-        api.get("/purchases", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("companies")
+          .select("*")
+          .eq("id", currentCompanyId)
+          .maybeSingle(),
+
+        supabase
+          .from("suppliers")
+          .select("*")
+          .eq("companyId", currentCompanyId),
+
+        supabase.from("products").select("*").eq("companyId", currentCompanyId),
+
+        supabase
+          .from("warehouses")
+          .select("*")
+          .eq("companyId", currentCompanyId),
+
+        supabase.from("units").select("*").eq("companyId", currentCompanyId),
+
+        supabase.from("accounts").select("*").eq("companyId", currentCompanyId),
+
+        supabase
+          .from("purchases")
+          .select("invoiceNumber")
+          .eq("companyId", currentCompanyId),
       ]);
 
-      const company = companiesRes.data.find(
-        (item: AnyRecord) => normalize(item.id) === currentCompanyId,
-      );
+      const results = [
+        suppliersResult,
+        productsResult,
+        warehousesResult,
+        unitsResult,
+        accountsResult,
+        purchasesResult,
+      ];
 
-      setCompanyName(company?.name || company?.companyName || user.name || "");
+      const failedResult = results.find((result) => result.error);
 
-      setSuppliers(suppliersRes.data);
-      setProducts(productsRes.data);
-      setWarehouses(warehousesRes.data);
-      setAccounts(accountsRes.data);
-      setWarehouseStocks(stocksRes.data);
-
-      const nextNumber = `PUR-${String(purchasesRes.data.length + 1).padStart(
-        4,
-        "0",
-      )}`;
-
-      setInvoiceNumber(nextNumber);
-
-      if (warehousesRes.data.length === 1) {
-        setWarehouseId(normalize(warehousesRes.data[0].id));
+      if (failedResult?.error) {
+        throw failedResult.error;
       }
 
-      const cashAccount = accountsRes.data.find(
-        (account: AnyRecord) =>
-          normalize(account.code) === "1101" && account.isGroup !== true,
+      if (companyResult.error) {
+        throw companyResult.error;
+      }
+
+      const company = companyResult.data;
+
+      setCompanyName(
+        company?.name || company?.companyName || authUser.companyName || "",
+      );
+
+      const loadedSuppliers = (suppliersResult.data || []) as Supplier[];
+      const loadedProducts = (productsResult.data || []) as Product[];
+      const loadedWarehouses = (warehousesResult.data || []) as Warehouse[];
+      const loadedUnits = (unitsResult.data || []) as Unit[];
+      const loadedAccounts = (accountsResult.data || []) as Account[];
+
+      setSuppliers(loadedSuppliers.filter(activeRecord));
+      setProducts(loadedProducts.filter(activeRecord));
+      setWarehouses(loadedWarehouses.filter(activeRecord));
+      setUnits(loadedUnits);
+      setAccounts(loadedAccounts.filter(activeRecord));
+
+      /* رقم الفاتورة التالي */
+
+      const existingNumbers = (purchasesResult.data || []).map(
+        (purchase: AnyRecord) => {
+          const match = String(purchase.invoiceNumber || "").match(
+            /^PUR-(\d+)$/,
+          );
+
+          return match ? Number(match[1]) : 0;
+        },
+      );
+
+      const nextNumber = Math.max(0, ...existingNumbers) + 1;
+
+      setInvoiceNumber(`PUR-${String(nextNumber).padStart(4, "0")}`);
+
+      /* اختيار المستودع الافتراضي */
+
+      if (loadedWarehouses.length === 1) {
+        const defaultWarehouse = loadedWarehouses[0];
+
+        setItems((previous) =>
+          previous.map((item) => ({
+            ...item,
+            warehouseId: normalize(defaultWarehouse.id),
+            warehouseName: defaultWarehouse.name,
+          })),
+        );
+      }
+
+      /* اختيار حساب الصندوق الافتراضي */
+
+      const cashAccount = loadedAccounts.find(
+        (account) =>
+          normalize(account.code) === "1101" &&
+          account.isGroup !== true &&
+          activeRecord(account),
       );
 
       if (cashAccount) {
         setPaymentAccountId(normalize(cashAccount.id));
       }
-    } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحميل بيانات فاتورة الشراء");
+    } catch (error: any) {
+      console.error("Load purchase data:", error);
+
+      toast.error(error?.message || "تعذر تحميل بيانات فاتورة الشراء");
     } finally {
       setLoading(false);
     }
@@ -333,29 +426,28 @@ export default function NewPurchasePage() {
     loadData();
   }, [loadData]);
 
-  // =========================================
-  // الأصناف
-  // =========================================
+  /* =====================================================
+     إضافة صنف
+  ===================================================== */
 
   const addItem = () => {
-    setItems((prev) => [
-      ...prev,
+    const defaultWarehouse = warehouses.find(
+      (warehouse) => normalize(warehouse.id) === (items[0]?.warehouseId || ""),
+    );
+
+    setItems((previous) => [
+      ...previous,
       {
-        id: createId(),
-        productId: "",
-        productName: "",
-        productCode: "",
-        warehouseId,
-        warehouseName:
-          warehouses.find((item) => normalize(item.id) === warehouseId)?.name ||
-          "",
-        quantity: 1,
-        price: 0,
-        discount: 0,
-        total: 0,
+        ...createEmptyItem(),
+        warehouseId: normalize(defaultWarehouse?.id),
+        warehouseName: defaultWarehouse?.name || "",
       },
     ]);
   };
+
+  /* =====================================================
+     حذف صنف
+  ===================================================== */
 
   const removeItem = (id: string) => {
     if (items.length === 1) {
@@ -363,31 +455,42 @@ export default function NewPurchasePage() {
       return;
     }
 
-    setItems((prev) => prev.filter((item) => item.id !== id));
+    setItems((previous) => previous.filter((item) => item.id !== id));
   };
 
+  /* =====================================================
+     تحديث صنف
+  ===================================================== */
+
   const updateItem = (id: string, field: keyof PurchaseItem, value: any) => {
-    setItems((prev) =>
-      prev.map((item) => {
+    setItems((previous) =>
+      previous.map((item) => {
         if (item.id !== id) return item;
 
         const updated = { ...item, [field]: value };
 
         if (field === "productId") {
           const product = products.find(
-            (p) => normalize(p.id) === normalize(value),
+            (product) => normalize(product.id) === normalize(value),
+          );
+
+          const unit = units.find(
+            (unit) => normalize(unit.id) === normalize(product?.unitId),
           );
 
           updated.productName = product?.name || "";
-          updated.productCode = product?.code || product?.sku || "";
-          updated.price = Number(
-            product?.purchasePrice || product?.costPrice || 0,
-          );
+          updated.productCode =
+            product?.sku || product?.code || product?.barcode || "";
+
+          updated.price = Number(product?.purchasePrice || 0);
+          updated.unit = unit
+            ? `${unit.name}${unit.symbol ? ` (${unit.symbol})` : ""}`
+            : product?.unitName || "";
         }
 
         if (field === "warehouseId") {
           const warehouse = warehouses.find(
-            (w) => normalize(w.id) === normalize(value),
+            (warehouse) => normalize(warehouse.id) === normalize(value),
           );
 
           updated.warehouseName = warehouse?.name || "";
@@ -404,18 +507,13 @@ export default function NewPurchasePage() {
     );
   };
 
-  // =========================================
-  // التحقق من الفاتورة
-  // =========================================
+  /* =====================================================
+     التحقق من الفاتورة
+  ===================================================== */
 
   const validateInvoice = () => {
-    if (!companyId) {
-      toast.error("تعذر تحديد الشركة");
-      return false;
-    }
-
-    if (!currentUser) {
-      toast.error("تعذر تحديد المستخدم الحالي");
+    if (!companyId || !currentUser) {
+      toast.error("تعذر تحديد الشركة أو المستخدم");
       return false;
     }
 
@@ -434,13 +532,8 @@ export default function NewPurchasePage() {
       return false;
     }
 
-    if (!warehouseId) {
-      toast.error("يرجى اختيار المستودع");
-      return false;
-    }
-
-    if (!inventoryAccount) {
-      toast.error("حساب المخزون 1104 غير موجود أو غير قابل للترحيل");
+    if (warehouses.length === 0) {
+      toast.error("لا يوجد مستودع مسجل للشركة");
       return false;
     }
 
@@ -448,7 +541,7 @@ export default function NewPurchasePage() {
       items.some(
         (item) =>
           !item.productId ||
-          !item.quantity ||
+          !item.warehouseId ||
           Number(item.quantity) <= 0 ||
           Number(item.price) < 0 ||
           Number(item.discount) < 0,
@@ -459,7 +552,7 @@ export default function NewPurchasePage() {
     }
 
     if (Number(invoiceDiscount) < 0 || Number(taxRate) < 0) {
-      toast.error("الخصم والضريبة لا يمكن أن يكونا بقيمة سالبة");
+      toast.error("الخصم والضريبة لا يمكن أن يكونا سالبين");
       return false;
     }
 
@@ -486,264 +579,9 @@ export default function NewPurchasePage() {
     return true;
   };
 
-  // =========================================
-  // إنشاء القيد المحاسبي
-  // =========================================
-
-  const buildJournal = (purchase: AnyRecord, journalNumber: string) => {
-    const lines: AnyRecord[] = [];
-
-    const now = new Date().toISOString();
-
-    // مدين المخزون
-    lines.push({
-      id: createId(),
-      companyId,
-      accountId: inventoryAccount.id,
-      accountCode: inventoryAccount.code,
-      accountName: inventoryAccount.name,
-      debit: purchase.subtotal - purchase.discount,
-      credit: 0,
-      description: `إضافة مخزون من فاتورة ${purchase.invoiceNumber}`,
-      supplierId: selectedSupplier.id,
-    });
-
-    // ضريبة المدخلات
-    if (purchase.tax > 0) {
-      const taxAccount = accounts.find(
-        (account) =>
-          normalize(account.code) === "1105" && account.isGroup !== true,
-      );
-
-      if (!taxAccount) {
-        throw new Error(
-          "توجد ضريبة في الفاتورة ولكن حساب ضريبة المدخلات 1105 غير موجود",
-        );
-      }
-
-      lines.push({
-        id: createId(),
-        companyId,
-        accountId: taxAccount.id,
-        accountCode: taxAccount.code,
-        accountName: taxAccount.name,
-        debit: purchase.tax,
-        credit: 0,
-        description: "ضريبة مدخلات المشتريات",
-        supplierId: selectedSupplier.id,
-      });
-    }
-
-    // دائن المورد أو حساب الدفع
-    if (paymentMethod === "credit") {
-      lines.push({
-        id: createId(),
-        companyId,
-        accountId: selectedSupplier.accountId,
-        accountCode: selectedSupplier.accountCode,
-        accountName: selectedSupplier.accountName || selectedSupplier.name,
-        debit: 0,
-        credit: purchase.total,
-        description: `شراء آجل من ${selectedSupplier.name}`,
-        supplierId: selectedSupplier.id,
-      });
-    } else {
-      lines.push({
-        id: createId(),
-        companyId,
-        accountId: selectedPaymentAccount.id,
-        accountCode: selectedPaymentAccount.code,
-        accountName: selectedPaymentAccount.name,
-        debit: 0,
-        credit: purchase.total,
-        description: `دفع فاتورة شراء ${purchase.invoiceNumber}`,
-      });
-    }
-
-    const debit = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
-
-    const credit = lines.reduce(
-      (sum, line) => sum + Number(line.credit || 0),
-      0,
-    );
-
-    if (Math.abs(debit - credit) > 0.01) {
-      throw new Error(`القيد غير متوازن. المدين ${debit} والدائن ${credit}`);
-    }
-
-    const journalId = createId();
-
-    const journal = {
-      id: journalId,
-      companyId,
-
-      // رقم القيد
-      journalNumber,
-      entryNumber: journalNumber,
-
-      date,
-      description: `فاتورة شراء ${purchase.invoiceNumber}`,
-
-      referenceType: "purchase",
-      referenceId: purchase.id,
-      referenceNumber: purchase.invoiceNumber,
-
-      status: "posted",
-
-      // الإجماليات
-      totalDebit: debit,
-      totalCredit: credit,
-      debitTotal: debit,
-      creditTotal: credit,
-
-      // منشئ القيد
-      ...actorData,
-
-      createdAt: now,
-
-      // مرحّل القيد
-      postedBy: actorName,
-      postedById: normalize(currentUser?.id),
-      postedByName: actorName,
-      postedByUsername: normalize(currentUser?.username),
-      postedAt: now,
-
-      updatedBy: actorName,
-      updatedById: normalize(currentUser?.id),
-      updatedByName: actorName,
-      updatedAt: now,
-    };
-
-    const journalLines = lines.map((line) => ({
-      ...line,
-
-      journalId,
-      journalNumber,
-      entryNumber: journalNumber,
-
-      date,
-
-      referenceType: "purchase",
-      referenceId: purchase.id,
-
-      status: "posted",
-
-      // المستخدم الذي أنشأ تفاصيل القيد
-      ...actorData,
-      createdAt: now,
-    }));
-
-    return {
-      journal,
-      lines: journalLines,
-    };
-  };
-
-  // =========================================
-  // تحديث المخزون
-  // =========================================
-
-  const updateInventory = async (purchase: AnyRecord) => {
-    const now = new Date().toISOString();
-
-    for (const item of purchase.items) {
-      const existing = warehouseStocks.find(
-        (stock) =>
-          normalize(stock.companyId) === companyId &&
-          normalize(stock.productId) === item.productId &&
-          normalize(stock.warehouseId) === item.warehouseId,
-      );
-
-      const oldQuantity = Number(existing?.quantity || 0);
-
-      const oldCost = Number(
-        existing?.averageCost ||
-          existing?.unitCost ||
-          existing?.costPrice ||
-          item.price,
-      );
-
-      const newQuantity = Number(item.quantity);
-      const newCost = Number(item.price);
-
-      const newTotalQuantity = oldQuantity + newQuantity;
-
-      const averageCost =
-        newTotalQuantity > 0
-          ? (oldQuantity * oldCost + newQuantity * newCost) / newTotalQuantity
-          : newCost;
-
-      const stockPayload = {
-        companyId,
-
-        productId: item.productId,
-        productName: item.productName,
-        productCode: item.productCode,
-
-        warehouseId: item.warehouseId,
-        warehouseName: item.warehouseName,
-
-        quantity: newTotalQuantity,
-
-        averageCost,
-        unitCost: averageCost,
-        inventoryValue: newTotalQuantity * averageCost,
-
-        // بيانات آخر تعديل
-        updatedBy: actorName,
-        updatedById: normalize(currentUser?.id),
-        updatedByUsername: normalize(currentUser?.username),
-        updatedAt: now,
-      };
-
-      if (existing) {
-        await api.patch(`/warehouseStocks/${existing.id}`, stockPayload);
-      } else {
-        await api.post("/warehouseStocks", {
-          id: createId(),
-          ...stockPayload,
-
-          // بيانات الإنشاء
-          ...actorData,
-          createdAt: now,
-        });
-      }
-
-      // تسجيل حركة المخزون
-      await api.post("/inventoryMovements", {
-        id: createId(),
-
-        companyId,
-
-        productId: item.productId,
-        productName: item.productName,
-        productCode: item.productCode,
-
-        warehouseId: item.warehouseId,
-        warehouseName: item.warehouseName,
-
-        type: "purchase_in",
-
-        quantity: newQuantity,
-        unitCost: newCost,
-        totalCost: newQuantity * newCost,
-
-        referenceType: "purchase",
-        referenceId: purchase.id,
-        referenceNumber: purchase.invoiceNumber,
-
-        date,
-
-        // المستخدم الذي نفذ الحركة
-        ...actorData,
-        createdAt: now,
-      });
-    }
-  };
-
-  // =========================================
-  // حفظ الفاتورة
-  // =========================================
+  /* =====================================================
+     حفظ الفاتورة في Supabase
+  ===================================================== */
 
   const handleSave = async () => {
     if (saving) return;
@@ -755,16 +593,31 @@ export default function NewPurchasePage() {
 
       const now = new Date().toISOString();
 
-      const purchaseId = createId();
+      /* منع تكرار رقم الفاتورة */
 
-      // تجهيز الأصناف
+      const { data: duplicate, error: duplicateError } = await supabase
+        .from("purchases")
+        .select("id")
+        .eq("companyId", companyId)
+        .eq("invoiceNumber", invoiceNumber.trim())
+        .limit(1);
+
+      if (duplicateError) throw duplicateError;
+
+      if (duplicate && duplicate.length > 0) {
+        toast.error("رقم الفاتورة مستخدم مسبقاً");
+        return;
+      }
+
+      /* تجهيز الأصناف */
+
       const normalizedItems = items.map((item) => {
-        const selectedProduct = products.find(
+        const product = products.find(
           (product) => normalize(product.id) === item.productId,
         );
 
         const warehouse = warehouses.find(
-          (w) => normalize(w.id) === warehouseId,
+          (warehouse) => normalize(warehouse.id) === item.warehouseId,
         );
 
         const quantity = Number(item.quantity);
@@ -785,10 +638,10 @@ export default function NewPurchasePage() {
 
           total: Math.max(0, quantity * price - discount),
 
-          warehouseId,
+          warehouseId: item.warehouseId,
           warehouseName: warehouse?.name || "",
 
-          unit: selectedProduct?.unit || "",
+          unit: item.unit || product?.unitName || "",
         };
       });
 
@@ -797,25 +650,29 @@ export default function NewPurchasePage() {
         0,
       );
 
+      const purchaseTax = (purchaseSubtotal * Number(taxRate || 0)) / 100;
+
       const purchaseTotal = Math.max(
         0,
-        purchaseSubtotal - Number(invoiceDiscount || 0) + taxAmount,
+        purchaseSubtotal - Number(invoiceDiscount || 0) + purchaseTax,
       );
 
-      // تجهيز فاتورة الشراء مع بيانات المستخدم
-      const purchase = {
-        id: purchaseId,
+      const purchaseId = createId();
 
+      /* تجهيز سجل المشتريات */
+
+      const purchasePayload = {
+        id: purchaseId,
         companyId,
 
-        invoiceNumber,
+        invoiceNumber: invoiceNumber.trim(),
         date,
 
-        supplier: selectedSupplier.name,
-        supplierId: selectedSupplier.id,
+        supplier: selectedSupplier!.name,
+        supplierId: selectedSupplier!.id,
 
-        accountCode: selectedSupplier.accountCode || "",
-        accountName: selectedSupplier.accountName || "",
+        accountCode: selectedSupplier!.accountCode || "",
+        accountName: selectedSupplier!.accountName || "",
 
         itemCount: normalizedItems.length,
         totalQuantity,
@@ -825,7 +682,7 @@ export default function NewPurchasePage() {
         subtotal: purchaseSubtotal,
         discount: Number(invoiceDiscount || 0),
 
-        tax: taxAmount,
+        tax: purchaseTax,
         taxRate: Number(taxRate || 0),
 
         total: purchaseTotal,
@@ -840,128 +697,59 @@ export default function NewPurchasePage() {
               : "آجل",
 
         paymentAccountId:
-          paymentMethod === "credit" ? "" : selectedPaymentAccount.id,
+          paymentMethod === "credit" ? "" : selectedPaymentAccount!.id,
 
         status: paymentMethod === "credit" ? "pending" : "paid",
 
-        notes,
+        notes: notes.trim(),
 
-        // المستخدم الذي أنشأ فاتورة الشراء
         ...actorData,
-        createdAt: now,
 
-        // آخر تعديل
-        updatedBy: actorName,
-        updatedById: normalize(currentUser?.id),
+        createdAt: now,
         updatedAt: now,
       };
 
-      // =====================================
-      // التحقق من عدم تكرار رقم الفاتورة
-      // =====================================
+      /* الحفظ */
 
-      const existingPurchases = await api.get("/purchases", {
-        params: { companyId },
-      });
+      const { error: insertError } = await supabase
+        .from("purchases")
+        .insert(purchasePayload);
 
-      const duplicate = existingPurchases.data.some(
-        (item: AnyRecord) =>
-          normalize(item.invoiceNumber) === invoiceNumber.trim(),
-      );
+      if (insertError) throw insertError;
 
-      if (duplicate) {
-        toast.error("رقم الفاتورة مستخدم مسبقاً");
-        return;
-      }
+      toast.success("تم حفظ فاتورة المشتريات بنجاح");
 
-      // =====================================
-      // توليد رقم القيد
-      // =====================================
-
-      const journalsResponse = await api.get("/journals", {
-        params: { companyId },
-      });
-
-      const journalNumber = `JRN-${String(
-        journalsResponse.data.length + 1,
-      ).padStart(5, "0")}`;
-
-      const { journal, lines } = buildJournal(purchase, journalNumber);
-
-      // =====================================
-      // حفظ فاتورة الشراء
-      // =====================================
-
-      await api.post("/purchases", purchase);
-
-      // =====================================
-      // تحديث المخزون
-      // =====================================
-
-      await updateInventory(purchase);
-
-      // =====================================
-      // حفظ رأس القيد المحاسبي
-      // =====================================
-
-      await api.post("/journals", journal);
-
-      // =====================================
-      // حفظ تفاصيل القيد
-      // =====================================
-
-      for (const line of lines) {
-        await api.post("/journalLines", line);
-      }
-
-      // =====================================
-      // تحديث رصيد المورد
-      // =====================================
-
-      if (paymentMethod === "credit") {
-        const currentBalance = Number(selectedSupplier.balance || 0);
-
-        await api.patch(`/suppliers/${selectedSupplier.id}`, {
-          balance: currentBalance + purchaseTotal,
-
-          // المستخدم الذي حدّث رصيد المورد
-          updatedBy: actorName,
-          updatedById: normalize(currentUser?.id),
-          updatedByUsername: normalize(currentUser?.username),
-
-          updatedAt: now,
-        });
-      }
-
-      toast.success(
-        `تم حفظ فاتورة الشراء وترحيل القيد بنجاح بواسطة ${actorName}`,
-      );
-
-      router.push("/erp/purchases");
+      router.push("/erp/purchases/invoices");
+      router.refresh();
     } catch (error: any) {
-      console.error("Purchase save error:", error);
+      console.error("Save purchase error:", error);
 
-      toast.error(
-        error?.response?.data?.message ||
-          error?.message ||
-          "حدث خطأ أثناء حفظ الفاتورة",
-      );
+      toast.error(error?.message || "حدث خطأ أثناء حفظ فاتورة المشتريات");
     } finally {
       setSaving(false);
     }
   };
 
-  // =========================================
-  // واجهة التحميل
-  // =========================================
+  /* =====================================================
+     Loading
+  ===================================================== */
 
   if (loading) {
     return (
       <div dir="rtl" className="flex min-h-[60vh] items-center justify-center">
-        <FiRefreshCw className="animate-spin text-2xl text-[#0E1F33]" />
+        <div className="flex flex-col items-center gap-3">
+          <FiRefreshCw size={25} className="animate-spin text-[#0E1F33]" />
+          <p className="text-xs text-gray-500">
+            جاري تحميل بيانات فاتورة الشراء...
+          </p>
+        </div>
       </div>
     );
   }
+
+  /* =====================================================
+     UI
+  ===================================================== */
 
   return (
     <div
@@ -974,7 +762,8 @@ export default function NewPurchasePage() {
         <div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => router.push("/erp/purchases")}
+              type="button"
+              onClick={() => router.push("/erp/purchases/invoices")}
               className="rounded-md border border-gray-200 bg-white p-2 hover:bg-gray-100"
             >
               <FiArrowRight size={16} />
@@ -986,12 +775,13 @@ export default function NewPurchasePage() {
           </div>
 
           <p className="mt-2 text-[10px] text-gray-500">
-            {companyName} — تسجيل المشتريات وتحديث المخزون والحسابات
+            {companyName} — تسجيل فاتورة المشتريات
           </p>
         </div>
 
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
           <p className="text-[10px] text-gray-500">رقم الفاتورة</p>
+
           <p className="font-bold text-[#0E1F33]">{invoiceNumber}</p>
         </div>
       </div>
@@ -1036,56 +826,20 @@ export default function NewPurchasePage() {
             >
               <option value="">اختر المورد</option>
 
-              {suppliers
-                .filter(
-                  (supplier) =>
-                    supplier.isActive !== false &&
-                    supplier.status !== "inactive",
-                )
-                .map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </option>
-                ))}
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.name}
+                </option>
+              ))}
             </select>
-          </div>
 
-          <div>
-            <label className="mb-1 block text-gray-600">المستودع</label>
-
-            <select
-              value={warehouseId}
-              onChange={(e) => {
-                setWarehouseId(e.target.value);
-
-                const warehouse = warehouses.find(
-                  (item) => normalize(item.id) === e.target.value,
-                );
-
-                setItems((prev) =>
-                  prev.map((item) => ({
-                    ...item,
-                    warehouseId: e.target.value,
-                    warehouseName: warehouse?.name || "",
-                  })),
-                );
-              }}
-              className="h-9 w-full rounded-md border border-gray-200 bg-white px-3 outline-none focus:border-[#0E1F33]"
-            >
-              <option value="">اختر المستودع</option>
-
-              {warehouses
-                .filter(
-                  (warehouse) =>
-                    warehouse.isActive !== false &&
-                    warehouse.status !== "inactive",
-                )
-                .map((warehouse) => (
-                  <option key={warehouse.id} value={warehouse.id}>
-                    {warehouse.name}
-                  </option>
-                ))}
-            </select>
+            {selectedSupplier && (
+              <p className="mt-1 text-[9px] text-gray-400">
+                الحساب: {selectedSupplier.accountCode || "غير مرتبط"}
+                {" - "}
+                {selectedSupplier.accountName || ""}
+              </p>
+            )}
           </div>
 
           <div>
@@ -1116,13 +870,11 @@ export default function NewPurchasePage() {
                 <option value="">اختر حساب الدفع</option>
 
                 {paymentAccounts
-                  .filter((account) => {
-                    if (paymentMethod === "cash") {
-                      return normalize(account.code) === "1101";
-                    }
-
-                    return normalize(account.code).startsWith("1102");
-                  })
+                  .filter((account) =>
+                    paymentMethod === "cash"
+                      ? normalize(account.code) === "1101"
+                      : normalize(account.code).startsWith("1102"),
+                  )
                   .map((account) => (
                     <option key={account.id} value={account.id}>
                       {account.code} - {account.name}
@@ -1134,7 +886,7 @@ export default function NewPurchasePage() {
         </div>
       </div>
 
-      {/* الأصناف */}
+      {/* أصناف الفاتورة */}
 
       <div className="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-gray-100 p-4">
@@ -1154,10 +906,12 @@ export default function NewPurchasePage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px]">
+          <table className="w-full min-w-[1050px]">
             <thead className="bg-gray-50 text-gray-500">
               <tr>
                 <th className="p-3 text-right">الصنف</th>
+                <th className="p-3 text-right">المستودع</th>
+                <th className="p-3 text-right">الوحدة</th>
                 <th className="p-3 text-right">الكمية</th>
                 <th className="p-3 text-right">سعر الشراء</th>
                 <th className="p-3 text-right">الخصم</th>
@@ -1175,24 +929,40 @@ export default function NewPurchasePage() {
                       onChange={(e) =>
                         updateItem(item.id, "productId", e.target.value)
                       }
-                      className="h-9 w-full rounded-md border border-gray-200 bg-white px-2"
+                      className="h-9 w-full min-w-[180px] rounded-md border border-gray-200 bg-white px-2"
                     >
                       <option value="">اختر الصنف</option>
 
-                      {products
-                        .filter(
-                          (product) =>
-                            product.isActive !== false &&
-                            product.status !== "inactive",
-                        )
-                        .map((product) => (
-                          <option key={product.id} value={product.id}>
-                            {product.name}
-                            {product.code ? ` (${product.code})` : ""}
-                          </option>
-                        ))}
+                      {products.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name}
+                          {product.sku || product.code
+                            ? ` (${product.sku || product.code})`
+                            : ""}
+                        </option>
+                      ))}
                     </select>
                   </td>
+
+                  <td className="p-2">
+                    <select
+                      value={item.warehouseId}
+                      onChange={(e) =>
+                        updateItem(item.id, "warehouseId", e.target.value)
+                      }
+                      className="h-9 w-full min-w-[130px] rounded-md border border-gray-200 bg-white px-2"
+                    >
+                      <option value="">اختر المستودع</option>
+
+                      {warehouses.map((warehouse) => (
+                        <option key={warehouse.id} value={warehouse.id}>
+                          {warehouse.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+
+                  <td className="p-2 text-gray-500">{item.unit || "—"}</td>
 
                   <td className="p-2">
                     <input
@@ -1262,7 +1032,7 @@ export default function NewPurchasePage() {
         )}
       </div>
 
-      {/* الإجماليات */}
+      {/* الإجماليات والملاحظات */}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -1358,14 +1128,15 @@ export default function NewPurchasePage() {
         </div>
       </div>
 
-      {/* تنبيه محاسبي */}
+      {/* تنبيه */}
 
-      <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-[11px] leading-6 text-blue-900">
-        <strong>التأثير المحاسبي:</strong>
+      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-6 text-amber-900">
+        <strong>تنبيه:</strong>
         <br />
-        مدين المخزون 1104، ودائن الصندوق أو البنك أو حساب المورد حسب طريقة
-        الدفع. وعند وجود ضريبة، تُسجل في حساب ضريبة المدخلات 1105. الفاتورة
-        الآجلة تزيد رصيد المورد.
+        هذه النسخة تحفظ بيانات الفاتورة وأصنافها في جدول purchases. لا تنفذ حتى
+        الآن تحديث المخزون أو إنشاء القيد المحاسبي؛ يجب ربط هذه العمليات بإجراء
+        آمن ومتكامل حتى لا تُحفظ الفاتورة دون تحديث بقية الحسابات والمخزون عند
+        حدوث خطأ.
       </div>
 
       {/* الأزرار */}
@@ -1373,7 +1144,7 @@ export default function NewPurchasePage() {
       <div className="mt-5 flex flex-col-reverse justify-end gap-2 sm:flex-row">
         <button
           type="button"
-          onClick={() => router.push("/erp/purchases")}
+          onClick={() => router.push("/erp/purchases/invoices")}
           className="h-10 rounded-md border border-gray-200 bg-white px-5 font-semibold hover:bg-gray-50"
         >
           إلغاء
@@ -1387,7 +1158,7 @@ export default function NewPurchasePage() {
         >
           {saving ? <FiRefreshCw className="animate-spin" /> : <FiSave />}
 
-          {saving ? "جارٍ الحفظ..." : "حفظ وترحيل الفاتورة"}
+          {saving ? "جارٍ الحفظ..." : "حفظ الفاتورة"}
         </button>
       </div>
     </div>

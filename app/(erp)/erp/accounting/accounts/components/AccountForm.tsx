@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
-import { Account, AccountFormData, AccountType } from "../types";
+import type {
+  Account,
+  AccountFormData,
+  AccountId,
+  AccountType,
+} from "../types";
 
 import { getAccountNature } from "../utils";
 
@@ -18,7 +23,7 @@ const emptyForm: AccountFormData = {
   code: "",
   name: "",
   nameEn: "",
-  type: "asset" as AccountType,
+  type: "asset",
   parentId: null,
   nature: "debit",
   isGroup: false,
@@ -39,67 +44,55 @@ const accountTypeNames: Record<AccountType, string> = {
   expense: "المصروفات",
 };
 
-// التحقق من أن الحساب من نسل حساب معين
+const sameId = (
+  a: AccountId | null | undefined,
+  b: AccountId | null | undefined,
+) => String(a ?? "") === String(b ?? "");
+
 function isDescendant(
   accounts: Account[],
-  accountId: number,
-  parentId: number,
-  visited = new Set<number>(),
+  accountId: AccountId,
+  parentId: AccountId,
+  visited = new Set<AccountId>(),
 ): boolean {
-  if (visited.has(accountId)) {
-    return false;
-  }
+  if (visited.has(accountId)) return false;
 
   visited.add(accountId);
 
-  const account = accounts.find((item) => item.id === accountId);
+  const account = accounts.find((item) => sameId(item.id, accountId));
 
-  if (!account || account.parentId === null) {
-    return false;
-  }
+  if (!account || !account.parentId) return false;
 
-  if (account.parentId === parentId) {
-    return true;
-  }
+  if (sameId(account.parentId, parentId)) return true;
 
   return isDescendant(accounts, account.parentId, parentId, visited);
 }
 
-// ترتيب الحسابات حسب الشجرة الهرمية
 function sortAccounts(accounts: Account[]): Account[] {
   return [...accounts].sort((a, b) =>
-    String(a.code).localeCompare(String(b.code), "en", {
-      numeric: true,
-    }),
+    a.code.localeCompare(b.code, "en", { numeric: true }),
   );
 }
 
-// توليد رقم الحساب التالي
 function generateAccountCode(
   accounts: Account[],
-  parentId: number,
-  currentId?: number,
+  parentId: AccountId,
+  currentId?: AccountId,
 ): string {
-  const parent = accounts.find((account) => account.id === parentId);
+  const parent = accounts.find((account) => sameId(account.id, parentId));
 
   if (!parent) return "";
 
   const parentCode = String(parent.code);
 
-  // الحد الأقصى 5 خانات
-  if (parentCode.length >= 5) {
-    return "";
-  }
+  if (parentCode.length >= 5) return "";
 
-  // الأبناء المباشرون فقط
   const children = accounts.filter(
-    (account) => account.parentId === parentId && account.id !== currentId,
+    (account) =>
+      sameId(account.parentId, parentId) && !sameId(account.id, currentId),
   );
 
-  // لا يسمح بأكثر من 9 أبناء مباشرين
-  if (children.length >= 9) {
-    return "";
-  }
+  if (children.length >= 9) return "";
 
   const usedNumbers = children
     .map((child) => {
@@ -114,15 +107,10 @@ function generateAccountCode(
 
       const suffix = childCode.slice(parentCode.length);
 
-      if (!/^[1-9]$/.test(suffix)) {
-        return null;
-      }
-
-      return Number(suffix);
+      return /^[1-9]$/.test(suffix) ? Number(suffix) : null;
     })
     .filter((number): number is number => number !== null);
 
-  // البحث عن أول رقم متاح من 1 إلى 9
   for (let number = 1; number <= 9; number++) {
     if (!usedNumbers.includes(number)) {
       return parentCode + number;
@@ -132,52 +120,36 @@ function generateAccountCode(
   return "";
 }
 
-// إنشاء قائمة الحسابات التجميعية المتاحة كأبناء
 function getAvailableParents(
   accounts: Account[],
   type: AccountType,
-  currentId?: number,
+  currentId?: AccountId,
 ): Account[] {
   return sortAccounts(
     accounts.filter((account) => {
-      // يجب أن يكون الحساب فعالاً وتجميعياً
-      if (!account.isActive || !account.isGroup || account.allowPosting) {
-        return false;
-      }
-
-      // يجب أن يكون من نفس نوع الحساب
-      if (account.type !== type) {
-        return false;
-      }
-
-      // منع اختيار الحساب نفسه
-      if (account.id === currentId) {
-        return false;
-      }
-
-      // منع اختيار أحد الحسابات التابعة للحساب الحالي
       if (
-        currentId !== undefined &&
-        isDescendant(accounts, account.id, currentId)
+        account.isActive === false ||
+        !account.isGroup ||
+        account.allowPosting
       ) {
         return false;
       }
 
-      // منع إضافة حساب تحت مستوى يتجاوز 5 خانات
-      if (String(account.code).length >= 5) {
+      if (account.type !== type) return false;
+
+      if (sameId(account.id, currentId)) return false;
+
+      if (currentId && isDescendant(accounts, account.id, currentId)) {
         return false;
       }
 
-      // منع إضافة أكثر من 9 أبناء مباشرين
-      const childrenCount = accounts.filter(
-        (child) => child.parentId === account.id,
+      if (String(account.code).length >= 5) return false;
+
+      const childrenCount = accounts.filter((child) =>
+        sameId(child.parentId, account.id),
       ).length;
 
-      if (childrenCount >= 9) {
-        return false;
-      }
-
-      return true;
+      return childrenCount < 9;
     }),
   );
 }
@@ -188,84 +160,54 @@ export default function AccountForm({
   onSubmit,
   onCancel,
 }: Props) {
-  const [formData, setFormData] = useState<AccountFormData>(emptyForm);
+  // تحميل بيانات الحساب عند التعديل دون استخدام useEffect
+  const [formData, setFormData] = useState<AccountFormData>(() => {
+    if (!initialData) {
+      return { ...emptyForm };
+    }
+
+    return {
+      code: initialData.code,
+      name: initialData.name,
+      nameEn: initialData.nameEn ?? "",
+      type: initialData.type,
+      parentId: initialData.parentId ?? null,
+      nature: initialData.nature,
+      isGroup: initialData.isGroup,
+      allowPosting: initialData.allowPosting,
+      description: initialData.description ?? "",
+    };
+  });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const isEditing = Boolean(initialData);
 
-  // هل الحساب الحالي لديه أبناء؟
   const hasChildren = useMemo(() => {
     if (!initialData) return false;
 
-    return accounts.some((account) => account.parentId === initialData.id);
-  }, [accounts, initialData?.id]);
+    return accounts.some((account) => sameId(account.parentId, initialData.id));
+  }, [accounts, initialData]);
 
-  // تعبئة النموذج عند الإضافة أو التعديل
-  useEffect(() => {
-    if (initialData) {
-      setFormData({
-        code: initialData.code,
-        name: initialData.name,
-        nameEn: initialData.nameEn || "",
-        type: initialData.type,
-        parentId: initialData.parentId,
-        nature: initialData.nature,
-        isGroup: initialData.isGroup,
-        allowPosting: initialData.allowPosting,
-        description: initialData.description || "",
-      });
-    } else {
-      setFormData({ ...emptyForm });
-    }
+  const availableParents = useMemo(
+    () => getAvailableParents(accounts, formData.type, initialData?.id),
+    [accounts, formData.type, initialData?.id],
+  );
 
-    setError("");
-  }, [initialData]);
+  const selectedParent = useMemo(
+    () => accounts.find((account) => sameId(account.id, formData.parentId)),
+    [accounts, formData.parentId],
+  );
 
-  // الحسابات المتاحة لاختيار الأب
-  const availableParents = useMemo(() => {
-    return getAvailableParents(accounts, formData.type, initialData?.id);
-  }, [accounts, formData.type, initialData?.id]);
-
-  // الأب المختار
-  const selectedParent = useMemo(() => {
-    return accounts.find((account) => account.id === formData.parentId);
-  }, [accounts, formData.parentId]);
-
-  // عدد أبناء الأب المختار
   const selectedParentChildrenCount = useMemo(() => {
     if (!formData.parentId) return 0;
 
-    return accounts.filter((account) => account.parentId === formData.parentId)
-      .length;
+    return accounts.filter((account) =>
+      sameId(account.parentId, formData.parentId),
+    ).length;
   }, [accounts, formData.parentId]);
 
-  // توليد رقم الحساب تلقائياً عند اختيار الأب
-  useEffect(() => {
-    // في وضع التعديل نحافظ على رقم الحساب الأصلي
-    if (isEditing) {
-      return;
-    }
-
-    if (!formData.parentId) {
-      setFormData((prev) => ({
-        ...prev,
-        code: "",
-      }));
-
-      return;
-    }
-
-    const newCode = generateAccountCode(accounts, formData.parentId);
-
-    setFormData((prev) => ({
-      ...prev,
-      code: newCode,
-    }));
-  }, [accounts, formData.parentId, isEditing]);
-
-  // تغيير نوع الحساب
   const handleTypeChange = (type: AccountType) => {
     if (isEditing && hasChildren && type !== initialData?.type) {
       setError("لا يمكن تغيير نوع حساب لديه حسابات فرعية.");
@@ -283,9 +225,8 @@ export default function AccountForm({
     setError("");
   };
 
-  // تغيير الحساب الأب
   const handleParentChange = (value: string) => {
-    const parentId = value ? Number(value) : null;
+    const parentId: AccountId | null = value || null;
 
     if (!parentId) {
       setFormData((prev) => ({
@@ -298,7 +239,7 @@ export default function AccountForm({
       return;
     }
 
-    const parent = accounts.find((account) => account.id === parentId);
+    const parent = accounts.find((account) => sameId(account.id, parentId));
 
     if (!parent) {
       setError("الحساب الأب غير موجود.");
@@ -310,7 +251,7 @@ export default function AccountForm({
       return;
     }
 
-    if (!parent.isActive) {
+    if (parent.isActive === false) {
       setError("لا يمكن اختيار حساب أب غير فعال.");
       return;
     }
@@ -323,9 +264,7 @@ export default function AccountForm({
     const newCode = generateAccountCode(accounts, parentId);
 
     if (!newCode) {
-      setError(
-        "لا يمكن إضافة حساب جديد تحت هذا الحساب. تحقق من عدد الأبناء ومستوى الحساب.",
-      );
+      setError("لا يمكن إضافة حساب جديد تحت هذا الحساب.");
       return;
     }
 
@@ -339,7 +278,6 @@ export default function AccountForm({
     setError("");
   };
 
-  // تغيير نوع الحساب: تجميعي أو نهائي
   const handleGroupChange = (isGroup: boolean) => {
     if (!isGroup && hasChildren) {
       setError(
@@ -357,7 +295,6 @@ export default function AccountForm({
     setError("");
   };
 
-  // التحقق من صحة البيانات قبل الحفظ
   const validateForm = (): boolean => {
     setError("");
 
@@ -371,20 +308,17 @@ export default function AccountForm({
       return false;
     }
 
-    const parent = accounts.find((account) => account.id === formData.parentId);
+    const parent = accounts.find((account) =>
+      sameId(account.id, formData.parentId),
+    );
 
     if (!parent) {
       setError("الحساب الأب غير موجود.");
       return false;
     }
 
-    if (!parent.isActive) {
-      setError("الحساب الأب غير فعال.");
-      return false;
-    }
-
-    if (!parent.isGroup || parent.allowPosting) {
-      setError("الحساب المختار لا يسمح بإضافة حسابات تحته.");
+    if (parent.isActive === false || !parent.isGroup || parent.allowPosting) {
+      setError("الحساب الأب لا يسمح بإضافة حسابات تحته.");
       return false;
     }
 
@@ -400,8 +334,8 @@ export default function AccountForm({
 
     const siblings = accounts.filter(
       (account) =>
-        account.parentId === formData.parentId &&
-        account.id !== initialData?.id,
+        sameId(account.parentId, formData.parentId) &&
+        !sameId(account.id, initialData?.id),
     );
 
     if (siblings.length >= 9) {
@@ -410,14 +344,13 @@ export default function AccountForm({
     }
 
     if (!formData.code) {
-      setError("تعذر توليد رقم الحساب. اختر حساباً أباً صالحاً.");
+      setError("تعذر توليد رقم الحساب.");
       return false;
     }
 
-    // منع تكرار رقم الحساب
     const duplicateCode = accounts.some(
       (account) =>
-        account.code === formData.code && account.id !== initialData?.id,
+        account.code === formData.code && !sameId(account.id, initialData?.id),
     );
 
     if (duplicateCode) {
@@ -425,12 +358,11 @@ export default function AccountForm({
       return false;
     }
 
-    // منع تكرار اسم الحساب تحت الأب نفسه
     const duplicateName = accounts.some(
       (account) =>
-        account.parentId === formData.parentId &&
+        sameId(account.parentId, formData.parentId) &&
         account.name.trim() === formData.name.trim() &&
-        account.id !== initialData?.id,
+        !sameId(account.id, initialData?.id),
     );
 
     if (duplicateName) {
@@ -438,13 +370,11 @@ export default function AccountForm({
       return false;
     }
 
-    // الحساب الذي لديه أبناء يجب أن يكون تجميعياً
     if (hasChildren && !formData.isGroup) {
-      setError("الحساب الذي يحتوي على أبناء يجب أن يكون حساباً تجميعياً.");
+      setError("الحساب الذي يحتوي على أبناء يجب أن يكون تجميعياً.");
       return false;
     }
 
-    // ضبط قبول القيود
     if (formData.isGroup && formData.allowPosting) {
       setError("الحساب التجميعي لا يمكن أن يقبل القيود.");
       return false;
@@ -458,7 +388,6 @@ export default function AccountForm({
     return true;
   };
 
-  // حفظ الحساب
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
@@ -485,14 +414,12 @@ export default function AccountForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* رسالة الخطأ */}
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      {/* نوع الحساب */}
       <div>
         <label className={labelClass}>
           نوع الحساب <span className="text-red-500">*</span>
@@ -510,15 +437,8 @@ export default function AccountForm({
             </option>
           ))}
         </select>
-
-        {isEditing && hasChildren && (
-          <p className="mt-1 text-xs text-amber-600">
-            لا يمكن تغيير نوع حساب يحتوي على حسابات فرعية.
-          </p>
-        )}
       </div>
 
-      {/* الحساب الأب */}
       <div>
         <label className={labelClass}>
           الحساب الأب <span className="text-red-500">*</span>
@@ -545,8 +465,7 @@ export default function AccountForm({
         </select>
 
         <p className="mt-2 text-xs text-slate-500">
-          تظهر هنا الحسابات التجميعية التي تسمح بإضافة حسابات تحتها. اختر
-          المستوى المناسب من شجرة الحسابات.
+          اختر الحساب التجميعي الذي تريد إضافة الحساب تحته.
         </p>
 
         {selectedParent && (
@@ -564,7 +483,6 @@ export default function AccountForm({
         )}
       </div>
 
-      {/* رقم الحساب */}
       <div>
         <label className={labelClass}>رقم الحساب</label>
 
@@ -575,13 +493,8 @@ export default function AccountForm({
           placeholder="يتم توليد رقم الحساب تلقائياً"
           className={`${inputClass} cursor-not-allowed bg-slate-100 font-semibold`}
         />
-
-        <p className="mt-1 text-xs text-slate-500">
-          يتم إنشاء رقم الحساب تلقائياً بناءً على الحساب الأب المختار.
-        </p>
       </div>
 
-      {/* اسم الحساب */}
       <div>
         <label className={labelClass}>
           اسم الحساب بالعربية <span className="text-red-500">*</span>
@@ -591,17 +504,13 @@ export default function AccountForm({
           type="text"
           value={formData.name}
           onChange={(e) =>
-            setFormData((prev) => ({
-              ...prev,
-              name: e.target.value,
-            }))
+            setFormData((prev) => ({ ...prev, name: e.target.value }))
           }
           placeholder="مثال: السيارات"
           className={inputClass}
         />
       </div>
 
-      {/* الاسم الإنجليزي */}
       <div>
         <label className={labelClass}>اسم الحساب بالإنجليزية</label>
 
@@ -609,10 +518,7 @@ export default function AccountForm({
           type="text"
           value={formData.nameEn}
           onChange={(e) =>
-            setFormData((prev) => ({
-              ...prev,
-              nameEn: e.target.value,
-            }))
+            setFormData((prev) => ({ ...prev, nameEn: e.target.value }))
           }
           placeholder="Account name in English"
           dir="ltr"
@@ -620,7 +526,6 @@ export default function AccountForm({
         />
       </div>
 
-      {/* طبيعة الحساب */}
       <div>
         <label className={labelClass}>طبيعة الحساب</label>
 
@@ -630,13 +535,8 @@ export default function AccountForm({
           readOnly
           className={`${inputClass} cursor-not-allowed bg-slate-100`}
         />
-
-        <p className="mt-1 text-xs text-slate-500">
-          يتم تحديد طبيعة الحساب تلقائياً حسب نوع الحساب.
-        </p>
       </div>
 
-      {/* تصنيف الحساب */}
       <div>
         <label className={labelClass}>تصنيف الحساب</label>
 
@@ -646,18 +546,10 @@ export default function AccountForm({
           className={inputClass}
         >
           <option value="group">حساب تجميعي - لا يقبل القيود</option>
-
           <option value="posting">حساب نهائي - يقبل القيود</option>
         </select>
-
-        {hasChildren && (
-          <p className="mt-1 text-xs text-amber-600">
-            هذا الحساب يحتوي على حسابات فرعية، لذلك يجب أن يبقى تجميعياً.
-          </p>
-        )}
       </div>
 
-      {/* حالة قبول القيود */}
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
         <p className="text-sm font-medium text-slate-700">إعدادات الترحيل</p>
 
@@ -676,7 +568,6 @@ export default function AccountForm({
         </div>
       </div>
 
-      {/* الوصف */}
       <div>
         <label className={labelClass}>وصف الحساب</label>
 
@@ -694,7 +585,6 @@ export default function AccountForm({
         />
       </div>
 
-      {/* الأزرار */}
       <div className="flex items-center justify-end gap-3 border-t border-slate-200 pt-5">
         <button
           type="button"

@@ -1,938 +1,1107 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
-
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   FiActivity,
-  FiSearch,
-  FiRefreshCw,
+  FiArrowRight,
   FiCalendar,
-  FiUser,
+  FiChevronDown,
+  FiChevronLeft,
+  FiChevronRight,
+  FiClock,
+  FiDownload,
+  FiEye,
   FiFilter,
+  FiRefreshCw,
+  FiSearch,
+  FiTrash2,
+  FiUser,
+  FiX,
+  FiFileText,
   FiPlus,
   FiEdit,
-  FiTrash2,
-  FiClock,
-  FiX,
-  FiUsers,
-  FiFileText,
-  FiEye,
+  FiAlertCircle,
+  FiCheckCircle,
 } from "react-icons/fi";
+import { toast } from "sonner";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
-/* =====================================================
-   Types
-===================================================== */
+type ActivityAction = "create" | "update" | "delete";
 
-type AppUser = {
+type ActivityLog = {
+  id: string;
+  companyId: string;
+  userId: string | null;
+  userName: string | null;
+  username: string | null;
+  userRole: string | null;
+  action: ActivityAction;
+  module: string | null;
+  description: string | null;
+  recordId: string | null;
+  recordName: string | null;
+  oldData: Record<string, unknown> | null;
+  newData: Record<string, unknown> | null;
+  extra: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+type UserRecord = {
   id: string;
   name?: string;
-  fullName?: string;
   username?: string;
-  email?: string;
   role?: string;
   type?: string;
   companyId?: string;
+  status?: string;
+  isActive?: boolean;
 };
 
-type RawRecord = {
-  id?: string | number;
-  companyId?: string | number;
+const PAGE_SIZE = 15;
 
-  name?: string;
-  fullName?: string;
-  username?: string;
-
-  createdAt?: string;
-  updatedAt?: string;
-  date?: string;
-
-  createdBy?: string | number;
-  updatedBy?: string | number;
-  userId?: string | number;
-  performedBy?: string | number;
-
-  createdByName?: string;
-  updatedByName?: string;
-  performedByName?: string;
-  userName?: string;
-
-  invoiceNumber?: string;
-  transferNumber?: string;
-  referenceNumber?: string;
-  number?: string;
-  reference?: string;
-
-  productName?: string;
-  warehouseName?: string;
-  type?: string;
-  notes?: string;
-};
-
-type Activity = {
-  id: string;
-  userId: string;
-  userName: string;
-  action: string;
-  module: string;
-  description: string;
-  createdAt: string;
-  type: "create" | "update" | "delete" | "other";
-};
-
-/* =====================================================
-   Resources
-===================================================== */
-
-const resources = [
-  {
-    endpoint: "users",
-    module: "المستخدمون",
-    label: "مستخدم",
-  },
-  {
-    endpoint: "products",
-    module: "المنتجات",
-    label: "منتج",
-  },
-  {
-    endpoint: "sales",
-    module: "المبيعات",
-    label: "فاتورة مبيعات",
-  },
-  {
-    endpoint: "purchases",
-    module: "المشتريات",
-    label: "فاتورة مشتريات",
-  },
-  {
-    endpoint: "transfers",
-    module: "التحويلات",
-    label: "تحويل مخزني",
-  },
-  {
-    endpoint: "inventoryMovements",
-    module: "حركة المخزون",
-    label: "حركة مخزون",
-  },
-  {
-    endpoint: "journals",
-    module: "القيود اليومية",
-    label: "قيد يومية",
-  },
-  {
-    endpoint: "journalEntries",
-    module: "القيود المحاسبية",
-    label: "قيد محاسبي",
-  },
-  {
-    endpoint: "openingEntries",
-    module: "الأرصدة الافتتاحية",
-    label: "رصيد افتتاحي",
-  },
-  {
-    endpoint: "warehouses",
-    module: "المستودعات",
-    label: "مستودع",
-  },
-  {
-    endpoint: "customers",
-    module: "العملاء",
-    label: "عميل",
-  },
-  {
-    endpoint: "suppliers",
-    module: "الموردون",
-    label: "مورد",
-  },
-  {
-    endpoint: "stockAdjustments",
-    module: "تسويات المخزون",
-    label: "تسوية مخزون",
-  },
-  {
-    endpoint: "stocktakes",
-    module: "الجرد",
-    label: "عملية جرد",
-  },
+const ACTIONS: {
+  value: ActivityAction;
+  label: string;
+}[] = [
+  { value: "create", label: "إنشاء" },
+  { value: "update", label: "تعديل" },
+  { value: "delete", label: "حذف" },
 ];
 
-/* =====================================================
-   Helpers
-===================================================== */
+const ROLE_LABELS: Record<string, string> = {
+  owner: "مالك الشركة",
+  manager: "مدير",
+  accountant: "محاسب",
+  cashier: "كاشير",
+  employee: "موظف",
+  admin: "مدير النظام",
+};
 
-function getUserName(user?: AppUser) {
-  if (!user) return "مستخدم غير معروف";
+const MODULE_LABELS: Record<string, string> = {
+  dashboard: "لوحة التحكم",
+  users: "المستخدمون",
+  products: "المنتجات",
+  inventory: "المخزون",
+  sales: "المبيعات",
+  purchases: "المشتريات",
+  customers: "العملاء",
+  suppliers: "الموردون",
+  accounting: "المحاسبة",
+  reports: "التقارير",
+  settings: "الإعدادات",
+  warehouses: "المستودعات",
+  categories: "التصنيفات",
+  units: "الوحدات",
+  accounts: "دليل الحسابات",
+  journals: "القيود اليومية",
+  expenses: "المصروفات",
+  transfers: "التحويلات",
+};
 
-  return user.name || user.fullName || user.username || "مستخدم غير معروف";
+function getActionLabel(action: string) {
+  return ACTIONS.find((item) => item.value === action)?.label ?? action;
 }
 
-function getRecordTitle(record: RawRecord, label: string) {
+function getModuleLabel(module: string | null) {
+  if (!module) return "غير محدد";
+  return MODULE_LABELS[module] ?? module;
+}
+
+function getRoleLabel(role: string | null) {
+  if (!role) return "غير محدد";
+  return ROLE_LABELS[role] ?? role;
+}
+
+function formatDate(date: string) {
+  if (!date) return "—";
+
+  return new Intl.DateTimeFormat("ar-YE", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(date));
+}
+
+function formatTime(date: string) {
+  if (!date) return "—";
+
+  return new Intl.DateTimeFormat("ar-YE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(date));
+}
+
+function formatDateTime(date: string) {
+  if (!date) return "—";
+  return `${formatDate(date)} - ${formatTime(date)}`;
+}
+
+function getActionStyle(action: string) {
+  switch (action) {
+    case "create":
+      return {
+        label: "إنشاء",
+        icon: FiPlus,
+        className: "bg-emerald-50 text-emerald-700 border-emerald-100",
+        iconClass: "bg-emerald-100 text-emerald-700",
+      };
+
+    case "update":
+      return {
+        label: "تعديل",
+        icon: FiEdit,
+        className: "bg-blue-50 text-blue-700 border-blue-100",
+        iconClass: "bg-blue-100 text-blue-700",
+      };
+
+    case "delete":
+      return {
+        label: "حذف",
+        icon: FiTrash2,
+        className: "bg-red-50 text-red-700 border-red-100",
+        iconClass: "bg-red-100 text-red-700",
+      };
+
+    default:
+      return {
+        label: action,
+        icon: FiActivity,
+        className: "bg-slate-50 text-slate-700 border-slate-200",
+        iconClass: "bg-slate-100 text-slate-700",
+      };
+  }
+}
+
+function readCookie(name: string) {
+  if (typeof document === "undefined") return "";
+
+  const cookie = document.cookie
+    .split("; ")
+    .find((item) => item.startsWith(`${name}=`));
+
+  if (!cookie) return "";
+
+  return decodeURIComponent(cookie.split("=").slice(1).join("="));
+}
+
+function safeJson(value: unknown) {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+}
+
+function downloadCSV(rows: ActivityLog[]) {
+  if (!rows.length) {
+    toast.error("لا توجد بيانات لتصديرها");
+    return;
+  }
+
+  const headers = [
+    "التاريخ",
+    "الوقت",
+    "المستخدم",
+    "اسم المستخدم",
+    "الدور",
+    "العملية",
+    "القسم",
+    "الوصف",
+    "رقم السجل",
+    "اسم السجل",
+  ];
+
+  const data = rows.map((row) => [
+    formatDate(row.createdAt),
+    formatTime(row.createdAt),
+    row.userName ?? "",
+    row.username ?? "",
+    getRoleLabel(row.userRole),
+    getActionLabel(row.action),
+    getModuleLabel(row.module),
+    row.description ?? "",
+    row.recordId ?? "",
+    row.recordName ?? "",
+  ]);
+
+  const escapeCSV = (value: unknown) => {
+    const text = String(value ?? "");
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
+  const csv = [
+    headers.map(escapeCSV).join(","),
+    ...data.map((row) => row.map(escapeCSV).join(",")),
+  ].join("\n");
+
+  // إضافة BOM لدعم اللغة العربية في Excel
+  const blob = new Blob(["\uFEFF" + csv], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = `activity-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  URL.revokeObjectURL(url);
+  toast.success("تم تصدير سجل النشاط بنجاح");
+}
+
+function DataViewer({
+  title,
+  data,
+  emptyText,
+}: {
+  title: string;
+  data: unknown;
+  emptyText: string;
+}) {
+  const normalizedData = safeJson(data);
+
   return (
-    record.name ||
-    record.fullName ||
-    record.invoiceNumber ||
-    record.transferNumber ||
-    record.referenceNumber ||
-    record.number ||
-    record.productName ||
-    label
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
+        <h4 className="font-semibold text-sm text-[#0E1F33]">{title}</h4>
+      </div>
+
+      <div className="p-4">
+        {normalizedData === null ||
+        normalizedData === undefined ||
+        (typeof normalizedData === "object" &&
+          !Array.isArray(normalizedData) &&
+          Object.keys(normalizedData as object).length === 0) ? (
+          <p className="text-sm text-slate-400 text-center py-5">{emptyText}</p>
+        ) : (
+          <pre
+            dir="ltr"
+            className="text-xs leading-6 text-slate-700 whitespace-pre-wrap break-words overflow-x-auto max-h-80"
+          >
+            {JSON.stringify(normalizedData, null, 2)}
+          </pre>
+        )}
+      </div>
+    </div>
   );
 }
 
-function getDate(record: RawRecord) {
-  return record.createdAt || record.updatedAt || record.date || "";
-}
+export default function ActivityPage() {
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-/*
-  استخراج هوية منفذ العملية
-*/
+  const [companyId, setCompanyId] = useState("");
+  const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
 
-function getActorId(record: RawRecord, action: "create" | "update") {
-  const value =
-    action === "update"
-      ? (record.updatedBy ??
-        record.createdBy ??
-        record.userId ??
-        record.performedBy)
-      : (record.createdBy ?? record.userId ?? record.performedBy);
+  const [selectedLog, setSelectedLog] = useState<ActivityLog | null>(null);
 
-  return value !== undefined && value !== null ? String(value) : "";
-}
+  const [search, setSearch] = useState("");
+  const [actionFilter, setActionFilter] = useState("all");
+  const [moduleFilter, setModuleFilter] = useState("all");
+  const [userFilter, setUserFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
-/*
-  استخراج اسم المنفذ مباشرة إذا كان محفوظًا
-*/
+  const [page, setPage] = useState(1);
 
-function getActorName(record: RawRecord, action: "create" | "update") {
-  if (action === "update") {
+  const loadData = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const username = readCookie("username");
+
+      if (!username) {
+        toast.error("انتهت جلسة الدخول، يرجى تسجيل الدخول مجدداً");
+        return;
+      }
+
+      const response = await getUserByUsername(username);
+      const user = (
+        Array.isArray(response) ? response[0] : response
+      ) as UserRecord | null;
+
+      if (!user) {
+        toast.error("تعذر العثور على بيانات المستخدم");
+        return;
+      }
+
+      if (
+        user.type === "platform" ||
+        user.isActive === false ||
+        user.status === "inactive" ||
+        user.status === "غير نشط"
+      ) {
+        toast.error("ليس لديك صلاحية الوصول إلى هذه الصفحة");
+        return;
+      }
+
+      if (!user.companyId) {
+        toast.error("المستخدم غير مرتبط بشركة");
+        return;
+      }
+
+      if (!["owner", "manager"].includes(user.role ?? "")) {
+        toast.error("ليس لديك صلاحية عرض سجل النشاط");
+        return;
+      }
+
+      setCurrentUser(user);
+      setCompanyId(user.companyId);
+
+      const { data, error } = await supabase
+        .from("activityLogs")
+        .select(
+          `
+            id,
+            companyId,
+            userId,
+            userName,
+            username,
+            userRole,
+            action,
+            module,
+            description,
+            recordId,
+            recordName,
+            oldData,
+            newData,
+            extra,
+            createdAt
+          `,
+        )
+        .eq("companyId", user.companyId)
+        .order("createdAt", { ascending: false })
+        .limit(1000);
+
+      if (error) {
+        console.error("Activity logs error:", error);
+        toast.error("تعذر تحميل سجل النشاط");
+        return;
+      }
+
+      setLogs((data ?? []) as ActivityLog[]);
+    } catch (error) {
+      console.error("Activity page error:", error);
+      toast.error("حدث خطأ أثناء تحميل البيانات");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const uniqueUsers = useMemo(() => {
+    const map = new Map<string, { id: string; name: string }>();
+
+    logs.forEach((log) => {
+      const id = log.userId || log.username || log.userName || "unknown";
+
+      if (!map.has(id)) {
+        map.set(id, {
+          id,
+          name: log.userName || log.username || "مستخدم غير معروف",
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [logs]);
+
+  const uniqueModules = useMemo(() => {
+    return Array.from(
+      new Set(logs.map((log) => log.module).filter(Boolean)),
+    ) as string[];
+  }, [logs]);
+
+  const filteredLogs = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    return logs.filter((log) => {
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          log.userName,
+          log.username,
+          log.description,
+          log.recordName,
+          log.recordId,
+          log.module,
+        ]
+          .filter(Boolean)
+          .some((value) =>
+            String(value).toLowerCase().includes(normalizedSearch),
+          );
+
+      const matchesAction =
+        actionFilter === "all" || log.action === actionFilter;
+
+      const matchesModule =
+        moduleFilter === "all" || log.module === moduleFilter;
+
+      const matchesUser =
+        userFilter === "all" ||
+        (log.userId || log.username || log.userName) === userFilter;
+
+      const logDate = log.createdAt?.slice(0, 10) ?? "";
+
+      const matchesDateFrom = !dateFrom || logDate >= dateFrom;
+      const matchesDateTo = !dateTo || logDate <= dateTo;
+
+      return (
+        matchesSearch &&
+        matchesAction &&
+        matchesModule &&
+        matchesUser &&
+        matchesDateFrom &&
+        matchesDateTo
+      );
+    });
+  }, [logs, search, actionFilter, moduleFilter, userFilter, dateFrom, dateTo]);
+
+  const statistics = useMemo(() => {
+    return {
+      total: logs.length,
+      create: logs.filter((log) => log.action === "create").length,
+      update: logs.filter((log) => log.action === "update").length,
+      delete: logs.filter((log) => log.action === "delete").length,
+    };
+  }, [logs]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE));
+
+  const currentPage = Math.min(page, totalPages);
+
+  const paginatedLogs = filteredLogs.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, actionFilter, moduleFilter, userFilter, dateFrom, dateTo]);
+
+  const clearFilters = () => {
+    setSearch("");
+    setActionFilter("all");
+    setModuleFilter("all");
+    setUserFilter("all");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  };
+
+  const hasFilters =
+    search ||
+    actionFilter !== "all" ||
+    moduleFilter !== "all" ||
+    userFilter !== "all" ||
+    dateFrom ||
+    dateTo;
+
+  if (loading) {
     return (
-      record.updatedByName || record.performedByName || record.userName || ""
+      <div dir="rtl" className="min-h-[60vh] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <FiRefreshCw className="animate-spin text-3xl text-[#0E1F33]" />
+          <p className="text-sm text-slate-500">جارٍ تحميل سجل النشاط...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    !currentUser ||
+    !companyId ||
+    !["owner", "manager"].includes(currentUser.role ?? "")
+  ) {
+    return (
+      <div
+        dir="rtl"
+        className="min-h-[50vh] flex items-center justify-center p-6"
+      >
+        <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center max-w-md w-full">
+          <FiAlertCircle className="text-4xl text-red-500 mx-auto mb-4" />
+          <h2 className="text-lg font-bold text-[#0E1F33] mb-2">
+            غير مصرح بالدخول
+          </h2>
+          <p className="text-sm text-slate-500 mb-5">
+            لا تملك الصلاحية اللازمة لعرض سجل نشاط الشركة.
+          </p>
+          <Link
+            href="/erp/dashboard"
+            className="inline-flex items-center gap-2 bg-[#0E1F33] text-white rounded-lg px-5 py-2.5 text-sm"
+          >
+            العودة إلى لوحة التحكم
+            <FiArrowRight />
+          </Link>
+        </div>
+      </div>
     );
   }
 
   return (
-    record.createdByName || record.performedByName || record.userName || ""
-  );
-}
-
-function getActionIcon(type: string) {
-  switch (type) {
-    case "create":
-      return <FiPlus />;
-
-    case "update":
-      return <FiEdit />;
-
-    case "delete":
-      return <FiTrash2 />;
-
-    default:
-      return <FiActivity />;
-  }
-}
-
-function getActionLabel(type: string) {
-  switch (type) {
-    case "create":
-      return "إضافة";
-
-    case "update":
-      return "تعديل";
-
-    case "delete":
-      return "حذف";
-
-    default:
-      return "عملية";
-  }
-}
-
-function getActionStyle(type: string) {
-  switch (type) {
-    case "create":
-      return "bg-emerald-50 text-emerald-700";
-
-    case "update":
-      return "bg-blue-50 text-blue-700";
-
-    case "delete":
-      return "bg-red-50 text-red-700";
-
-    default:
-      return "bg-slate-100 text-slate-700";
-  }
-}
-
-function formatDate(date: string) {
-  if (!date) return "غير محدد";
-
-  const parsed = new Date(date);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return date;
-  }
-
-  return parsed.toLocaleString("ar-YE", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-/* =====================================================
-   Page
-===================================================== */
-
-export default function ActivityPage() {
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [companyUsers, setCompanyUsers] = useState<AppUser[]>([]);
-
-  const [authUser, setAuthUser] = useState<AppUser | null>(null);
-
-  const [loading, setLoading] = useState(true);
-
-  const [search, setSearch] = useState("");
-  const [selectedModule, setSelectedModule] = useState("all");
-  const [selectedAction, setSelectedAction] = useState("all");
-  const [selectedUser, setSelectedUser] = useState("all");
-
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-
-  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(
-    null,
-  );
-
-  /* =====================================================
-     Owner Check
-  ===================================================== */
-
-  const isOwner = authUser?.role === "owner" || authUser?.type === "owner";
-
-  /* =====================================================
-     Load Activities
-  ===================================================== */
-
-  const loadActivities = async () => {
-    try {
-      setLoading(true);
-
-      const storedUser = localStorage.getItem("authUser");
-
-      if (!storedUser) {
-        setActivities([]);
-        setCompanyUsers([]);
-        return;
-      }
-
-      const currentUser: AppUser = JSON.parse(storedUser);
-
-      setAuthUser(currentUser);
-
-      const companyId = currentUser.companyId;
-
-      if (!companyId) {
-        setActivities([]);
-        setCompanyUsers([]);
-        return;
-      }
-
-      /* ===============================
-         Load Company Users
-      =============================== */
-
-      const usersResponse = await axios.get(`${API_URL}/users`);
-
-      const allUsers: AppUser[] = usersResponse.data || [];
-
-      const filteredUsers = allUsers.filter((user) => {
-        return (
-          String(user.companyId) === String(companyId) &&
-          user.type !== "platform"
-        );
-      });
-
-      setCompanyUsers(filteredUsers);
-
-      /* ===============================
-         Users Map
-      =============================== */
-
-      const usersMap = new Map<string, string>();
-
-      filteredUsers.forEach((user) => {
-        usersMap.set(String(user.id), getUserName(user));
-      });
-
-      /*
-        إضافة اسم المستخدم الحالي إلى الخريطة
-        في حالة عدم وجوده في قائمة المستخدمين
-      */
-
-      usersMap.set(String(currentUser.id), getUserName(currentUser));
-
-      /* ===============================
-         Load All Resources
-      =============================== */
-
-      const responses = await Promise.allSettled(
-        resources.map((resource) =>
-          axios.get(`${API_URL}/${resource.endpoint}`),
-        ),
-      );
-
-      const generatedActivities: Activity[] = [];
-
-      responses.forEach((response, index) => {
-        if (response.status !== "fulfilled") return;
-
-        const resource = resources[index];
-
-        const records: RawRecord[] = Array.isArray(response.value.data)
-          ? response.value.data
-          : [];
-
-        const companyRecords = records.filter(
-          (record) => String(record.companyId) === String(companyId),
-        );
-
-        companyRecords.forEach((record) => {
-          const title = getRecordTitle(record, resource.label);
-
-          /* ===============================
-             Create Activity
-          =============================== */
-
-          if (record.createdAt || record.date) {
-            const actorId = getActorId(record, "create");
-
-            const actorName =
-              getActorName(record, "create") ||
-              usersMap.get(actorId) ||
-              "غير محدد";
-
-            generatedActivities.push({
-              id: `${resource.endpoint}-${record.id}-create`,
-              userId: actorId,
-              userName: actorName,
-              action: "إضافة",
-              module: resource.module,
-              description: `تمت إضافة ${resource.label}: ${title}`,
-              createdAt: getDate(record),
-              type: "create",
-            });
-          }
-
-          /* ===============================
-             Update Activity
-          =============================== */
-
-          if (
-            record.updatedAt &&
-            record.createdAt &&
-            record.updatedAt !== record.createdAt
-          ) {
-            const actorId = getActorId(record, "update");
-
-            const actorName =
-              getActorName(record, "update") ||
-              usersMap.get(actorId) ||
-              "غير محدد";
-
-            generatedActivities.push({
-              id: `${resource.endpoint}-${record.id}-update`,
-              userId: actorId,
-              userName: actorName,
-              action: "تعديل",
-              module: resource.module,
-              description: `تم تعديل ${resource.label}: ${title}`,
-              createdAt: record.updatedAt,
-              type: "update",
-            });
-          }
-        });
-      });
-
-      /* ===============================
-         Sort Activities
-      =============================== */
-
-      generatedActivities.sort((a, b) => {
-        return (
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-      });
-
-      setActivities(generatedActivities);
-    } catch (error) {
-      console.error("Error loading activities:", error);
-
-      setActivities([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadActivities();
-  }, []);
-
-  /* =====================================================
-     Filters
-  ===================================================== */
-
-  const filteredActivities = useMemo(() => {
-    return activities.filter((activity) => {
-      const searchValue = search.toLowerCase();
-
-      const matchesSearch =
-        activity.description.toLowerCase().includes(searchValue) ||
-        activity.userName.toLowerCase().includes(searchValue) ||
-        activity.module.toLowerCase().includes(searchValue);
-
-      const matchesModule =
-        selectedModule === "all" || activity.module === selectedModule;
-
-      const matchesAction =
-        selectedAction === "all" || activity.type === selectedAction;
-
-      const matchesUser =
-        !isOwner || selectedUser === "all" || activity.userId === selectedUser;
-
-      const activityDate = activity.createdAt
-        ? new Date(activity.createdAt)
-        : null;
-
-      const matchesStartDate =
-        !startDate ||
-        (activityDate !== null &&
-          activityDate >= new Date(`${startDate}T00:00:00`));
-
-      const matchesEndDate =
-        !endDate ||
-        (activityDate !== null &&
-          activityDate <= new Date(`${endDate}T23:59:59`));
-
-      return (
-        matchesSearch &&
-        matchesModule &&
-        matchesAction &&
-        matchesUser &&
-        matchesStartDate &&
-        matchesEndDate
-      );
-    });
-  }, [
-    activities,
-    search,
-    selectedModule,
-    selectedAction,
-    selectedUser,
-    startDate,
-    endDate,
-    isOwner,
-  ]);
-
-  /* =====================================================
-     Statistics
-  ===================================================== */
-
-  const totalActivities = filteredActivities.length;
-
-  const createCount = filteredActivities.filter(
-    (item) => item.type === "create",
-  ).length;
-
-  const updateCount = filteredActivities.filter(
-    (item) => item.type === "update",
-  ).length;
-
-  const deleteCount = filteredActivities.filter(
-    (item) => item.type === "delete",
-  ).length;
-
-  /* =====================================================
-     Reset Filters
-  ===================================================== */
-
-  const resetFilters = () => {
-    setSearch("");
-    setSelectedModule("all");
-    setSelectedAction("all");
-    setSelectedUser("all");
-    setStartDate("");
-    setEndDate("");
-  };
-
-  /* =====================================================
-     Export CSV
-  ===================================================== */
-
-  const exportCSV = () => {
-    const headers = ["المستخدم", "القسم", "العملية", "الوصف", "التاريخ"];
-
-    const rows = filteredActivities.map((activity) => [
-      activity.userName,
-      activity.module,
-      activity.action,
-      activity.description,
-      formatDate(activity.createdAt),
-    ]);
-
-    const csvContent = [headers, ...rows]
-      .map((row) =>
-        row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","),
-      )
-      .join("\n");
-
-    const blob = new Blob(["\uFEFF" + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
-
-    const url = URL.createObjectURL(blob);
-
-    const link = document.createElement("a");
-
-    link.href = url;
-    link.download = "activity-log.csv";
-    link.click();
-
-    URL.revokeObjectURL(url);
-  };
-
-  /* =====================================================
-     UI
-  ===================================================== */
-
-  return (
-    <div className="space-y-6 p-4 md:p-6" dir="rtl">
+    <div dir="rtl" className="space-y-6 pb-10">
       {/* Header */}
-
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-blue-100 p-3 text-blue-700">
-            <FiActivity size={24} />
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-sm text-slate-400 mb-2">
+            <Link href="/erp/dashboard" className="hover:text-[#0E1F33]">
+              لوحة التحكم
+            </Link>
+            <FiChevronLeft className="text-xs" />
+            <Link href="/erp/users" className="hover:text-[#0E1F33]">
+              المستخدمون
+            </Link>
+            <FiChevronLeft className="text-xs" />
+            <span className="text-[#0E1F33]">سجل النشاط</span>
           </div>
 
-          <div>
-            <h1 className="text-xl font-bold text-slate-800">سجل النشاطات</h1>
+          <h1 className="text-2xl font-bold text-[#0E1F33] flex items-center gap-3">
+            <span className="w-11 h-11 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
+              <FiActivity size={22} />
+            </span>
+            سجل نشاط المستخدمين
+          </h1>
 
-            <p className="mt-1 text-sm text-slate-500">
-              متابعة العمليات والنشاطات داخل الشركة
-            </p>
-          </div>
+          <p className="text-sm text-slate-500 mt-2">
+            متابعة العمليات التي ينفذها مستخدمو الشركة ومراجعة تفاصيلها.
+          </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={loadActivities}
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            onClick={() => loadData(true)}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-xl px-4 py-2.5 text-sm font-medium disabled:opacity-50"
           >
-            <FiRefreshCw />
+            <FiRefreshCw className={refreshing ? "animate-spin" : ""} />
             تحديث
           </button>
 
           <button
-            onClick={exportCSV}
-            className="flex items-center gap-2 rounded-lg bg-[#0E1F33] px-4 py-2 text-sm text-white hover:bg-slate-700"
+            onClick={() => downloadCSV(filteredLogs)}
+            className="inline-flex items-center gap-2 bg-[#0E1F33] hover:bg-[#18334f] text-white rounded-xl px-4 py-2.5 text-sm font-medium"
           >
-            <FiFileText />
+            <FiDownload />
             تصدير CSV
           </button>
         </div>
       </div>
 
       {/* Statistics */}
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
-          title="إجمالي النشاطات"
-          value={totalActivities}
+          title="إجمالي العمليات"
+          value={statistics.total}
           icon={<FiActivity />}
-          color="blue"
+          iconClass="bg-blue-50 text-blue-700"
+          description="جميع العمليات المسجلة"
         />
 
         <StatCard
-          title="عمليات الإضافة"
-          value={createCount}
+          title="عمليات الإنشاء"
+          value={statistics.create}
           icon={<FiPlus />}
-          color="green"
+          iconClass="bg-emerald-50 text-emerald-700"
+          description="السجلات التي تمت إضافتها"
         />
 
         <StatCard
           title="عمليات التعديل"
-          value={updateCount}
+          value={statistics.update}
           icon={<FiEdit />}
-          color="orange"
+          iconClass="bg-indigo-50 text-indigo-700"
+          description="السجلات التي تم تحديثها"
         />
 
         <StatCard
           title="عمليات الحذف"
-          value={deleteCount}
+          value={statistics.delete}
           icon={<FiTrash2 />}
-          color="red"
+          iconClass="bg-red-50 text-red-700"
+          description="السجلات التي تم حذفها"
         />
       </div>
 
       {/* Filters */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-5">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <FiFilter className="text-[#0E1F33]" />
+            <h2 className="font-bold text-[#0E1F33]">البحث والتصفية</h2>
+          </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-4 flex items-center gap-2">
-          <FiFilter className="text-slate-500" />
-
-          <h2 className="font-semibold text-slate-800">تصفية النشاطات</h2>
+          {hasFilters && (
+            <button
+              onClick={clearFilters}
+              className="text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
+            >
+              <FiX />
+              مسح الفلاتر
+            </button>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {/* Search */}
-
           <div className="relative">
             <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-
             <input
-              type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="ابحث عن نشاط..."
-              className="w-full rounded-lg border border-slate-200 py-2.5 pr-10 pl-3 text-sm outline-none focus:border-blue-400"
+              placeholder="ابحث عن مستخدم أو عملية..."
+              className="w-full h-11 pr-10 pl-3 rounded-xl border border-slate-200 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50 text-sm"
             />
           </div>
 
-          {/* User Filter: Owner Only */}
-
-          {isOwner && (
-            <div className="relative">
-              <FiUsers className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-
-              <select
-                value={selectedUser}
-                onChange={(e) => setSelectedUser(e.target.value)}
-                className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pr-10 pl-3 text-sm outline-none focus:border-blue-400"
-              >
-                <option value="all">جميع المستخدمين</option>
-
-                {companyUsers.map((user) => (
-                  <option key={user.id} value={String(user.id)}>
-                    {getUserName(user)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Module */}
-
-          <select
-            value={selectedModule}
-            onChange={(e) => setSelectedModule(e.target.value)}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400"
-          >
-            <option value="all">جميع الأقسام</option>
-
-            {resources.map((resource) => (
-              <option key={resource.endpoint} value={resource.module}>
-                {resource.module}
-              </option>
-            ))}
-          </select>
+          {/* User */}
+          <div className="relative">
+            <FiUser className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <select
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+              className="w-full h-11 pr-10 pl-8 rounded-xl border border-slate-200 bg-white outline-none focus:border-blue-400 text-sm appearance-none"
+            >
+              <option value="all">جميع المستخدمين</option>
+              {uniqueUsers.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.name}
+                </option>
+              ))}
+            </select>
+            <FiChevronDown className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
 
           {/* Action */}
-
-          <select
-            value={selectedAction}
-            onChange={(e) => setSelectedAction(e.target.value)}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400"
-          >
-            <option value="all">جميع العمليات</option>
-            <option value="create">إضافة</option>
-            <option value="update">تعديل</option>
-            <option value="delete">حذف</option>
-          </select>
-
-          {/* Start Date */}
-
           <div className="relative">
-            <FiCalendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <select
+              value={actionFilter}
+              onChange={(e) => setActionFilter(e.target.value)}
+              className="w-full h-11 px-3 pl-8 rounded-xl border border-slate-200 bg-white outline-none focus:border-blue-400 text-sm appearance-none"
+            >
+              <option value="all">جميع العمليات</option>
+              {ACTIONS.map((action) => (
+                <option key={action.value} value={action.value}>
+                  {action.label}
+                </option>
+              ))}
+            </select>
+            <FiChevronDown className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
 
+          {/* Module */}
+          <div className="relative">
+            <select
+              value={moduleFilter}
+              onChange={(e) => setModuleFilter(e.target.value)}
+              className="w-full h-11 px-3 pl-8 rounded-xl border border-slate-200 bg-white outline-none focus:border-blue-400 text-sm appearance-none"
+            >
+              <option value="all">جميع الأقسام</option>
+              {uniqueModules.map((module) => (
+                <option key={module} value={module}>
+                  {getModuleLabel(module)}
+                </option>
+              ))}
+            </select>
+            <FiChevronDown className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
+
+          {/* Date from */}
+          <div className="relative">
+            <FiCalendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pr-10 pl-3 text-sm outline-none focus:border-blue-400"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-full h-11 pr-10 pl-3 rounded-xl border border-slate-200 outline-none focus:border-blue-400 text-sm"
+              aria-label="من تاريخ"
             />
           </div>
 
-          {/* End Date */}
-
+          {/* Date to */}
           <div className="relative">
-            <FiCalendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-
+            <FiCalendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pr-10 pl-3 text-sm outline-none focus:border-blue-400"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-full h-11 pr-10 pl-3 rounded-xl border border-slate-200 outline-none focus:border-blue-400 text-sm"
+              aria-label="إلى تاريخ"
             />
           </div>
+        </div>
 
-          {/* Reset */}
+        <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
+          <span>
+            النتائج:{" "}
+            <strong className="text-[#0E1F33]">{filteredLogs.length}</strong>{" "}
+            عملية
+          </span>
 
-          <button
-            onClick={resetFilters}
-            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
-          >
-            <FiX />
-            إعادة ضبط الفلاتر
-          </button>
+          <span>إجمالي السجلات المحملة: {logs.length}</span>
         </div>
       </div>
 
-      {/* Activities Table */}
+      {/* Activity Table */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+        <div className="flex items-center justify-between p-4 md:px-5 border-b border-slate-100">
+          <div>
+            <h2 className="font-bold text-[#0E1F33]">تفاصيل سجل النشاط</h2>
+            <p className="text-xs text-slate-400 mt-1">
+              أحدث العمليات تظهر أولاً
+            </p>
+          </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 p-4">
-          <h2 className="font-semibold text-slate-800">تفاصيل النشاطات</h2>
-
-          <span className="text-sm text-slate-500">
-            {filteredActivities.length} نشاط
+          <span className="text-xs bg-slate-100 text-slate-600 rounded-lg px-3 py-1.5">
+            {filteredLogs.length} سجل
           </span>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center gap-3 py-16 text-slate-500">
-            <FiRefreshCw className="animate-spin" />
-            جاري تحميل النشاطات...
-          </div>
-        ) : filteredActivities.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <FiActivity size={38} className="mb-3 text-slate-300" />
+        {paginatedLogs.length === 0 ? (
+          <div className="py-20 px-5 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-slate-50 flex items-center justify-center mx-auto mb-4 text-slate-300">
+              <FiFileText size={30} />
+            </div>
 
-            <p className="font-medium text-slate-600">لا توجد نشاطات</p>
+            <h3 className="font-bold text-[#0E1F33] mb-2">
+              لا توجد سجلات نشاط
+            </h3>
 
-            <p className="mt-1 text-sm text-slate-400">
-              لم يتم العثور على نشاطات مطابقة للفلاتر
+            <p className="text-sm text-slate-400">
+              {hasFilters
+                ? "لم نعثر على نتائج تطابق معايير البحث."
+                : "لم يتم تسجيل أي عمليات لهذه الشركة حتى الآن."}
             </p>
+
+            {hasFilters && (
+              <button
+                onClick={clearFilters}
+                className="mt-4 text-sm text-blue-700 hover:underline"
+              >
+                مسح عوامل التصفية
+              </button>
+            )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[850px] text-right text-sm">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-4 py-3 font-medium">المستخدم</th>
-
-                  <th className="px-4 py-3 font-medium">القسم</th>
-
-                  <th className="px-4 py-3 font-medium">العملية</th>
-
-                  <th className="px-4 py-3 font-medium">التفاصيل</th>
-
-                  <th className="px-4 py-3 font-medium">التاريخ والوقت</th>
-
-                  <th className="px-4 py-3 font-medium">عرض</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-100">
-                {filteredActivities.map((activity) => (
-                  <tr
-                    key={activity.id}
-                    className="transition hover:bg-slate-50"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600">
-                          <FiUser />
-                        </div>
-
-                        <span className="font-medium text-slate-700">
-                          {activity.userName}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="px-4 py-3 text-slate-600">
-                      {activity.module}
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${getActionStyle(
-                          activity.type,
-                        )}`}
-                      >
-                        {getActionIcon(activity.type)}
-                        {getActionLabel(activity.type)}
-                      </span>
-                    </td>
-
-                    <td className="max-w-xs truncate px-4 py-3 text-slate-600">
-                      {activity.description}
-                    </td>
-
-                    <td className="px-4 py-3 text-slate-500">
-                      <div className="flex items-center gap-2">
-                        <FiClock />
-                        {formatDate(activity.createdAt)}
-                      </div>
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => setSelectedActivity(activity)}
-                        className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
-                      >
-                        <FiEye />
-                        عرض
-                      </button>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-right">
+                <thead>
+                  <tr className="bg-slate-50 text-xs text-slate-500 border-b border-slate-100">
+                    <th className="px-5 py-4 font-semibold">المستخدم</th>
+                    <th className="px-5 py-4 font-semibold">العملية</th>
+                    <th className="px-5 py-4 font-semibold">القسم</th>
+                    <th className="px-5 py-4 font-semibold">التفاصيل</th>
+                    <th className="px-5 py-4 font-semibold">التاريخ والوقت</th>
+                    <th className="px-5 py-4 font-semibold text-center">
+                      التفاصيل
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {paginatedLogs.map((log) => {
+                    const style = getActionStyle(log.action);
+                    const ActionIcon = style.icon;
+
+                    return (
+                      <tr
+                        key={log.id}
+                        className="hover:bg-slate-50/70 transition-colors"
+                      >
+                        {/* User */}
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-slate-100 text-[#0E1F33] flex items-center justify-center shrink-0">
+                              <FiUser size={17} />
+                            </div>
+
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-[#0E1F33] truncate">
+                                {log.userName || "مستخدم غير معروف"}
+                              </p>
+                              <p className="text-xs text-slate-400 mt-1">
+                                @{log.username || "—"}
+                              </p>
+                              <p className="text-[11px] text-slate-400 mt-1">
+                                {getRoleLabel(log.userRole)}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Action */}
+                        <td className="px-5 py-4">
+                          <span
+                            className={`inline-flex items-center gap-1.5 border rounded-lg px-2.5 py-1.5 text-xs font-semibold ${style.className}`}
+                          >
+                            <ActionIcon size={13} />
+                            {style.label}
+                          </span>
+                        </td>
+
+                        {/* Module */}
+                        <td className="px-5 py-4">
+                          <span className="text-sm text-slate-700">
+                            {getModuleLabel(log.module)}
+                          </span>
+                        </td>
+
+                        {/* Description */}
+                        <td className="px-5 py-4 max-w-[300px]">
+                          <p className="text-sm text-slate-700 line-clamp-2">
+                            {log.description || "لا يوجد وصف"}
+                          </p>
+
+                          {log.recordName && (
+                            <p className="text-xs text-slate-400 mt-1">
+                              السجل: {log.recordName}
+                            </p>
+                          )}
+                        </td>
+
+                        {/* Date */}
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          <p className="text-sm text-slate-700">
+                            {formatDate(log.createdAt)}
+                          </p>
+                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                            <FiClock size={11} />
+                            {formatTime(log.createdAt)}
+                          </p>
+                        </td>
+
+                        {/* Details */}
+                        <td className="px-5 py-4 text-center">
+                          <button
+                            onClick={() => setSelectedLog(log)}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 hover:border-blue-200 hover:bg-blue-50 text-slate-600 hover:text-blue-700 px-3 py-2 text-xs transition-colors"
+                          >
+                            <FiEye size={14} />
+                            عرض
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-4 border-t border-slate-100">
+              <p className="text-xs text-slate-500">
+                عرض {(currentPage - 1) * PAGE_SIZE + 1} -{" "}
+                {Math.min(currentPage * PAGE_SIZE, filteredLogs.length)} من{" "}
+                {filteredLogs.length}
+              </p>
+
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                  className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 disabled:opacity-30 hover:bg-slate-50"
+                  aria-label="الصفحة السابقة"
+                >
+                  <FiChevronRight />
+                </button>
+
+                <span className="text-xs text-slate-600 px-2">
+                  صفحة {currentPage} من {totalPages}
+                </span>
+
+                <button
+                  disabled={currentPage >= totalPages}
+                  onClick={() =>
+                    setPage((prev) => Math.min(totalPages, prev + 1))
+                  }
+                  className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 disabled:opacity-30 hover:bg-slate-50"
+                  aria-label="الصفحة التالية"
+                >
+                  <FiChevronLeft />
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
 
       {/* Details Modal */}
+      {selectedLog && (
+        <div
+          className="fixed inset-0 z-[100] bg-[#0E1F33]/50 backdrop-blur-sm flex items-center justify-center p-3 md:p-6"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setSelectedLog(null);
+            }
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between gap-3 p-5 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
+                  <FiFileText size={20} />
+                </div>
 
-      {selectedActivity && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 p-5">
-              <h2 className="font-bold text-slate-800">تفاصيل النشاط</h2>
+                <div>
+                  <h3 className="font-bold text-[#0E1F33]">تفاصيل العملية</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {formatDateTime(selectedLog.createdAt)}
+                  </p>
+                </div>
+              </div>
 
               <button
-                onClick={() => setSelectedActivity(null)}
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"
+                onClick={() => setSelectedLog(null)}
+                className="w-9 h-9 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center"
+                aria-label="إغلاق"
               >
                 <FiX size={20} />
               </button>
             </div>
 
-            <div className="space-y-4 p-5">
-              <DetailRow label="المستخدم" value={selectedActivity.userName} />
+            {/* Modal Body */}
+            <div className="overflow-y-auto p-5 space-y-5">
+              {/* Basic Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <InfoBox
+                  label="المستخدم"
+                  value={selectedLog.userName || "غير معروف"}
+                  subValue={
+                    selectedLog.username
+                      ? `@${selectedLog.username}`
+                      : undefined
+                  }
+                />
 
-              <DetailRow label="القسم" value={selectedActivity.module} />
+                <InfoBox
+                  label="الدور الوظيفي"
+                  value={getRoleLabel(selectedLog.userRole)}
+                />
 
-              <DetailRow label="العملية" value={selectedActivity.action} />
+                <InfoBox
+                  label="نوع العملية"
+                  value={getActionLabel(selectedLog.action)}
+                />
 
-              <DetailRow label="الوصف" value={selectedActivity.description} />
+                <InfoBox
+                  label="القسم"
+                  value={getModuleLabel(selectedLog.module)}
+                />
 
-              <DetailRow
-                label="التاريخ والوقت"
-                value={formatDate(selectedActivity.createdAt)}
-              />
+                <InfoBox
+                  label="اسم السجل"
+                  value={selectedLog.recordName || "—"}
+                />
+
+                <InfoBox
+                  label="رقم السجل"
+                  value={selectedLog.recordId || "—"}
+                />
+              </div>
+
+              {/* Description */}
+              <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
+                <h4 className="text-sm font-bold text-[#0E1F33] mb-2">
+                  وصف العملية
+                </h4>
+                <p className="text-sm text-slate-600 leading-7">
+                  {selectedLog.description || "لا يوجد وصف لهذه العملية"}
+                </p>
+              </div>
+
+              {/* Old and New Data */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <DataViewer
+                  title="البيانات القديمة"
+                  data={selectedLog.oldData}
+                  emptyText="لا توجد بيانات قديمة"
+                />
+
+                <DataViewer
+                  title="البيانات الجديدة"
+                  data={selectedLog.newData}
+                  emptyText="لا توجد بيانات جديدة"
+                />
+              </div>
+
+              {/* Extra */}
+              {selectedLog.extra &&
+                Object.keys(selectedLog.extra).length > 0 && (
+                  <DataViewer
+                    title="بيانات إضافية"
+                    data={selectedLog.extra}
+                    emptyText="لا توجد بيانات إضافية"
+                  />
+                )}
+
+              {/* Technical Details */}
+              <div className="rounded-xl border border-slate-200 p-4">
+                <h4 className="text-sm font-bold text-[#0E1F33] mb-3">
+                  معلومات السجل
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="text-slate-400">معرف العملية</span>
+                    <p className="text-slate-700 mt-1 break-all" dir="ltr">
+                      {selectedLog.id}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="text-slate-400">معرف المستخدم</span>
+                    <p className="text-slate-700 mt-1 break-all" dir="ltr">
+                      {selectedLog.userId || "—"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="text-slate-400">معرف الشركة</span>
+                    <p className="text-slate-700 mt-1 break-all" dir="ltr">
+                      {selectedLog.companyId}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="text-slate-400">تاريخ التسجيل</span>
+                    <p className="text-slate-700 mt-1" dir="ltr">
+                      {selectedLog.createdAt}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="border-t border-slate-100 p-4">
+            {/* Modal Footer */}
+            <div className="border-t border-slate-100 p-4 flex justify-end">
               <button
-                onClick={() => setSelectedActivity(null)}
-                className="w-full rounded-lg bg-[#0E1F33] py-2.5 text-sm text-white hover:bg-slate-700"
+                onClick={() => setSelectedLog(null)}
+                className="bg-[#0E1F33] hover:bg-[#18334f] text-white rounded-xl px-6 py-2.5 text-sm font-medium"
               >
                 إغلاق
               </button>
@@ -944,55 +1113,57 @@ export default function ActivityPage() {
   );
 }
 
-/* =====================================================
-   Statistics Card
-===================================================== */
-
 function StatCard({
   title,
   value,
   icon,
-  color,
+  iconClass,
+  description,
 }: {
   title: string;
   value: number;
   icon: React.ReactNode;
-  color: "blue" | "green" | "orange" | "red";
+  iconClass: string;
+  description: string;
 }) {
-  const colors = {
-    blue: "bg-blue-50 text-blue-600",
-    green: "bg-emerald-50 text-emerald-600",
-    orange: "bg-orange-50 text-orange-600",
-    red: "bg-red-50 text-red-600",
-  };
-
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between">
+    <div className="bg-white border border-slate-200 rounded-2xl p-5">
+      <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm text-slate-500">{title}</p>
-
-          <p className="mt-2 text-2xl font-bold text-slate-800">{value}</p>
+          <p className="text-3xl font-bold text-[#0E1F33] mt-3">
+            {value.toLocaleString("ar-YE")}
+          </p>
         </div>
 
-        <div className={`rounded-xl p-3 ${colors[color]}`}>{icon}</div>
+        <div
+          className={`w-11 h-11 rounded-xl flex items-center justify-center text-xl ${iconClass}`}
+        >
+          {icon}
+        </div>
       </div>
+
+      <p className="text-xs text-slate-400 mt-4">{description}</p>
     </div>
   );
 }
 
-/* =====================================================
-   Details Row
-===================================================== */
-
-function DetailRow({ label, value }: { label: string; value: string }) {
+function InfoBox({
+  label,
+  value,
+  subValue,
+}: {
+  label: string;
+  value: string;
+  subValue?: string;
+}) {
   return (
-    <div className="flex flex-col gap-1 border-b border-slate-100 pb-3 last:border-0">
-      <span className="text-xs text-slate-400">{label}</span>
-
-      <span className="text-sm font-medium text-slate-700">
-        {value || "غير محدد"}
-      </span>
+    <div className="rounded-xl border border-slate-200 p-3">
+      <p className="text-xs text-slate-400 mb-2">{label}</p>
+      <p className="text-sm font-semibold text-[#0E1F33] break-words">
+        {value}
+      </p>
+      {subValue && <p className="text-xs text-slate-400 mt-1">{subValue}</p>}
     </div>
   );
 }

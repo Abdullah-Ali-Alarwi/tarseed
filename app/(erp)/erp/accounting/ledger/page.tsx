@@ -1,98 +1,127 @@
 "use client";
-
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 
 import {
+  FiArrowRight,
   FiSearch,
   FiRefreshCw,
   FiBookOpen,
+  FiCalendar,
   FiFilter,
-  FiPrinter,
-  FiArrowUpCircle,
-  FiArrowDownCircle,
+  FiEye,
+  FiEyeOff,
   FiAlertCircle,
+  FiDollarSign,
+  FiTrendingUp,
+  FiDownload,
+  FiChevronDown,
+  FiChevronLeft,
+  FiX,
 } from "react-icons/fi";
 
 import { toast } from "sonner";
 
-import { Account } from "../accounts/types";
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
-import { getCurrentActor, saveActivityLog } from "@/app/(erp)/erp/lib/activity";
+// ==========================================
+// Types
+// ==========================================
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-// المستخدم الحالي
 interface CurrentUser {
-  id: number | string;
-  name: string;
+  id: string;
   username: string;
+  name: string;
   type: string;
   role: string;
-  companyId?: string;
-  companyname?: string;
+  companyId: string;
+  isActive?: boolean;
+  status?: string;
 }
 
-// القيد اليومي
+interface Account {
+  id: string;
+  companyId: string;
+  code: string;
+  name: string;
+  type?: string;
+  nature?: string;
+  parentId?: string | null;
+  isGroup?: boolean;
+  isActive?: boolean;
+  status?: string;
+  extra?: Record<string, any>;
+}
+
 interface Journal {
-  id: number | string;
+  id: string;
   journalNumber: string;
   date: string;
   description: string;
-  status: "draft" | "posted" | "cancelled";
-  companyId: string;
-}
-
-// سطر القيد
-interface JournalLine {
-  id: number | string;
-  journalId: number | string;
-  accountId: number | string;
-  debit: number;
-  credit: number;
-  companyId: string;
-  description?: string;
-}
-
-// الرصيد الافتتاحي
-interface OpeningEntry {
-  id: number | string;
-  accountId: number | string;
-  date: string;
-  debit: number;
-  credit: number;
-  companyId: string;
-  description?: string;
   reference?: string;
+  status: string;
+  totalDebit: number;
+  totalCredit: number;
+  companyId: string;
 }
 
-// حركة دفتر الأستاذ
-interface LedgerTransaction {
+interface JournalLine {
   id: string;
-  journalId?: number | string;
-  journalNumber: string;
+  journalId: string;
+  accountId: string;
+  debit: number;
+  credit: number;
+  description?: string;
+  companyId: string;
+}
+
+interface OpeningEntryLine {
+  accountId: string;
+  debit: number;
+  credit: number;
+  description: string;
   date: string;
+  reference: string;
+}
+
+interface LedgerMovement {
+  id: string;
+  accountId: string;
+  date: string;
+  reference: string;
   description: string;
   debit: number;
   credit: number;
   source: "opening" | "journal";
-  balance: number;
 }
 
-interface LedgerFilters {
-  accountId: string;
-  fromDate: string;
-  toDate: string;
-  search: string;
+interface LedgerAccount {
+  account: Account;
+
+  openingDebit: number;
+  openingCredit: number;
+
+  periodDebit: number;
+  periodCredit: number;
+
+  closingDebit: number;
+  closingCredit: number;
+
+  openingNet: number;
+  periodNet: number;
+  closingNet: number;
+
+  movements: LedgerMovement[];
+
+  children: LedgerAccount[];
+
+  level: number;
 }
+
+// ==========================================
+// Helpers
+// ==========================================
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -103,57 +132,235 @@ function getCookie(name: string): string | null {
 
   if (!cookie) return null;
 
-  return decodeURIComponent(cookie.substring(name.length + 1));
+  const value = cookie.substring(name.length + 1);
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
-const formatCurrency = (value: number) => {
+function getToday() {
+  const now = new Date();
+
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getMonthStart() {
+  const now = new Date();
+
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+
+  return `${year}-${month}-01`;
+}
+
+function formatCurrency(value: number) {
   return new Intl.NumberFormat("ar-YE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value || 0);
-};
+  }).format(Number(value) || 0);
+}
 
-const formatDate = (date: string) => {
-  if (!date) return "-";
+function formatDate(value: string) {
+  if (!value) return "-";
+
+  const date = new Date(`${value.substring(0, 10)}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return value;
 
   return new Intl.DateTimeFormat("ar-YE", {
     year: "numeric",
-    month: "long",
-    day: "numeric",
-  }).format(new Date(date));
-};
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
 
-export default function LedgerPage() {
+function getNumericValue(value: any): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function getAccountExtra(account: Account) {
+  return account.extra || {};
+}
+
+function isAccountActive(account: Account) {
+  return account.isActive === true || account.status === "active";
+}
+
+function getAccountAllowPosting(account: Account) {
+  const extra = getAccountExtra(account);
+
+  return extra.allowPosting === true || extra.allowPosting === "true";
+}
+
+function isPostableAccount(account: Account) {
+  return (
+    account.isGroup !== true &&
+    isAccountActive(account) &&
+    getAccountAllowPosting(account)
+  );
+}
+
+function getAccountName(account: Account) {
+  return `${account.code || ""} - ${account.name || ""}`;
+}
+
+function splitBalance(net: number) {
+  const rounded = Math.round(net * 100) / 100;
+
+  return {
+    debit: rounded > 0 ? rounded : 0,
+    credit: rounded < 0 ? Math.abs(rounded) : 0,
+  };
+}
+
+function normalizeDate(value: any) {
+  if (!value) return "";
+
+  return String(value).substring(0, 10);
+}
+
+function normalizeOpeningLines(
+  records: any[],
+  companyId: string,
+): OpeningEntryLine[] {
+  const result: OpeningEntryLine[] = [];
+
+  for (const record of records) {
+    if (String(record.companyId) !== companyId) continue;
+
+    const extra = record.extra || {};
+
+    const entryDate =
+      normalizeDate(extra.date) ||
+      normalizeDate(extra.entryDate) ||
+      normalizeDate(record.createdAt);
+
+    const reference = extra.reference || extra.entryNumber || record.id || "";
+
+    const description =
+      extra.description || extra.statement || extra.notes || "رصيد افتتاحي";
+
+    // يدعم تخزين تفاصيل الحسابات داخل lines أو entries أو items
+    const nestedLines = Array.isArray(extra.lines)
+      ? extra.lines
+      : Array.isArray(extra.entries)
+        ? extra.entries
+        : Array.isArray(extra.items)
+          ? extra.items
+          : null;
+
+    if (nestedLines) {
+      for (const line of nestedLines) {
+        const accountId = line.accountId ?? line.account_id ?? "";
+
+        if (!accountId) continue;
+
+        result.push({
+          accountId: String(accountId),
+          debit: getNumericValue(line.debit),
+          credit: getNumericValue(line.credit),
+          description: line.description || line.statement || description,
+          date: normalizeDate(line.date) || entryDate,
+          reference: String(line.reference || reference),
+        });
+      }
+
+      continue;
+    }
+
+    // يدعم أيضًا تخزين حساب واحد مباشرة داخل extra
+    const accountId = extra.accountId ?? extra.account_id;
+
+    if (accountId) {
+      result.push({
+        accountId: String(accountId),
+        debit: getNumericValue(extra.debit),
+        credit: getNumericValue(extra.credit),
+        description,
+        date: entryDate,
+        reference: String(reference),
+      });
+    }
+  }
+
+  return result;
+}
+
+// ==========================================
+// Page
+// ==========================================
+
+export default function GeneralLedgerPage() {
   const router = useRouter();
 
-  const activityViewLogged = useRef(false);
+  // ========================================
+  // User
+  // ========================================
 
-  // المستخدم والشركة
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
+
   const [companyId, setCompanyId] = useState("");
+
   const [userLoading, setUserLoading] = useState(true);
+
   const [userError, setUserError] = useState("");
 
-  // البيانات
+  // ========================================
+  // Data
+  // ========================================
+
   const [accounts, setAccounts] = useState<Account[]>([]);
+
   const [journals, setJournals] = useState<Journal[]>([]);
+
   const [journalLines, setJournalLines] = useState<JournalLine[]>([]);
-  const [openingEntries, setOpeningEntries] = useState<OpeningEntry[]>([]);
+
+  const [openingLines, setOpeningLines] = useState<OpeningEntryLine[]>([]);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  // الفلاتر
-  const [filters, setFilters] = useState<LedgerFilters>({
-    accountId: "",
-    fromDate: "",
-    toDate: "",
-    search: "",
-  });
+  const [dataError, setDataError] = useState("");
 
-  // تحديد المستخدم
+  // ========================================
+  // Filters
+  // ========================================
+
+  const [fromDate, setFromDate] = useState(getMonthStart());
+
+  const [toDate, setToDate] = useState(getToday());
+
+  const [search, setSearch] = useState("");
+
+  const [showZeroBalances, setShowZeroBalances] = useState(false);
+
+  const [selectedAccount, setSelectedAccount] = useState("all");
+
+  // ========================================
+  // Expanded Accounts
+  // ========================================
+
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(
+    new Set(),
+  );
+
+  const [showFilters, setShowFilters] = useState(false);
+
+  // ========================================
+  // Load User
+  // ========================================
+
   useEffect(() => {
-    const getCurrentUser = async () => {
+    let ignore = false;
+
+    async function loadUser() {
       try {
         setUserLoading(true);
         setUserError("");
@@ -161,147 +368,170 @@ export default function LedgerPage() {
         const username = getCookie("username");
 
         if (!username) {
-          throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
+          throw new Error("يرجى تسجيل الدخول مجدداً");
         }
 
-        const response = await api.get<CurrentUser[]>("/users", {
-          params: { username },
-        });
+        const userData = await getUserByUsername(username);
 
-        const user = response.data.find((item) => item.username === username);
-
-        if (!user) {
+        if (!userData) {
           throw new Error("المستخدم غير موجود");
         }
 
-        if (user.type === "platform") {
-          throw new Error("لا يمكن لمستخدم المنصة الوصول إلى دفتر الأستاذ");
+        if (userData.username !== username) {
+          throw new Error("بيانات المستخدم غير صحيحة");
         }
 
-        if (!user.companyId) {
-          throw new Error("المستخدم غير مرتبط بأي شركة");
+        if (userData.type === "platform") {
+          throw new Error(
+            "مستخدم المنصة لا يمكنه الوصول إلى دفتر أستاذ الشركة",
+          );
         }
 
-        setCurrentUser(user);
-        setCompanyId(String(user.companyId));
-      } catch (err) {
-        const message = axios.isAxiosError(err)
-          ? err.response?.data?.message || "تعذر الاتصال بـ JSON Server"
-          : err instanceof Error
-            ? err.message
-            : "حدث خطأ غير متوقع";
+        if (!userData.companyId) {
+          throw new Error("المستخدم غير مرتبط بشركة");
+        }
 
-        setUserError(message);
+        if (userData.isActive === false || userData.status === "inactive") {
+          throw new Error("هذا الحساب غير نشط");
+        }
+
+        if (ignore) return;
+
+        const normalizedUser: CurrentUser = {
+          id: String(userData.id),
+          username: userData.username,
+          name: userData.name || userData.username,
+          type: userData.type,
+          role: userData.role,
+          companyId: String(userData.companyId),
+          isActive: userData.isActive,
+          status: userData.status,
+        };
+
+        setUser(normalizedUser);
+        setCompanyId(String(userData.companyId));
+      } catch (error) {
+        console.error("Load User Error:", error);
+
+        if (!ignore) {
+          setUserError(
+            error instanceof Error
+              ? error.message
+              : "تعذر تحميل بيانات المستخدم",
+          );
+        }
       } finally {
-        setUserLoading(false);
+        if (!ignore) {
+          setUserLoading(false);
+        }
       }
-    };
+    }
 
-    void getCurrentUser();
+    void loadUser();
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
-  // تسجيل نشاط المستخدم
-  const logLedgerActivity = useCallback(
-    async (
-      action: "view" | "print",
-      description: string,
-      account?: Account,
-    ) => {
-      try {
-        const actor = getCurrentActor();
+  // ========================================
+  // Fetch Ledger Data
+  // ========================================
 
-        if (!actor) {
-          console.warn("لم يتم العثور على هوية المستخدم في authUser");
-          return;
-        }
-
-        if (String(actor.companyId) !== String(companyId)) {
-          console.warn("شركة المستخدم في سجل النشاط لا تطابق الشركة الحالية");
-          return;
-        }
-
-        await saveActivityLog({
-          companyId: String(companyId),
-          userId: String(actor.userId),
-          userName: actor.userName,
-          username: actor.username,
-          userRole: actor.userRole,
-          action,
-          module: "accounting",
-          description,
-          recordId: account ? String(account.id) : "",
-          recordName: account
-            ? `${account.code} - ${account.name}`
-            : "دفتر الأستاذ العام",
-          createdAt: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.error("Ledger Activity Error:", err);
-      }
-    },
-    [companyId],
-  );
-
-  // تحميل بيانات دفتر الأستاذ
   const fetchLedgerData = useCallback(async () => {
     if (!companyId) return;
 
     try {
       setLoading(true);
-      setError("");
+      setDataError("");
 
       const [
-        accountsResponse,
-        journalsResponse,
-        linesResponse,
-        openingResponse,
+        accountsResult,
+        journalsResult,
+        journalLinesResult,
+        openingEntriesResult,
       ] = await Promise.all([
-        api.get<Account[]>("/accounts", {
-          params: { companyId },
-        }),
+        supabase.from("accounts").select("*").eq("companyId", companyId),
 
-        api.get<Journal[]>("/journals", {
-          params: { companyId },
-        }),
+        supabase
+          .from("journals")
+          .select("*")
+          .eq("companyId", companyId)
+          .eq("status", "posted"),
 
-        api.get<JournalLine[]>("/journalLines", {
-          params: { companyId },
-        }),
+        supabase.from("journalLines").select("*").eq("companyId", companyId),
 
-        api.get<OpeningEntry[]>("/openingEntries", {
-          params: { companyId },
-        }),
+        supabase.from("openingEntries").select("*").eq("companyId", companyId),
       ]);
 
-      // عزل بيانات الشركة
-      const companyAccounts = accountsResponse.data.filter(
+      if (accountsResult.error) throw accountsResult.error;
+
+      if (journalsResult.error) throw journalsResult.error;
+
+      if (journalLinesResult.error) {
+        throw journalLinesResult.error;
+      }
+
+      if (openingEntriesResult.error) {
+        throw openingEntriesResult.error;
+      }
+
+      const normalizedAccounts = (accountsResult.data || []) as Account[];
+
+      const normalizedJournals = (journalsResult.data || []) as Journal[];
+
+      const normalizedJournalLines = (journalLinesResult.data ||
+        []) as JournalLine[];
+
+      // التأكد من أن البيانات تخص الشركة الحالية
+
+      const companyAccounts = normalizedAccounts.filter(
         (account) => String(account.companyId) === companyId,
       );
 
-      const companyJournals = journalsResponse.data.filter(
-        (journal) => String(journal.companyId) === companyId,
+      const companyJournals = normalizedJournals.filter(
+        (journal) =>
+          String(journal.companyId) === companyId &&
+          journal.status === "posted",
       );
 
-      const companyLines = linesResponse.data.filter(
-        (line) => String(line.companyId) === companyId,
+      const postedJournalIds = new Set(
+        companyJournals.map((journal) => String(journal.id)),
       );
 
-      const companyOpeningEntries = openingResponse.data.filter(
-        (entry) => String(entry.companyId) === companyId,
+      const companyJournalLines = normalizedJournalLines.filter(
+        (line) =>
+          String(line.companyId) === companyId &&
+          postedJournalIds.has(String(line.journalId)),
+      );
+
+      const normalizedOpeningLines = normalizeOpeningLines(
+        openingEntriesResult.data || [],
+        companyId,
       );
 
       setAccounts(companyAccounts);
       setJournals(companyJournals);
-      setJournalLines(companyLines);
-      setOpeningEntries(companyOpeningEntries);
-    } catch (err) {
-      console.error("Fetch Ledger Error:", err);
+      setJournalLines(companyJournalLines);
+      setOpeningLines(normalizedOpeningLines);
 
-      setError(
-        axios.isAxiosError(err)
-          ? err.response?.data?.message || "تعذر تحميل بيانات دفتر الأستاذ"
-          : "حدث خطأ أثناء تحميل البيانات",
+      setExpandedAccounts(
+        new Set(
+          companyAccounts
+            .filter((account) => account.isGroup)
+            .map((account) => String(account.id)),
+        ),
       );
+    } catch (error) {
+      console.error("Fetch Ledger Error:", error);
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "تعذر تحميل بيانات دفتر الأستاذ";
+
+      setDataError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -313,233 +543,505 @@ export default function LedgerPage() {
     }
   }, [companyId, fetchLedgerData]);
 
-  // تسجيل فتح التقرير مرة واحدة
-  useEffect(() => {
-    if (
-      companyId &&
-      currentUser &&
-      !loading &&
-      !userLoading &&
-      !error &&
-      !activityViewLogged.current
-    ) {
-      activityViewLogged.current = true;
+  // ========================================
+  // Build Movements
+  // ========================================
 
-      void logLedgerActivity("view", "عرض دفتر الأستاذ العام");
-    }
-  }, [companyId, currentUser, loading, userLoading, error, logLedgerActivity]);
+  const movements = useMemo<LedgerMovement[]>(() => {
+    const result: LedgerMovement[] = [];
 
-  // الحسابات التي تقبل القيود فقط
-  const postingAccounts = useMemo(() => {
-    return accounts
-      .filter(
-        (account) =>
-          account.allowPosting === true &&
-          account.isActive !== false &&
-          account.isGroup !== true,
-      )
-      .sort((a, b) =>
-        String(a.code).localeCompare(String(b.code), undefined, {
-          numeric: true,
-        }),
+    // Opening Entries
+
+    openingLines.forEach((line, index) => {
+      if (!line.accountId) return;
+
+      result.push({
+        id: `opening-${index}`,
+        accountId: line.accountId,
+        date: line.date,
+        reference: line.reference,
+        description: line.description,
+        debit: line.debit,
+        credit: line.credit,
+        source: "opening",
+      });
+    });
+
+    // Journal Movements
+
+    const journalsMap = new Map<string, Journal>();
+
+    journals.forEach((journal) => {
+      journalsMap.set(String(journal.id), journal);
+    });
+
+    journalLines.forEach((line) => {
+      const journal = journalsMap.get(String(line.journalId));
+
+      if (!journal) return;
+
+      result.push({
+        id: String(line.id),
+        accountId: String(line.accountId),
+        date: normalizeDate(journal.date),
+        reference: journal.journalNumber || journal.reference || "",
+        description: line.description || journal.description || "",
+        debit: getNumericValue(line.debit),
+        credit: getNumericValue(line.credit),
+        source: "journal",
+      });
+    });
+
+    return result;
+  }, [openingLines, journals, journalLines]);
+
+  // ========================================
+  // Calculate Account Balances
+  // ========================================
+
+  const ledgerAccounts = useMemo(() => {
+    const accountMap = new Map<string, Account>();
+
+    accounts.forEach((account) => {
+      accountMap.set(String(account.id), account);
+    });
+
+    const resultMap = new Map<string, LedgerAccount>();
+
+    // حساب أرصدة كل حساب
+
+    accounts.forEach((account) => {
+      const accountId = String(account.id);
+
+      const accountMovements = movements.filter(
+        (movement) => movement.accountId === accountId,
       );
-  }, [accounts]);
 
-  // الحساب المحدد
-  const selectedAccount = useMemo(() => {
-    return postingAccounts.find(
-      (account) => String(account.id) === filters.accountId,
-    );
-  }, [postingAccounts, filters.accountId]);
+      let openingNet = 0;
+      let periodDebit = 0;
+      let periodCredit = 0;
 
-  // طبيعة الحساب
-  const accountNature =
-    selectedAccount?.nature ||
-    (selectedAccount?.type === "asset" || selectedAccount?.type === "expense"
-      ? "debit"
-      : "credit");
+      accountMovements.forEach((movement) => {
+        if (!movement.date) return;
 
-  // جميع الحركات للحساب
-  const ledgerTransactions = useMemo(() => {
-    if (!filters.accountId) return [];
-
-    const transactions: LedgerTransaction[] = [];
-
-    // إضافة الأرصدة الافتتاحية
-    openingEntries
-      .filter((entry) => String(entry.accountId) === filters.accountId)
-      .forEach((entry) => {
-        transactions.push({
-          id: `opening-${entry.id}`,
-          journalNumber: entry.reference || "رصيد افتتاحي",
-          date: entry.date,
-          description: entry.description || "الرصيد الافتتاحي",
-          debit: Number(entry.debit || 0),
-          credit: Number(entry.credit || 0),
-          source: "opening",
-          balance: 0,
-        });
+        if (movement.date < fromDate) {
+          openingNet += movement.debit - movement.credit;
+        } else if (movement.date >= fromDate && movement.date <= toDate) {
+          periodDebit += movement.debit;
+          periodCredit += movement.credit;
+        }
       });
 
-    // ربط القيود اليومية بحركات الحساب
-    const journalMap = new Map(
-      journals.map((journal) => [String(journal.id), journal]),
-    );
+      const openingBalance = splitBalance(openingNet);
 
-    journalLines
-      .filter((line) => String(line.accountId) === filters.accountId)
-      .forEach((line) => {
-        const journal = journalMap.get(String(line.journalId));
+      const closingNet = openingNet + periodDebit - periodCredit;
 
-        // لا نعتمد إلا القيود المرحلة
-        if (!journal || journal.status !== "posted") {
-          return;
+      const closingBalance = splitBalance(closingNet);
+
+      resultMap.set(accountId, {
+        account,
+
+        openingDebit: openingBalance.debit,
+        openingCredit: openingBalance.credit,
+
+        periodDebit,
+        periodCredit,
+
+        closingDebit: closingBalance.debit,
+        closingCredit: closingBalance.credit,
+
+        openingNet,
+        periodNet: periodDebit - periodCredit,
+        closingNet,
+
+        movements: accountMovements.filter(
+          (movement) => movement.date >= fromDate && movement.date <= toDate,
+        ),
+
+        children: [],
+        level: 0,
+      });
+    });
+
+    // بناء شجرة الحسابات
+
+    const roots: LedgerAccount[] = [];
+
+    resultMap.forEach((ledgerAccount) => {
+      const parentId = ledgerAccount.account.parentId
+        ? String(ledgerAccount.account.parentId)
+        : "";
+
+      const parent = parentId ? resultMap.get(parentId) : undefined;
+
+      if (parent && parent.account.id !== ledgerAccount.account.id) {
+        parent.children.push(ledgerAccount);
+      } else {
+        roots.push(ledgerAccount);
+      }
+    });
+
+    // ترتيب الحسابات
+
+    const sortAccounts = (items: LedgerAccount[]) => {
+      items.sort((a, b) =>
+        String(a.account.code || "").localeCompare(
+          String(b.account.code || ""),
+          undefined,
+          { numeric: true },
+        ),
+      );
+
+      items.forEach((item) => sortAccounts(item.children));
+    };
+
+    sortAccounts(roots);
+
+    // تجميع أرصدة الحسابات الفرعية في الحسابات الرئيسية
+
+    const calculateTotals = (
+      item: LedgerAccount,
+      level: number,
+    ): LedgerAccount => {
+      item.level = level;
+
+      item.children = item.children.map((child) =>
+        calculateTotals(child, level + 1),
+      );
+
+      if (item.children.length > 0) {
+        const childTotals = item.children.reduce(
+          (totals, child) => ({
+            openingNet: totals.openingNet + child.openingNet,
+            periodDebit: totals.periodDebit + child.periodDebit,
+            periodCredit: totals.periodCredit + child.periodCredit,
+          }),
+          {
+            openingNet: 0,
+            periodDebit: 0,
+            periodCredit: 0,
+          },
+        );
+
+        item.openingNet = childTotals.openingNet;
+        item.periodDebit = childTotals.periodDebit;
+        item.periodCredit = childTotals.periodCredit;
+
+        item.periodNet = item.periodDebit - item.periodCredit;
+
+        item.closingNet = item.openingNet + item.periodNet;
+
+        const opening = splitBalance(item.openingNet);
+        const closing = splitBalance(item.closingNet);
+
+        item.openingDebit = opening.debit;
+        item.openingCredit = opening.credit;
+
+        item.closingDebit = closing.debit;
+        item.closingCredit = closing.credit;
+      }
+
+      return item;
+    };
+
+    const tree = roots.map((item) => calculateTotals(item, 0));
+
+    return tree;
+  }, [accounts, movements, fromDate, toDate]);
+
+  // ========================================
+  // Flatten Accounts
+  // ========================================
+
+  const allLedgerAccounts = useMemo(() => {
+    const result: LedgerAccount[] = [];
+
+    const visit = (items: LedgerAccount[]) => {
+      items.forEach((item) => {
+        result.push(item);
+        visit(item.children);
+      });
+    };
+
+    visit(ledgerAccounts);
+
+    return result;
+  }, [ledgerAccounts]);
+
+  // ========================================
+  // Filter Accounts
+  // ========================================
+
+  const filteredAccounts = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    const matchesSearch = (item: LedgerAccount) => {
+      const account = item.account;
+
+      return (
+        String(account.code || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(account.name || "")
+          .toLowerCase()
+          .includes(query)
+      );
+    };
+
+    const hasBalance = (item: LedgerAccount) => {
+      return (
+        Math.abs(item.openingNet) >= 0.01 ||
+        Math.abs(item.periodNet) >= 0.01 ||
+        Math.abs(item.periodDebit) >= 0.01 ||
+        Math.abs(item.periodCredit) >= 0.01 ||
+        Math.abs(item.closingNet) >= 0.01
+      );
+    };
+
+    const filterTree = (items: LedgerAccount[]): LedgerAccount[] => {
+      return items.reduce<LedgerAccount[]>((result, item) => {
+        const children = filterTree(item.children);
+
+        const directMatch = matchesSearch(item);
+
+        const accountMatch =
+          selectedAccount === "all" ||
+          String(item.account.id) === selectedAccount;
+
+        const hasRelevantChild = children.length > 0;
+
+        const visibleByBalance =
+          showZeroBalances || hasBalance(item) || hasRelevantChild;
+
+        if (
+          (directMatch || hasRelevantChild) &&
+          visibleByBalance &&
+          accountMatch
+        ) {
+          result.push({
+            ...item,
+            children,
+          });
+        } else if (directMatch && visibleByBalance && !accountMatch) {
+          // لا نعرض الحساب عند اختيار حساب مختلف
         }
 
-        transactions.push({
-          id: `journal-${line.id}`,
-          journalId: journal.id,
-          journalNumber: journal.journalNumber,
-          date: journal.date,
-          description: line.description || journal.description,
-          debit: Number(line.debit || 0),
-          credit: Number(line.credit || 0),
-          source: "journal",
-          balance: 0,
-        });
-      });
-
-    return transactions.sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date);
-
-      if (dateCompare !== 0) {
-        return dateCompare;
-      }
-
-      // الأرصدة الافتتاحية تظهر قبل الحركات اليومية في التاريخ نفسه
-      if (a.source !== b.source) {
-        return a.source === "opening" ? -1 : 1;
-      }
-
-      return a.journalNumber.localeCompare(b.journalNumber, undefined, {
-        numeric: true,
-      });
-    });
-  }, [filters.accountId, openingEntries, journalLines, journals]);
-
-  // تحويل المدين والدائن إلى رصيد حسب طبيعة الحساب
-  const getSignedMovement = useCallback(
-    (transaction: { debit: number; credit: number }) => {
-      return accountNature === "debit"
-        ? transaction.debit - transaction.credit
-        : transaction.credit - transaction.debit;
-    },
-    [accountNature],
-  );
-
-  // الرصيد قبل الفترة
-  const openingBalance = useMemo(() => {
-    if (!filters.fromDate) return 0;
-
-    return ledgerTransactions
-      .filter((transaction) => transaction.date < filters.fromDate)
-      .reduce(
-        (balance, transaction) => balance + getSignedMovement(transaction),
-        0,
-      );
-  }, [ledgerTransactions, filters.fromDate, getSignedMovement]);
-
-  // الحركات ضمن الفترة
-  const filteredTransactions = useMemo(() => {
-    return ledgerTransactions.filter((transaction) => {
-      const date = transaction.date;
-
-      const fromMatch = !filters.fromDate || date >= filters.fromDate;
-
-      const toMatch = !filters.toDate || date <= filters.toDate;
-
-      const search = filters.search.trim().toLowerCase();
-
-      const searchMatch =
-        !search ||
-        transaction.journalNumber.toLowerCase().includes(search) ||
-        transaction.description.toLowerCase().includes(search);
-
-      return fromMatch && toMatch && searchMatch;
-    });
-  }, [ledgerTransactions, filters]);
-
-  // الرصيد الجاري
-  const transactionsWithBalance = useMemo(() => {
-    let balance = openingBalance;
-
-    return filteredTransactions.map((transaction) => {
-      balance += getSignedMovement(transaction);
-
-      return {
-        ...transaction,
-        balance,
-      };
-    });
-  }, [filteredTransactions, openingBalance, getSignedMovement]);
-
-  // الإجماليات
-  const totals = useMemo(() => {
-    const debit = filteredTransactions.reduce(
-      (sum, item) => sum + item.debit,
-      0,
-    );
-
-    const credit = filteredTransactions.reduce(
-      (sum, item) => sum + item.credit,
-      0,
-    );
-
-    const closingBalance =
-      transactionsWithBalance.length > 0
-        ? transactionsWithBalance[transactionsWithBalance.length - 1].balance
-        : openingBalance;
-
-    return {
-      debit,
-      credit,
-      closingBalance,
+        return result;
+      }, []);
     };
-  }, [filteredTransactions, transactionsWithBalance, openingBalance]);
 
-  // وصف الرصيد مدين أو دائن
-  const getBalanceNature = (balance: number) => {
-    if (Math.abs(balance) < 0.001) return "متزن";
+    if (selectedAccount !== "all") {
+      const selected = allLedgerAccounts.find(
+        (item) => String(item.account.id) === selectedAccount,
+      );
 
-    const isDebit = accountNature === "debit" ? balance > 0 : balance < 0;
-
-    return isDebit ? "مدين" : "دائن";
-  };
-
-  // طباعة التقرير
-  const handlePrint = async () => {
-    if (!selectedAccount) {
-      toast.error("اختر حساباً أولاً");
-      return;
+      return selected ? [selected] : [];
     }
 
-    await logLedgerActivity(
-      "print",
-      `طباعة دفتر الأستاذ للحساب ${selectedAccount.code} - ${selectedAccount.name}`,
-      selectedAccount,
+    return filterTree(ledgerAccounts);
+  }, [
+    ledgerAccounts,
+    allLedgerAccounts,
+    search,
+    showZeroBalances,
+    selectedAccount,
+  ]);
+
+  // ========================================
+  // Summary Totals
+  // ========================================
+
+  const summary = useMemo(() => {
+    // إجماليات الحسابات النهائية فقط لتجنب تكرار أرصدة الآباء
+
+    const finalAccounts = allLedgerAccounts.filter(
+      (item) => item.children.length === 0,
     );
 
-    window.print();
+    return finalAccounts.reduce(
+      (totals, item) => ({
+        openingDebit: totals.openingDebit + item.openingDebit,
+
+        openingCredit: totals.openingCredit + item.openingCredit,
+
+        periodDebit: totals.periodDebit + item.periodDebit,
+
+        periodCredit: totals.periodCredit + item.periodCredit,
+
+        closingDebit: totals.closingDebit + item.closingDebit,
+
+        closingCredit: totals.closingCredit + item.closingCredit,
+      }),
+      {
+        openingDebit: 0,
+        openingCredit: 0,
+        periodDebit: 0,
+        periodCredit: 0,
+        closingDebit: 0,
+        closingCredit: 0,
+      },
+    );
+  }, [allLedgerAccounts]);
+
+  // ========================================
+  // Expand / Collapse
+  // ========================================
+
+  const toggleAccount = (accountId: string) => {
+    setExpandedAccounts((previous) => {
+      const updated = new Set(previous);
+
+      if (updated.has(accountId)) {
+        updated.delete(accountId);
+      } else {
+        updated.add(accountId);
+      }
+
+      return updated;
+    });
   };
 
-  // فتح القيد
-  const handleViewJournal = (journalId?: number | string) => {
-    if (!journalId) return;
-
-    router.push(`/erp/accounting/journals/${journalId}`);
+  const expandAll = () => {
+    setExpandedAccounts(
+      new Set(
+        allLedgerAccounts
+          .filter((item) => item.children.length > 0)
+          .map((item) => String(item.account.id)),
+      ),
+    );
   };
 
-  // تحميل المستخدم
+  const collapseAll = () => {
+    setExpandedAccounts(new Set());
+  };
+
+  // ========================================
+  // Render Account Row
+  // ========================================
+
+  const renderAccountRows = (items: LedgerAccount[]): React.ReactNode => {
+    return items.map((item) => {
+      const accountId = String(item.account.id);
+
+      const hasChildren = item.children.length > 0;
+
+      const isExpanded = expandedAccounts.has(accountId);
+
+      const isGroup = hasChildren || item.account.isGroup === true;
+
+      return (
+        <Fragment key={accountId}>
+          <tr
+            className={`border-b border-slate-100 transition hover:bg-blue-50/40 ${
+              isGroup ? "bg-slate-50/70 font-semibold" : ""
+            }`}
+          >
+            {/* Account */}
+
+            <td className="px-4 py-3">
+              <div
+                className="flex items-center gap-2"
+                style={{
+                  paddingRight: `${item.level * 20}px`,
+                }}
+              >
+                {hasChildren ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleAccount(accountId)}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-200"
+                    title={isExpanded ? "طي الحساب" : "توسيع الحساب"}
+                  >
+                    {isExpanded ? (
+                      <FiChevronDown size={15} />
+                    ) : (
+                      <FiChevronLeft size={15} />
+                    )}
+                  </button>
+                ) : (
+                  <span className="w-6 shrink-0" />
+                )}
+
+                <div className="min-w-0">
+                  <p
+                    className={`text-sm ${
+                      isGroup
+                        ? "font-bold text-slate-800"
+                        : "font-medium text-slate-700"
+                    }`}
+                  >
+                    {item.account.code}
+                  </p>
+
+                  <p className="text-xs text-slate-500">{item.account.name}</p>
+                </div>
+              </div>
+            </td>
+
+            {/* Opening Debit */}
+
+            <td className="px-4 py-3 text-left text-blue-700">
+              {formatCurrency(item.openingDebit)}
+            </td>
+
+            {/* Opening Credit */}
+
+            <td className="px-4 py-3 text-left text-green-700">
+              {formatCurrency(item.openingCredit)}
+            </td>
+
+            {/* Period Debit */}
+
+            <td className="px-4 py-3 text-left text-blue-700">
+              {formatCurrency(item.periodDebit)}
+            </td>
+
+            {/* Period Credit */}
+
+            <td className="px-4 py-3 text-left text-green-700">
+              {formatCurrency(item.periodCredit)}
+            </td>
+
+            {/* Closing Debit */}
+
+            <td className="px-4 py-3 text-left font-semibold text-blue-800">
+              {formatCurrency(item.closingDebit)}
+            </td>
+
+            {/* Closing Credit */}
+
+            <td className="px-4 py-3 text-left font-semibold text-green-800">
+              {formatCurrency(item.closingCredit)}
+            </td>
+
+            {/* Details */}
+
+            <td className="px-4 py-3 text-center">
+              {!isGroup && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(`/erp/accounting/ledger/${accountId}`)
+                  }
+                  title="عرض حركة الحساب"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition hover:bg-blue-100"
+                >
+                  <FiEye size={16} />
+                </button>
+              )}
+            </td>
+          </tr>
+
+          {hasChildren && isExpanded && renderAccountRows(item.children)}
+        </Fragment>
+      );
+    });
+  };
+
+  // ========================================
+  // Loading User
+  // ========================================
+
   if (userLoading) {
     return (
       <div
@@ -557,6 +1059,10 @@ export default function LedgerPage() {
     );
   }
 
+  // ========================================
+  // User Error
+  // ========================================
+
   if (userError || !companyId) {
     return (
       <div
@@ -564,6 +1070,8 @@ export default function LedgerPage() {
         className="flex min-h-screen items-center justify-center bg-slate-50 p-5"
       >
         <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
+          <FiAlertCircle size={35} className="mx-auto mb-3 text-red-500" />
+
           <h2 className="font-bold text-red-600">تعذر فتح دفتر الأستاذ</h2>
 
           <p className="mt-3 text-sm text-slate-600">
@@ -581,124 +1089,85 @@ export default function LedgerPage() {
     );
   }
 
+  // ========================================
+  // UI
+  // ========================================
+
   return (
     <div
       dir="rtl"
       className="min-h-screen space-y-6 bg-slate-50 p-5 pb-10 text-slate-800"
     >
-      {/* العنوان */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between print:hidden">
+      {/* Header */}
+
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
+          <button
+            onClick={() => router.push("/erp/accounting")}
+            className="mb-3 inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-blue-600"
+          >
+            <FiArrowRight />
+            العودة إلى المحاسبة
+          </button>
+
           <h1 className="text-2xl font-bold text-slate-900">
             دفتر الأستاذ العام
           </h1>
 
           <p className="mt-2 text-sm text-slate-500">
-            متابعة أرصدة الحسابات والحركات المالية
-          </p>
-
-          <p className="mt-2 text-sm text-blue-700">
-            الشركة:{" "}
-            <span className="font-semibold">
-              {currentUser?.companyname || "الشركة الحالية"}
-            </span>
+            متابعة أرصدة الحسابات والحركات المدينة والدائنة خلال الفترة المحددة
           </p>
         </div>
 
-        <div className="flex gap-2">
-          <button
-            onClick={() => void fetchLedgerData()}
-            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700 shadow-sm hover:bg-slate-100"
-          >
-            <FiRefreshCw />
-            تحديث
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            <FiBookOpen size={18} />
+
+            <span>
+              الشركة: <strong>{user?.name || "الشركة الحالية"}</strong>
+            </span>
+          </div>
 
           <button
-            onClick={handlePrint}
-            disabled={!selectedAccount}
-            className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 font-medium text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
+            type="button"
+            onClick={() => void fetchLedgerData()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            <FiPrinter size={18} />
-            طباعة التقرير
+            <FiRefreshCw className={loading ? "animate-spin" : ""} />
+            تحديث
           </button>
         </div>
       </div>
 
-      {/* خيارات التقرير */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
-        <div className="mb-5 flex items-center gap-2">
-          <FiFilter className="text-blue-600" />
+      {/* Filters */}
 
-          <h2 className="font-bold text-slate-800">خيارات التقرير</h2>
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <FiFilter className="text-blue-600" size={19} />
+
+            <h2 className="font-bold text-slate-800">خيارات دفتر الأستاذ</h2>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowFilters((value) => !value)}
+            className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"
+          >
+            {showFilters ? "إخفاء الخيارات" : "عرض الخيارات"}
+            <FiChevronDown
+              className={`transition ${showFilters ? "rotate-180" : ""}`}
+            />
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              الحساب
-            </label>
-
-            <select
-              value={filters.accountId}
-              onChange={(e) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  accountId: e.target.value,
-                }))
-              }
-              className="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="">اختر الحساب</option>
-
-              {postingAccounts.map((account) => (
-                <option key={account.id} value={String(account.id)}>
-                  {account.code} - {account.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Search */}
 
           <div>
             <label className="mb-2 block text-sm font-medium text-slate-700">
-              من تاريخ
-            </label>
-
-            <input
-              type="date"
-              value={filters.fromDate}
-              onChange={(e) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  fromDate: e.target.value,
-                }))
-              }
-              className="w-full rounded-lg border border-slate-300 p-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              إلى تاريخ
-            </label>
-
-            <input
-              type="date"
-              value={filters.toDate}
-              min={filters.fromDate || undefined}
-              onChange={(e) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  toDate: e.target.value,
-                }))
-              }
-              className="w-full rounded-lg border border-slate-300 p-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-slate-700">
-              البحث
+              البحث عن حساب
             </label>
 
             <div className="relative">
@@ -708,305 +1177,391 @@ export default function LedgerPage() {
               />
 
               <input
-                value={filters.search}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    search: e.target.value,
-                  }))
-                }
-                placeholder="رقم القيد أو البيان"
-                className="w-full rounded-lg border border-slate-300 py-3 pl-3 pr-10 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="ابحث برقم الحساب أو اسمه..."
+                className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-4 pr-10 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
           </div>
+
+          {/* Account Selection */}
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              تحديد حساب
+            </label>
+
+            <select
+              value={selectedAccount}
+              onChange={(e) => setSelectedAccount(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            >
+              <option value="all">جميع الحسابات</option>
+
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {getAccountName(account)}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        <div className="mt-4 flex justify-end">
+        {showFilters && (
+          <div className="mt-5 grid grid-cols-1 gap-4 border-t border-slate-100 pt-5 md:grid-cols-2">
+            {/* From Date */}
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                من تاريخ
+              </label>
+
+              <div className="relative">
+                <FiCalendar
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={18}
+                />
+
+                <input
+                  type="date"
+                  value={fromDate}
+                  max={toDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-3 pr-10 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+            </div>
+
+            {/* To Date */}
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                إلى تاريخ
+              </label>
+
+              <div className="relative">
+                <FiCalendar
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={18}
+                />
+
+                <input
+                  type="date"
+                  value={toDate}
+                  min={fromDate}
+                  max={getToday()}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-3 pr-10 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+            </div>
+
+            {/* Zero Balances */}
+
+            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4 md:col-span-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-700">
+                  الحسابات ذات الأرصدة الصفرية
+                </p>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  إظهار الحسابات التي لا تحتوي على حركات أو أرصدة
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowZeroBalances((value) => !value)}
+                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  showZeroBalances
+                    ? "bg-blue-600 text-white"
+                    : "border border-slate-300 bg-white text-slate-600"
+                }`}
+              >
+                {showZeroBalances ? (
+                  <FiEye size={16} />
+                ) : (
+                  <FiEyeOff size={16} />
+                )}
+
+                {showZeroBalances ? "مفعّل" : "غير مفعّل"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Reset Filters */}
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           <button
-            onClick={() =>
-              setFilters({
-                accountId: "",
-                fromDate: "",
-                toDate: "",
-                search: "",
-              })
-            }
-            className="text-sm font-medium text-slate-500 hover:text-red-600"
+            type="button"
+            onClick={() => {
+              setFromDate(getMonthStart());
+              setToDate(getToday());
+              setSearch("");
+              setSelectedAccount("all");
+              setShowZeroBalances(false);
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
           >
-            مسح الفلاتر
+            <FiX size={14} />
+            إعادة ضبط الفلاتر
           </button>
+
+          <span className="text-xs text-slate-400">
+            الفترة: {formatDate(fromDate)} - {formatDate(toDate)}
+          </span>
         </div>
       </div>
 
-      {/* التحميل والأخطاء */}
-      {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white py-16 text-center text-slate-500">
-          جارٍ تحميل دفتر الأستاذ...
-        </div>
-      ) : error ? (
-        <div className="rounded-xl border border-red-200 bg-white py-16 text-center">
-          <div className="mb-3 flex justify-center text-red-500">
-            <FiAlertCircle size={30} />
-          </div>
+      {/* Loading */}
 
-          <p className="text-red-600">{error}</p>
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white py-16 text-center shadow-sm">
+          <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />
+
+          <p className="text-sm text-slate-500">
+            جارٍ تحميل بيانات دفتر الأستاذ...
+          </p>
+        </div>
+      ) : dataError ? (
+        <div className="rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
+          <FiAlertCircle size={35} className="mx-auto mb-3 text-red-500" />
+
+          <h3 className="font-bold text-red-700">تعذر تحميل دفتر الأستاذ</h3>
+
+          <p className="mt-2 text-sm text-slate-600">{dataError}</p>
 
           <button
+            type="button"
             onClick={() => void fetchLedgerData()}
-            className="mt-4 inline-flex items-center gap-2 text-blue-600"
+            className="mt-5 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white"
           >
-            <FiRefreshCw />
             إعادة المحاولة
           </button>
         </div>
-      ) : !filters.accountId ? (
-        <div className="rounded-xl border border-slate-200 bg-white py-20 text-center">
-          <FiBookOpen size={45} className="mx-auto mb-4 text-slate-300" />
-
-          <h3 className="font-bold text-slate-700">
-            اختر حساباً لعرض دفتر الأستاذ
-          </h3>
-
-          <p className="mt-2 text-sm text-slate-400">
-            اختر أحد الحسابات التي تقبل القيود لعرض حركاته
-          </p>
-        </div>
       ) : (
         <>
-          {/* بيانات الحساب */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div>
-                <p className="text-sm text-slate-500">الحساب المحدد</p>
+          {/* Summary Cards */}
 
-                <h2 className="mt-2 text-xl font-bold text-slate-900">
-                  {selectedAccount?.code} - {selectedAccount?.name}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-blue-700">
+                  إجمالي حركة المدين
+                </span>
+
+                <FiTrendingUp size={20} className="text-blue-600" />
+              </div>
+
+              <p className="mt-3 text-xl font-bold text-blue-800">
+                {formatCurrency(summary.periodDebit)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-green-100 bg-green-50 p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-green-700">
+                  إجمالي حركة الدائن
+                </span>
+
+                <FiTrendingUp size={20} className="text-green-600" />
+              </div>
+
+              <p className="mt-3 text-xl font-bold text-green-800">
+                {formatCurrency(summary.periodCredit)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-indigo-700">رصيد أول المدة</span>
+
+                <FiDollarSign size={20} className="text-indigo-600" />
+              </div>
+
+              <p className="mt-3 text-xl font-bold text-indigo-800">
+                {formatCurrency(summary.openingDebit - summary.openingCredit)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-purple-100 bg-purple-50 p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-purple-700">رصيد آخر المدة</span>
+
+                <FiDollarSign size={20} className="text-purple-600" />
+              </div>
+
+              <p className="mt-3 text-xl font-bold text-purple-800">
+                {formatCurrency(summary.closingDebit - summary.closingCredit)}
+              </p>
+            </div>
+          </div>
+
+          {/* Ledger Table */}
+
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-bold text-slate-800">
+                  أرصدة وحركات الحسابات
                 </h2>
 
-                <p className="mt-1 text-xs text-slate-400">
-                  طبيعة الحساب: {accountNature === "debit" ? "مدين" : "دائن"}
+                <p className="mt-1 text-xs text-slate-500">
+                  الأرصدة الافتتاحية والحركات خلال الفترة ورصيد الإقفال
                 </p>
               </div>
 
-              <div className="rounded-xl bg-blue-50 px-5 py-3">
-                <p className="text-xs text-blue-600">الرصيد الختامي</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={expandAll}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  توسيع الكل
+                </button>
 
-                <p className="mt-1 text-xl font-bold text-blue-800">
-                  {formatCurrency(Math.abs(totals.closingBalance))}
+                <button
+                  type="button"
+                  onClick={collapseAll}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  طي الكل
+                </button>
+              </div>
+            </div>
+
+            {filteredAccounts.length === 0 ? (
+              <div className="p-12 text-center">
+                <FiBookOpen size={38} className="mx-auto mb-3 text-slate-300" />
+
+                <h3 className="font-semibold text-slate-700">
+                  لا توجد حسابات مطابقة
+                </h3>
+
+                <p className="mt-2 text-sm text-slate-500">
+                  لم يتم العثور على حسابات تطابق خيارات البحث والفلاتر المحددة.
                 </p>
-
-                <p className="mt-1 text-xs text-blue-600">
-                  {getBalanceNature(totals.closingBalance)}
-                </p>
               </div>
-            </div>
-          </div>
-
-          {/* ملخص الأرصدة */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-3">
-                <FiBookOpen className="text-blue-600" size={22} />
-
-                <p className="text-sm text-slate-500">الرصيد الافتتاحي</p>
-              </div>
-
-              <h3 className="mt-3 text-xl font-bold text-slate-900">
-                {formatCurrency(Math.abs(openingBalance))}
-              </h3>
-
-              <p className="mt-1 text-xs text-slate-400">
-                {getBalanceNature(openingBalance)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-3">
-                <FiArrowUpCircle className="text-green-600" size={22} />
-
-                <p className="text-sm text-slate-500">إجمالي المدين</p>
-              </div>
-
-              <h3 className="mt-3 text-xl font-bold text-green-700">
-                {formatCurrency(totals.debit)}
-              </h3>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-3">
-                <FiArrowDownCircle className="text-red-600" size={22} />
-
-                <p className="text-sm text-slate-500">إجمالي الدائن</p>
-              </div>
-
-              <h3 className="mt-3 text-xl font-bold text-red-700">
-                {formatCurrency(totals.credit)}
-              </h3>
-            </div>
-          </div>
-
-          {/* جدول دفتر الأستاذ */}
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 p-5">
-              <h2 className="font-bold text-slate-800">حركة الحساب</h2>
-
-              <p className="mt-1 text-xs text-slate-500">
-                عدد الحركات: {filteredTransactions.length}
-              </p>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[950px] text-right text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-5 py-4 font-semibold">التاريخ</th>
-
-                    <th className="px-5 py-4 font-semibold">رقم القيد</th>
-
-                    <th className="px-5 py-4 font-semibold">البيان</th>
-
-                    <th className="px-5 py-4 font-semibold">مدين</th>
-
-                    <th className="px-5 py-4 font-semibold">دائن</th>
-
-                    <th className="px-5 py-4 font-semibold">الرصيد</th>
-
-                    <th className="px-5 py-4 text-center font-semibold">
-                      المصدر
-                    </th>
-
-                    <th className="px-5 py-4 text-center font-semibold print:hidden">
-                      الإجراء
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-                  <tr className="bg-blue-50/50">
-                    <td
-                      colSpan={3}
-                      className="px-5 py-4 font-bold text-slate-700"
-                    >
-                      الرصيد قبل الفترة
-                    </td>
-
-                    <td className="px-5 py-4">-</td>
-
-                    <td className="px-5 py-4">-</td>
-
-                    <td className="px-5 py-4 font-bold text-blue-700">
-                      {formatCurrency(Math.abs(openingBalance))}{" "}
-                      {getBalanceNature(openingBalance)}
-                    </td>
-
-                    <td className="px-5 py-4 text-xs text-blue-600">افتتاحي</td>
-
-                    <td className="print:hidden" />
-                  </tr>
-
-                  {transactionsWithBalance.map((transaction) => (
-                    <tr
-                      key={transaction.id}
-                      className="transition hover:bg-slate-50"
-                    >
-                      <td className="px-5 py-4 whitespace-nowrap text-slate-600">
-                        {formatDate(transaction.date)}
-                      </td>
-
-                      <td className="px-5 py-4 font-semibold text-blue-700">
-                        {transaction.journalNumber}
-                      </td>
-
-                      <td className="px-5 py-4 text-slate-700">
-                        {transaction.description}
-                      </td>
-
-                      <td className="px-5 py-4 font-medium text-green-700">
-                        {transaction.debit > 0
-                          ? formatCurrency(transaction.debit)
-                          : "-"}
-                      </td>
-
-                      <td className="px-5 py-4 font-medium text-red-700">
-                        {transaction.credit > 0
-                          ? formatCurrency(transaction.credit)
-                          : "-"}
-                      </td>
-
-                      <td className="px-5 py-4 font-bold text-slate-800">
-                        {formatCurrency(Math.abs(transaction.balance))}{" "}
-                        <span className="text-xs text-slate-400">
-                          {getBalanceNature(transaction.balance)}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4 text-xs">
-                        {transaction.source === "opening" ? (
-                          <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
-                            رصيد افتتاحي
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">
-                            قيد يومي
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4 text-center print:hidden">
-                        {transaction.journalId ? (
-                          <button
-                            onClick={() =>
-                              handleViewJournal(transaction.journalId)
-                            }
-                            className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600 transition hover:bg-blue-100"
-                          >
-                            عرض القيد
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-400">-</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-
-                  {filteredTransactions.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={8}
-                        className="py-12 text-center text-slate-400"
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1250px] text-right text-sm">
+                  <thead>
+                    <tr className="bg-slate-100 text-xs text-slate-600">
+                      <th
+                        rowSpan={2}
+                        className="min-w-[240px] border-b border-l border-slate-200 px-4 py-4"
                       >
-                        لا توجد حركات خلال الفترة المحددة
-                      </td>
+                        الحساب
+                      </th>
+
+                      <th
+                        colSpan={2}
+                        className="border-b border-l border-slate-200 px-4 py-3 text-center text-indigo-700"
+                      >
+                        رصيد أول المدة
+                      </th>
+
+                      <th
+                        colSpan={2}
+                        className="border-b border-l border-slate-200 px-4 py-3 text-center text-blue-700"
+                      >
+                        حركة الفترة
+                      </th>
+
+                      <th
+                        colSpan={2}
+                        className="border-b border-l border-slate-200 px-4 py-3 text-center text-green-700"
+                      >
+                        رصيد آخر المدة
+                      </th>
+
+                      <th
+                        rowSpan={2}
+                        className="w-20 border-b border-slate-200 px-4 py-4 text-center"
+                      >
+                        التفاصيل
+                      </th>
                     </tr>
-                  )}
-                </tbody>
 
-                <tfoot className="border-t-2 border-slate-200 bg-slate-50">
-                  <tr>
-                    <td
-                      colSpan={3}
-                      className="px-5 py-4 font-bold text-slate-800"
-                    >
-                      الإجمالي
-                    </td>
+                    <tr className="bg-slate-50 text-xs text-slate-500">
+                      <th className="border-l border-slate-200 px-4 py-3 text-left">
+                        مدين
+                      </th>
 
-                    <td className="px-5 py-4 font-bold text-green-700">
-                      {formatCurrency(totals.debit)}
-                    </td>
+                      <th className="border-l border-slate-200 px-4 py-3 text-left">
+                        دائن
+                      </th>
 
-                    <td className="px-5 py-4 font-bold text-red-700">
-                      {formatCurrency(totals.credit)}
-                    </td>
+                      <th className="border-l border-slate-200 px-4 py-3 text-left">
+                        مدين
+                      </th>
 
-                    <td className="px-5 py-4 font-bold text-blue-700">
-                      {formatCurrency(Math.abs(totals.closingBalance))}
-                    </td>
+                      <th className="border-l border-slate-200 px-4 py-3 text-left">
+                        دائن
+                      </th>
 
-                    <td colSpan={2} />
-                  </tr>
-                </tfoot>
-              </table>
+                      <th className="border-l border-slate-200 px-4 py-3 text-left">
+                        مدين
+                      </th>
+
+                      <th className="border-l border-slate-200 px-4 py-3 text-left">
+                        دائن
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>{renderAccountRows(filteredAccounts)}</tbody>
+
+                  <tfoot className="border-t-2 border-slate-300 bg-slate-100">
+                    <tr>
+                      <td className="px-4 py-4 font-bold text-slate-900">
+                        الإجمالي
+                      </td>
+
+                      <td className="px-4 py-4 text-left font-bold text-indigo-700">
+                        {formatCurrency(summary.openingDebit)}
+                      </td>
+
+                      <td className="px-4 py-4 text-left font-bold text-indigo-700">
+                        {formatCurrency(summary.openingCredit)}
+                      </td>
+
+                      <td className="px-4 py-4 text-left font-bold text-blue-700">
+                        {formatCurrency(summary.periodDebit)}
+                      </td>
+
+                      <td className="px-4 py-4 text-left font-bold text-blue-700">
+                        {formatCurrency(summary.periodCredit)}
+                      </td>
+
+                      <td className="px-4 py-4 text-left font-bold text-green-700">
+                        {formatCurrency(summary.closingDebit)}
+                      </td>
+
+                      <td className="px-4 py-4 text-left font-bold text-green-700">
+                        {formatCurrency(summary.closingCredit)}
+                      </td>
+
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
+            {/* Footer */}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
+              <p className="text-xs text-slate-500">
+                عدد الحسابات: {allLedgerAccounts.length}
+              </p>
+
+              <p className="text-xs text-slate-500">
+                الحركات المعروضة تعتمد على القيود المرحلة فقط.
+              </p>
             </div>
           </div>
         </>

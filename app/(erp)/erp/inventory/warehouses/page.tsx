@@ -1,88 +1,49 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import axios from "axios";
 import { toast } from "sonner";
 
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
+
 import {
-  FiHome,
   FiPlus,
   FiSearch,
   FiEdit2,
   FiTrash2,
+  FiRefreshCw,
   FiX,
   FiSave,
-  FiRefreshCw,
   FiMapPin,
-  FiCheckCircle,
   FiPackage,
+  FiStar,
+  FiCheckCircle,
   FiAlertCircle,
-  FiDollarSign,
-  FiLayers,
-  FiTrendingDown,
-  FiFilter,
-  FiEye,
+  FiArrowUpRight,
 } from "react-icons/fi";
-
 import {
-  getCurrentActor,
-  getCreateActivity,
-  getUpdateActivity,
-  logCreate,
-  logUpdate,
-  logDelete,
-} from "../../lib/activity";
+  IoCaretForwardCircle,
+  IoFlowerSharp,
+  IoPlayForwardCircleSharp,
+} from "react-icons/io5";
+import { ImFileWord, ImForward } from "react-icons/im";
 
-// ========================================
-// API
-// ========================================
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-// ========================================
+// ============================================
 // Types
-// ========================================
-
-type WarehouseStatus = "active" | "inactive";
+// ============================================
 
 interface Warehouse {
   id: string;
   companyId: string;
   name: string;
-  location: string;
-  description: string;
-  status: WarehouseStatus;
-
-  createdAt?: string;
-  createdBy?: string;
-  createdByName?: string;
-
-  updatedAt?: string;
-  updatedBy?: string;
-  updatedByName?: string;
-}
-
-interface Product {
-  id: string;
-  companyId: string;
-  warehouseId?: string;
-  name: string;
-  sku?: string;
-  unitName?: string;
-  purchasePrice?: number;
-  sellingPrice?: number;
-  currentStock?: number;
-  minStock?: number;
+  code: string;
+  location?: string | null;
+  description?: string | null;
+  isDefault?: boolean;
   status?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface WarehouseStock {
@@ -91,458 +52,357 @@ interface WarehouseStock {
   productId: string;
   warehouseId: string;
   quantity: number;
-
-  createdAt?: string;
-  createdBy?: string;
-  createdByName?: string;
-
-  updatedAt?: string;
-  updatedBy?: string;
-  updatedByName?: string;
+  productName?: string;
 }
 
-interface InventoryMovement {
-  id: string | number;
-  companyId: string;
-  warehouseId: string;
-  productId: string;
-  type?: string;
+interface WarehouseForm {
+  name: string;
+  code: string;
+  location: string;
+  description: string;
+  isDefault: boolean;
+  status: string;
 }
 
-// ========================================
+interface WarehouseSummary {
+  productsCount: number;
+  totalQuantity: number;
+}
+
+// ============================================
+// Constants
+// ============================================
+
+const EMPTY_FORM: WarehouseForm = {
+  name: "",
+  code: "",
+  location: "",
+  description: "",
+  isDefault: false,
+  status: "active",
+};
+
+// ============================================
 // Helpers
-// ========================================
+// ============================================
 
-const getCookie = (name: string) => {
-  if (typeof document === "undefined") return "";
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
 
   const cookie = document.cookie
     .split("; ")
     .find((item) => item.startsWith(`${name}=`));
 
-  return cookie ? decodeURIComponent(cookie.substring(name.length + 1)) : "";
-};
+  return cookie ? decodeURIComponent(cookie.split("=")[1]) : null;
+}
 
-const number = (value: unknown) => {
-  const result = Number(value);
-  return Number.isFinite(result) ? result : 0;
-};
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("ar-YE").format(value);
+}
 
-const money = (value: number) =>
-  new Intl.NumberFormat("ar-YE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+function formatDate(value?: string): string {
+  if (!value) return "-";
 
-const emptyForm = {
-  name: "",
-  location: "",
-  description: "",
-  status: "active" as WarehouseStatus,
-};
+  const date = new Date(value);
 
-const inputClass =
-  "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  if (Number.isNaN(date.getTime())) return "-";
 
-const labelClass = "mb-1.5 block text-xs font-medium text-gray-700";
+  return new Intl.DateTimeFormat("ar-YE", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
 
-// ========================================
-// Main Component
-// ========================================
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String(error.message);
+  }
+
+  return "حدث خطأ غير متوقع";
+}
+
+// ============================================
+// Component
+// ============================================
 
 export default function WarehousesPage() {
-  const [companyId, setCompanyId] = useState("");
+  // ------------------------------------------
+  // States
+  // ------------------------------------------
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [warehouseStocks, setWarehouseStocks] = useState<WarehouseStock[]>([]);
-  const [inventoryMovements, setInventoryMovements] = useState<
-    InventoryMovement[]
-  >([]);
+  const [stocks, setStocks] = useState<WarehouseStock[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Filters
+  const [companyId, setCompanyId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [locationFilter, setLocationFilter] = useState("all");
-  const [stockFilter, setStockFilter] = useState("all");
 
-  // Form
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<WarehouseForm>(EMPTY_FORM);
 
-  // ======================================
-  // Current Actor
-  // ======================================
+  // ------------------------------------------
+  // Load Warehouses
+  // ------------------------------------------
 
-  const getActor = () => {
-    const actor = getCurrentActor();
-
-    if (!actor) {
-      throw new Error(
-        "لم يتم العثور على بيانات المستخدم. يرجى تسجيل الدخول مرة أخرى.",
-      );
-    }
-
-    if (!actor.userId || !actor.companyId) {
-      throw new Error(
-        "بيانات المستخدم أو الشركة غير مكتملة. يرجى تسجيل الدخول مرة أخرى.",
-      );
-    }
-
-    return actor;
-  };
-
-  // ======================================
-  // Initialize
-  // ======================================
-
-  useEffect(() => {
-    initialize();
-  }, []);
-
-  const initialize = async () => {
-    try {
-      const actor = getCurrentActor();
-
-      const userType = getCookie("type");
-
-      if (!actor) {
-        toast.error("انتهت جلسة المستخدم، يرجى تسجيل الدخول");
-        return;
-      }
-
-      if (userType === "platform") {
-        toast.error("هذه الصفحة مخصصة لمستخدمي الشركات");
-        return;
-      }
-
-      const currentCompanyId = String(
-        actor.companyId || getCookie("companyId") || "",
-      );
-
-      if (!currentCompanyId) {
-        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
-        return;
-      }
-
-      setCompanyId(currentCompanyId);
-
-      await loadData(currentCompanyId);
-    } catch (error) {
-      console.error("Initialize Error:", error);
-      toast.error("حدث خطأ أثناء تحميل الصفحة");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ======================================
-  // Load Data
-  // ======================================
-
-  const loadData = async (currentCompanyId: string) => {
-    try {
-      const [warehouseRes, productRes, stockRes, movementRes] =
-        await Promise.all([
-          api.get("/warehouses", {
-            params: { companyId: currentCompanyId },
-          }),
-
-          api.get("/products", {
-            params: { companyId: currentCompanyId },
-          }),
-
-          api.get("/warehouseStocks", {
-            params: { companyId: currentCompanyId },
-          }),
-
-          api.get("/inventoryMovements", {
-            params: { companyId: currentCompanyId },
-          }),
-        ]);
-
-      const sameCompany = (item: { companyId?: string | number }) =>
-        String(item.companyId) === String(currentCompanyId);
-
-      setWarehouses(
-        warehouseRes.data.filter((item: Warehouse) => sameCompany(item)),
-      );
-
-      setProducts(productRes.data.filter((item: Product) => sameCompany(item)));
-
-      setWarehouseStocks(
-        stockRes.data.filter((item: WarehouseStock) => sameCompany(item)),
-      );
-
-      setInventoryMovements(
-        movementRes.data.filter((item: InventoryMovement) => sameCompany(item)),
-      );
-    } catch (error) {
-      console.error("Load Data Error:", error);
-      toast.error("تعذر تحميل بيانات المستودعات والمخزون");
-    }
-  };
-
-  // ======================================
-  // Refresh
-  // ======================================
-
-  const handleRefresh = async () => {
-    if (!companyId) return;
-
+  const loadWarehouses = useCallback(async (currentCompanyId: string) => {
     try {
       setLoading(true);
 
-      await loadData(companyId);
+      const [warehousesResponse, stocksResponse] = await Promise.all([
+        supabase
+          .from("warehouses")
+          .select("*")
+          .eq("companyId", currentCompanyId)
+          .order("createdAt", { ascending: false }),
 
-      toast.success("تم تحديث البيانات");
+        supabase
+          .from("warehouseStocks")
+          .select("*")
+          .eq("companyId", currentCompanyId),
+      ]);
+
+      if (warehousesResponse.error) {
+        throw warehousesResponse.error;
+      }
+
+      if (stocksResponse.error) {
+        throw stocksResponse.error;
+      }
+
+      setWarehouses((warehousesResponse.data ?? []) as Warehouse[]);
+      setStocks((stocksResponse.data ?? []) as WarehouseStock[]);
+    } catch (error) {
+      console.error("Load warehouses error:", error);
+      toast.error("تعذر تحميل بيانات المستودعات");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  // ======================================
-  // Stock Helpers
-  // ======================================
+  // ------------------------------------------
+  // Initialize
+  // ------------------------------------------
 
-  const getProductStock = (productId: string, warehouseId?: string) => {
-    return warehouseStocks
-      .filter(
-        (stock) =>
-          String(stock.productId) === String(productId) &&
-          (!warehouseId || String(stock.warehouseId) === String(warehouseId)) &&
-          String(stock.companyId) === String(companyId),
-      )
-      .reduce((sum, stock) => sum + number(stock.quantity), 0);
-  };
+  useEffect(() => {
+    let mounted = true;
 
-  // ======================================
-  // Warehouse Products
-  // ======================================
+    const initialize = async () => {
+      try {
+        const type = getCookie("type");
+        const username = getCookie("username");
 
-  const getWarehouseProducts = (warehouseId: string) => {
-    const productIds = new Set(
-      warehouseStocks
-        .filter(
-          (stock) =>
-            String(stock.warehouseId) === String(warehouseId) &&
-            String(stock.companyId) === String(companyId),
-        )
-        .map((stock) => String(stock.productId)),
+        if (!username || type === "platform") {
+          toast.error("ليس لديك صلاحية الوصول إلى هذه الصفحة");
+          setLoading(false);
+          return;
+        }
+
+        const userResult = await getUserByUsername(username);
+
+        const user = Array.isArray(userResult) ? userResult[0] : userResult;
+
+        if (!user) {
+          toast.error("تعذر العثور على بيانات المستخدم");
+          setLoading(false);
+          return;
+        }
+
+        if (
+          user.isActive === false ||
+          user.status === "inactive" ||
+          user.status === "غير نشط"
+        ) {
+          toast.error("حساب المستخدم غير نشط");
+          setLoading(false);
+          return;
+        }
+
+        if (user.type === "platform") {
+          toast.error("لا يمكن لمستخدم المنصة الوصول إلى هذه الصفحة");
+          setLoading(false);
+          return;
+        }
+
+        if (!user.companyId) {
+          toast.error("المستخدم غير مرتبط بشركة");
+          setLoading(false);
+          return;
+        }
+
+        if (!mounted) return;
+
+        setCompanyId(String(user.companyId));
+
+        await loadWarehouses(String(user.companyId));
+      } catch (error) {
+        console.error("Initialize warehouses error:", error);
+        toast.error("حدث خطأ أثناء التحقق من المستخدم");
+        setLoading(false);
+      }
+    };
+
+    initialize();
+
+    return () => {
+      mounted = false;
+    };
+  }, [loadWarehouses]);
+
+  // ------------------------------------------
+  // Warehouse Summary
+  // ------------------------------------------
+
+  const getWarehouseSummary = (warehouseId: string): WarehouseSummary => {
+    const warehouseStocks = stocks.filter(
+      (stock) => String(stock.warehouseId) === String(warehouseId),
     );
 
-    return products.filter((product) => {
-      const belongsToWarehouse =
-        String(product.warehouseId || "") === String(warehouseId);
+    const productsCount = new Set(
+      warehouseStocks.map((stock) => stock.productId),
+    ).size;
 
-      return belongsToWarehouse || productIds.has(String(product.id));
-    });
-  };
-
-  // ======================================
-  // Warehouse Statistics
-  // ======================================
-
-  const getWarehouseStats = (warehouseId: string) => {
-    const warehouseStocksList = warehouseStocks.filter(
-      (stock) =>
-        String(stock.warehouseId) === String(warehouseId) &&
-        String(stock.companyId) === String(companyId),
-    );
-
-    const productIds = new Set(
-      warehouseStocksList.map((stock) => String(stock.productId)),
-    );
-
-    const warehouseProducts = products.filter(
-      (product) =>
-        productIds.has(String(product.id)) ||
-        String(product.warehouseId || "") === String(warehouseId),
-    );
-
-    const quantity = warehouseStocksList.reduce(
-      (sum, stock) => sum + number(stock.quantity),
+    const totalQuantity = warehouseStocks.reduce(
+      (total, stock) => total + Number(stock.quantity || 0),
       0,
     );
 
-    const cost = warehouseStocksList.reduce((sum, stock) => {
-      const product = products.find(
-        (item) => String(item.id) === String(stock.productId),
-      );
-
-      return sum + number(stock.quantity) * number(product?.purchasePrice);
-    }, 0);
-
-    const lowProducts = warehouseProducts.filter(
-      (product) =>
-        product.status !== "inactive" &&
-        getProductStock(product.id, warehouseId) <= number(product.minStock),
-    );
-
-    const outOfStock = warehouseProducts.filter(
-      (product) => getProductStock(product.id, warehouseId) <= 0,
-    ).length;
-
-    const lowPercentage =
-      warehouseProducts.length > 0
-        ? (lowProducts.length / warehouseProducts.length) * 100
-        : 0;
-
     return {
-      productsCount: warehouseProducts.length,
-      quantity,
-      cost,
-      lowCount: lowProducts.length,
-      outOfStock,
-      lowPercentage,
+      productsCount,
+      totalQuantity,
     };
   };
 
-  // ======================================
-  // Warehouse Statistics
-  // ======================================
+  // ------------------------------------------
+  // Statistics
+  // ------------------------------------------
 
-  const activeWarehouses = warehouses.filter(
-    (item) => item.status === "active",
-  );
+  const statistics = useMemo(() => {
+    const activeWarehouses = warehouses.filter(
+      (warehouse) => warehouse.status === "active",
+    ).length;
 
-  const inactiveWarehouses = warehouses.filter(
-    (item) => item.status === "inactive",
-  );
+    const inactiveWarehouses = warehouses.filter(
+      (warehouse) => warehouse.status !== "active",
+    ).length;
 
-  const totalProducts = new Set(
-    warehouseStocks.map((item) => String(item.productId)),
-  ).size;
-
-  const totalStockQuantity = warehouseStocks.reduce(
-    (sum, stock) => sum + number(stock.quantity),
-    0,
-  );
-
-  const totalStockCost = warehouseStocks.reduce((sum, stock) => {
-    const product = products.find(
-      (item) => String(item.id) === String(stock.productId),
+    const defaultWarehouse = warehouses.find(
+      (warehouse) => warehouse.isDefault,
     );
 
-    return sum + number(stock.quantity) * number(product?.purchasePrice);
-  }, 0);
-
-  const lowStockProducts = products.filter((product) => {
-    if (product.status === "inactive") return false;
-
-    const stock = getProductStock(product.id);
-
-    return stock <= number(product.minStock);
-  });
-
-  const lowStockPercentage =
-    totalProducts > 0 ? (lowStockProducts.length / totalProducts) * 100 : 0;
-
-  // ======================================
-  // Locations
-  // ======================================
-
-  const locations = useMemo(() => {
-    return Array.from(
-      new Set(
-        warehouses
-          .map((item) => item.location?.trim())
-          .filter((item): item is string => Boolean(item)),
-      ),
+    const totalQuantity = stocks.reduce(
+      (total, stock) => total + Number(stock.quantity || 0),
+      0,
     );
-  }, [warehouses]);
 
-  // ======================================
-  // Filters
-  // ======================================
+    const totalProducts = new Set(stocks.map((stock) => stock.productId)).size;
 
-  const filteredWarehouses = warehouses.filter((warehouse) => {
-    const searchText = search.trim().toLowerCase();
+    return {
+      total: warehouses.length,
+      active: activeWarehouses,
+      inactive: inactiveWarehouses,
+      defaultWarehouse,
+      totalQuantity,
+      totalProducts,
+    };
+  }, [warehouses, stocks]);
 
-    const matchesSearch =
-      warehouse.name.toLowerCase().includes(searchText) ||
-      (warehouse.location || "").toLowerCase().includes(searchText) ||
-      (warehouse.description || "").toLowerCase().includes(searchText) ||
-      String(warehouse.id).toLowerCase().includes(searchText);
+  // ------------------------------------------
+  // Filter
+  // ------------------------------------------
 
-    const matchesStatus =
-      statusFilter === "all" || warehouse.status === statusFilter;
+  const filteredWarehouses = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
 
-    const matchesLocation =
-      locationFilter === "all" || warehouse.location === locationFilter;
+    return warehouses.filter((warehouse) => {
+      const matchesSearch =
+        !normalizedSearch ||
+        warehouse.name.toLowerCase().includes(normalizedSearch) ||
+        warehouse.code.toLowerCase().includes(normalizedSearch) ||
+        (warehouse.location || "").toLowerCase().includes(normalizedSearch);
 
-    const stats = getWarehouseStats(warehouse.id);
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "active" && warehouse.status === "active") ||
+        (statusFilter === "inactive" && warehouse.status !== "active");
 
-    const matchesStock =
-      stockFilter === "all" ||
-      (stockFilter === "hasProducts" && stats.productsCount > 0) ||
-      (stockFilter === "empty" && stats.productsCount === 0) ||
-      (stockFilter === "low" && stats.lowCount > 0) ||
-      (stockFilter === "out" && stats.outOfStock > 0);
+      return matchesSearch && matchesStatus;
+    });
+  }, [warehouses, search, statusFilter]);
 
-    return matchesSearch && matchesStatus && matchesLocation && matchesStock;
-  });
+  // ------------------------------------------
+  // Open Create Form
+  // ------------------------------------------
 
-  // ======================================
-  // Open Add Form
-  // ======================================
-
-  const handleAdd = () => {
+  const openCreateForm = () => {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm(EMPTY_FORM);
     setShowForm(true);
   };
 
-  // ======================================
+  // ------------------------------------------
   // Open Edit Form
-  // ======================================
+  // ------------------------------------------
 
-  const handleEdit = (warehouse: Warehouse) => {
-    if (String(warehouse.companyId) !== String(companyId)) {
-      toast.error("لا يمكنك تعديل مستودع تابع لشركة أخرى");
-      return;
-    }
-
-    setEditingId(String(warehouse.id));
+  const openEditForm = (warehouse: Warehouse) => {
+    setEditingId(warehouse.id);
 
     setForm({
-      name: warehouse.name,
+      name: warehouse.name || "",
+      code: warehouse.code || "",
       location: warehouse.location || "",
       description: warehouse.description || "",
-      status: warehouse.status,
+      isDefault: Boolean(warehouse.isDefault),
+      status: warehouse.status || "active",
     });
 
     setShowForm(true);
   };
 
-  // ======================================
-  // Form Changes
-  // ======================================
+  // ------------------------------------------
+  // Handle Form Changes
+  // ------------------------------------------
 
-  const handleChange = (
-    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+  const handleFormChange = (
+    event: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >,
   ) => {
-    const { name, value } = e.target;
+    const { name, value, type } = event.target;
 
-    setForm((prev) => ({
-      ...prev,
+    if (type === "checkbox") {
+      const checked = (event.target as HTMLInputElement).checked;
+
+      setForm((previous) => ({
+        ...previous,
+        [name]: checked,
+      }));
+
+      return;
+    }
+
+    setForm((previous) => ({
+      ...previous,
       [name]: value,
     }));
   };
 
-  // ======================================
+  // ------------------------------------------
   // Save Warehouse
-  // ======================================
+  // ------------------------------------------
 
-  const handleSave = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleSave = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
 
     if (!companyId) {
-      toast.error("الشركة غير محددة");
+      toast.error("تعذر تحديد الشركة");
       return;
     }
 
@@ -553,166 +413,166 @@ export default function WarehousesPage() {
       return;
     }
 
-    const duplicateName = warehouses.some(
-      (warehouse) =>
-        warehouse.name.trim().toLowerCase() === name.toLowerCase() &&
-        String(warehouse.id) !== editingId,
-    );
-
-    if (duplicateName) {
-      toast.error("اسم المستودع مستخدم مسبقاً");
-      return;
-    }
-
     try {
       setSaving(true);
 
-      const actor = getActor();
-
-      if (String(actor.companyId) !== String(companyId)) {
-        toast.error("المستخدم غير مرتبط بالشركة الحالية");
-        return;
-      }
-
       const now = new Date().toISOString();
 
-      const actorName = actor.userName || actor.username;
+      // --------------------------------------
+      // Generate Warehouse Code Automatically
+      // --------------------------------------
+
+      let warehouseCode = form.code.trim();
+
+      if (!editingId) {
+        const { data: existingWarehouses, error: warehousesError } =
+          await supabase
+            .from("warehouses")
+            .select("code")
+            .eq("companyId", companyId);
+
+        if (warehousesError) throw warehousesError;
+
+        const warehouseNumber = (existingWarehouses?.length || 0) + 1;
+
+        warehouseCode = `WH-${String(warehouseNumber).padStart(3, "0")}`;
+
+        // التأكد من عدم تكرار الرمز
+        const { data: duplicated, error: duplicateError } = await supabase
+          .from("warehouses")
+          .select("id")
+          .eq("companyId", companyId)
+          .eq("code", warehouseCode)
+          .maybeSingle();
+
+        if (duplicateError) throw duplicateError;
+
+        if (duplicated) {
+          throw new Error(
+            `رمز المستودع ${warehouseCode} مستخدم مسبقاً. أعد تحميل الصفحة وحاول مرة أخرى.`,
+          );
+        }
+      }
 
       const payload = {
         companyId,
         name,
+        code: warehouseCode,
         location: form.location.trim(),
         description: form.description.trim(),
+        isDefault: form.isDefault,
         status: form.status,
       };
 
-      // ==================================
-      // Update
-      // ==================================
+      // --------------------------------------
+      // If Default Warehouse
+      // --------------------------------------
 
-      if (editingId) {
-        const currentWarehouse = warehouses.find(
-          (item) => String(item.id) === editingId,
+      if (form.isDefault) {
+        const otherDefaults = warehouses.filter(
+          (warehouse) =>
+            warehouse.isDefault && String(warehouse.id) !== String(editingId),
         );
 
-        if (
-          !currentWarehouse ||
-          String(currentWarehouse.companyId) !== String(companyId)
-        ) {
-          toast.error("لا يمكنك تعديل هذا المستودع");
-          return;
+        for (const warehouse of otherDefaults) {
+          const { data, error } = await supabase
+            .from("warehouses")
+            .update({
+              isDefault: false,
+              updatedAt: now,
+            })
+            .eq("id", warehouse.id)
+            .eq("companyId", companyId)
+            .select("id")
+            .maybeSingle();
+
+          if (error) throw error;
+
+          if (!data) {
+            throw new Error(
+              `تعذر تحديث المستودع الافتراضي السابق: ${warehouse.name}`,
+            );
+          }
         }
+      }
 
-        const updatePayload = {
-          ...payload,
-          updatedBy: String(actor.userId),
-          updatedByName: actorName,
-          updatedAt: now,
-          ...getUpdateActivity(),
-        };
+      // --------------------------------------
+      // Update
+      // --------------------------------------
 
-        await api.patch(`/warehouses/${editingId}`, updatePayload);
+      if (editingId) {
+        const { data, error } = await supabase
+          .from("warehouses")
+          .update({
+            ...payload,
+            code: form.code.trim(),
+            updatedAt: now,
+          })
+          .eq("id", editingId)
+          .eq("companyId", companyId)
+          .select("*")
+          .maybeSingle();
 
-        try {
-          await logUpdate(
-            "المستودعات",
-            `تم تعديل المستودع: ${name}`,
-            editingId,
-            name,
-            currentWarehouse,
-            {
-              ...payload,
-              updatedBy: String(actor.userId),
-              updatedByName: actorName,
-            },
+        if (error) throw error;
+
+        if (!data) {
+          throw new Error(
+            "لم يتم تحديث المستودع. تحقق من صلاحيات التعديل وسياسات RLS.",
           );
-        } catch (activityError) {
-          console.error("Update Activity Error:", activityError);
         }
 
         toast.success("تم تحديث المستودع بنجاح");
-      }
+      } else {
+        // --------------------------------------
+        // Create
+        // --------------------------------------
 
-      // ==================================
-      // Create
-      // ==================================
-      else {
-        const createPayload = {
-          ...payload,
-          createdBy: String(actor.userId),
-          createdByName: actorName,
-          createdAt: now,
-          ...getCreateActivity(),
-        };
+        const { data, error } = await supabase
+          .from("warehouses")
+          .insert({
+            id: crypto.randomUUID(),
+            ...payload,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .select("*")
+          .single();
 
-        const response = await api.post("/warehouses", createPayload);
+        if (error) throw error;
 
-        const newWarehouse = response.data as Warehouse;
-
-        try {
-          await logCreate(
-            "المستودعات",
-            `تم إنشاء مستودع جديد: ${name}`,
-            String(newWarehouse.id),
-            name,
-            createPayload,
-          );
-        } catch (activityError) {
-          console.error("Create Activity Error:", activityError);
+        if (!data) {
+          throw new Error("لم يتم إنشاء المستودع");
         }
 
-        toast.success("تمت إضافة المستودع بنجاح");
+        toast.success(`تمت إضافة المستودع بنجاح بالرمز ${warehouseCode}`);
       }
 
       setShowForm(false);
       setEditingId(null);
-      setForm(emptyForm);
+      setForm(EMPTY_FORM);
 
-      await loadData(companyId);
+      await loadWarehouses(companyId);
     } catch (error) {
-      console.error("Save Warehouse Error:", error);
-
-      toast.error(
-        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ المستودع",
-      );
+      console.error("Save warehouse error:", error);
+      toast.error(getErrorMessage(error));
     } finally {
       setSaving(false);
     }
   };
 
-  // ======================================
+  // ------------------------------------------
   // Delete Warehouse
-  // ======================================
+  // ------------------------------------------
 
   const handleDelete = async (warehouse: Warehouse) => {
-    if (String(warehouse.companyId) !== String(companyId)) {
-      toast.error("لا يمكنك حذف مستودع تابع لشركة أخرى");
-      return;
-    }
+    if (!companyId) return;
 
-    if (warehouses.length <= 1) {
-      toast.error("يجب الاحتفاظ بمستودع واحد على الأقل");
-      return;
-    }
-
-    const hasProducts = products.some(
-      (product) => String(product.warehouseId || "") === String(warehouse.id),
+    const relatedStocks = stocks.filter(
+      (stock) => String(stock.warehouseId) === String(warehouse.id),
     );
 
-    const hasStock = warehouseStocks.some(
-      (stock) =>
-        String(stock.warehouseId) === String(warehouse.id) &&
-        number(stock.quantity) !== 0,
-    );
-
-    const hasMovements = inventoryMovements.some(
-      (movement) => String(movement.warehouseId) === String(warehouse.id),
-    );
-
-    if (hasProducts || hasStock || hasMovements) {
-      toast.error(
-        "لا يمكن حذف المستودع لأنه مرتبط بأصناف أو أرصدة أو حركات مخزنية. يمكنك تغيير حالته إلى غير نشط.",
-      );
+    if (relatedStocks.length > 0) {
+      toast.error("لا يمكن حذف المستودع لوجود سجلات مخزون مرتبطة به");
       return;
     }
 
@@ -723,435 +583,425 @@ export default function WarehousesPage() {
     if (!confirmed) return;
 
     try {
-      const actor = getActor();
+      setDeletingId(warehouse.id);
 
-      if (String(actor.companyId) !== String(companyId)) {
-        toast.error("المستخدم غير مرتبط بالشركة الحالية");
-        return;
-      }
+      const { data, error } = await supabase
+        .from("warehouses")
+        .delete()
+        .eq("id", warehouse.id)
+        .eq("companyId", companyId)
+        .select("id")
+        .maybeSingle();
 
-      await api.delete(`/warehouses/${warehouse.id}`);
+      if (error) throw error;
 
-      try {
-        await logDelete(
-          "المستودعات",
-          `تم حذف المستودع: ${warehouse.name}`,
-          String(warehouse.id),
-          warehouse.name,
-          warehouse,
+      if (!data) {
+        throw new Error(
+          "لم يتم حذف المستودع. تحقق من صلاحيات الحذف وسياسات RLS.",
         );
-      } catch (activityError) {
-        console.error("Delete Activity Error:", activityError);
       }
 
       toast.success("تم حذف المستودع بنجاح");
 
-      await loadData(companyId);
+      await loadWarehouses(companyId);
     } catch (error) {
-      console.error("Delete Warehouse Error:", error);
-      toast.error("تعذر حذف المستودع");
+      console.error("Delete warehouse error:", error);
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDeletingId(null);
     }
   };
 
-  // ======================================
-  // Reset Filters
-  // ======================================
+  // ------------------------------------------
+  // Refresh
+  // ------------------------------------------
 
-  const resetFilters = () => {
-    setSearch("");
-    setStatusFilter("all");
-    setLocationFilter("all");
-    setStockFilter("all");
+  const handleRefresh = async () => {
+    if (!companyId) return;
+
+    await loadWarehouses(companyId);
+    toast.success("تم تحديث البيانات");
   };
 
-  // ======================================
+  // ============================================
   // Loading
-  // ======================================
+  // ============================================
 
   if (loading) {
     return (
-      <div className="flex min-h-[300px] items-center justify-center">
-        <FiRefreshCw className="animate-spin text-2xl text-blue-600" />
-      </div>
-    );
-  }
+      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
+        <div className="text-center">
+          <FiRefreshCw
+            className="mx-auto animate-spin text-blue-600"
+            size={32}
+          />
 
-  // ======================================
-  // Company Error
-  // ======================================
-
-  if (!companyId) {
-    return (
-      <div
-        dir="rtl"
-        className="m-4 rounded-lg border border-red-200 bg-red-50 p-5 text-center text-red-700"
-      >
-        <FiAlertCircle className="mx-auto mb-2 text-2xl" />
-
-        <h2 className="text-sm font-bold">
-          لم يتم العثور على الشركة المرتبطة بالمستخدم
-        </h2>
-
-        <p className="mt-2 text-xs">
-          تحقق من تسجيل الدخول وبيانات الشركة المرتبطة بالمستخدم.
-        </p>
-      </div>
-    );
-  }
-
-  // ======================================
-  // Main UI
-  // ======================================
-
-  return (
-    <div dir="rtl" className="space-y-4 p-3 md:p-4">
-      {/* HEADER */}
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="mb-1 flex items-center gap-2 text-[10px] text-gray-400">
-            <span>المخزون</span>
-            <span>/</span>
-            <span className="font-medium text-blue-600">المستودعات</span>
-          </div>
-
-          <h1 className="text-lg font-bold text-gray-800">إدارة المستودعات</h1>
-
-          <p className="mt-1 text-[11px] text-gray-500">
-            إدارة المستودعات والكميات وتكاليف المخزون.
+          <p className="mt-4 text-sm text-slate-500">
+            جاري تحميل المستودعات...
           </p>
         </div>
+      </div>
+    );
+  }
 
-        <div className="flex gap-2">
+  // ============================================
+  // UI
+  // ============================================
+
+  return (
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
+      {/* ====================================== */}
+      {/* Header */}
+      {/* ====================================== */}
+
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+              <IoPlayForwardCircleSharp size={24} />
+            </div>
+
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800">
+                إدارة المستودعات
+              </h1>
+
+              <p className="mt-1 text-sm text-slate-500">
+                إدارة مستودعات الشركة ومتابعة أرصدتها
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
           <button
+            type="button"
             onClick={handleRefresh}
-            className="flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-[11px] text-gray-700 hover:bg-gray-50"
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
           >
-            <FiRefreshCw />
+            <FiRefreshCw size={16} />
             تحديث
           </button>
 
           <button
-            onClick={handleAdd}
-            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-[11px] font-medium text-white hover:bg-blue-700"
+            type="button"
+            onClick={openCreateForm}
+            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
           >
-            <FiPlus />
+            <FiPlus size={18} />
             إضافة مستودع
           </button>
         </div>
       </div>
 
-      {/* COMPANY INFO */}
+      {/* ====================================== */}
+      {/* Statistics */}
+      {/* ====================================== */}
 
-      <div className="flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
-        <div>
-          <p className="text-[10px] text-blue-600">الشركة الحالية</p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {/* Total Warehouses */}
 
-          <p className="mt-1 text-xs font-bold text-blue-900">
-            رقم الشركة: {companyId}
-          </p>
+        <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">إجمالي المستودعات</p>
+
+              <h3 className="mt-2 text-2xl font-bold text-slate-800">
+                {formatNumber(statistics.total)}
+              </h3>
+            </div>
+
+            <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
+              <ImForward size={22} />
+            </div>
+          </div>
         </div>
 
-        <FiHome className="text-xl text-blue-600" />
+        {/* Active Warehouses */}
+
+        <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">المستودعات النشطة</p>
+
+              <h3 className="mt-2 text-2xl font-bold text-green-600">
+                {formatNumber(statistics.active)}
+              </h3>
+            </div>
+
+            <div className="rounded-xl bg-green-50 p-3 text-green-600">
+              <FiCheckCircle size={22} />
+            </div>
+          </div>
+        </div>
+
+        {/* Products */}
+
+        <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">الأصناف المخزنة</p>
+
+              <h3 className="mt-2 text-2xl font-bold text-slate-800">
+                {formatNumber(statistics.totalProducts)}
+              </h3>
+            </div>
+
+            <div className="rounded-xl bg-purple-50 p-3 text-purple-600">
+              <FiPackage size={22} />
+            </div>
+          </div>
+        </div>
+
+        {/* Total Quantity */}
+
+        <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">إجمالي الكميات</p>
+
+              <h3 className="mt-2 text-2xl font-bold text-slate-800">
+                {formatNumber(statistics.totalQuantity)}
+              </h3>
+            </div>
+
+            <div className="rounded-xl bg-orange-50 p-3 text-orange-600">
+              <FiPackage size={22} />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* STATISTICS */}
+      {/* ====================================== */}
+      {/* Default Warehouse */}
+      {/* ====================================== */}
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-        <StatCard
-          title="إجمالي المستودعات"
-          value={warehouses.length}
-          icon={<FiHome />}
-          color="blue"
-        />
+      {statistics.defaultWarehouse && (
+        <div className="flex flex-col justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-amber-100 p-3 text-amber-600">
+              <FiStar size={20} />
+            </div>
 
-        <StatCard
-          title="المستودعات النشطة"
-          value={activeWarehouses.length}
-          icon={<FiCheckCircle />}
-          color="green"
-        />
+            <div>
+              <p className="text-xs font-medium text-amber-700">
+                المستودع الافتراضي
+              </p>
 
-        <StatCard
-          title="غير النشطة"
-          value={inactiveWarehouses.length}
-          icon={<FiAlertCircle />}
-          color="red"
-        />
+              <p className="mt-1 font-bold text-slate-800">
+                {statistics.defaultWarehouse.name}
+              </p>
+            </div>
+          </div>
 
-        <StatCard
-          title="إجمالي الأصناف"
-          value={totalProducts}
-          icon={<FiPackage />}
-          color="indigo"
-        />
-
-        <StatCard
-          title="إجمالي الكمية"
-          value={money(totalStockQuantity)}
-          icon={<FiLayers />}
-          color="blue"
-        />
-
-        <StatCard
-          title="تكلفة المخزون"
-          value={money(totalStockCost)}
-          icon={<FiDollarSign />}
-          color="green"
-        />
-
-        <StatCard
-          title="أصناف منخفضة"
-          value={lowStockProducts.length}
-          icon={<FiTrendingDown />}
-          color="orange"
-        />
-
-        <StatCard
-          title="نسبة المخزون المنخفض"
-          value={`${lowStockPercentage.toFixed(1)}%`}
-          icon={<FiAlertCircle />}
-          color="red"
-        />
-      </div>
-
-      {/* FILTERS */}
-
-      <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-xs font-bold text-gray-800">
-            <FiFilter className="text-blue-600" />
-            البحث والتصفية
-          </h2>
-
-          <button
-            onClick={resetFilters}
-            className="text-[10px] text-blue-600 hover:underline"
+          <Link
+            href={`/erp/inventory/warehouses/${statistics.defaultWarehouse.id}`}
+            className="flex items-center gap-2 text-sm font-medium text-amber-700 hover:text-amber-900"
           >
-            إعادة ضبط الفلاتر
-          </button>
+            عرض المستودع
+            <FiArrowUpRight size={16} />
+          </Link>
         </div>
+      )}
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="relative">
-            <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+      {/* ====================================== */}
+      {/* Filters */}
+      {/* ====================================== */}
+
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative flex-1">
+            <FiSearch
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"
+              size={18}
+            />
 
             <input
               type="text"
-              placeholder="ابحث عن مستودع..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-md border border-gray-300 py-2 pr-9 pl-3 text-xs outline-none focus:border-blue-500"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="ابحث باسم المستودع أو الرمز أو الموقع..."
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pr-11 pl-4 text-sm outline-none transition focus:border-blue-400 focus:bg-white"
             />
           </div>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className={inputClass}
-          >
-            <option value="all">جميع الحالات</option>
-            <option value="active">نشط</option>
-            <option value="inactive">غير نشط</option>
-          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-400"
+            >
+              <option value="all">جميع الحالات</option>
+              <option value="active">نشط</option>
+              <option value="inactive">غير نشط</option>
+            </select>
 
-          <select
-            value={locationFilter}
-            onChange={(e) => setLocationFilter(e.target.value)}
-            className={inputClass}
-          >
-            <option value="all">جميع المواقع</option>
-
-            {locations.map((location) => (
-              <option key={location} value={location}>
-                {location}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={stockFilter}
-            onChange={(e) => setStockFilter(e.target.value)}
-            className={inputClass}
-          >
-            <option value="all">جميع حالات المخزون</option>
-            <option value="hasProducts">يحتوي على أصناف</option>
-            <option value="empty">فارغ</option>
-            <option value="low">يحتوي على مخزون منخفض</option>
-            <option value="out">يحتوي على أصناف نافدة</option>
-          </select>
+            <span className="rounded-xl bg-slate-100 px-4 py-3 text-sm text-slate-600">
+              {formatNumber(filteredWarehouses.length)} مستودع
+            </span>
+          </div>
         </div>
-
-        <p className="mt-2 text-[10px] text-gray-400">
-          عدد النتائج: {filteredWarehouses.length} من {warehouses.length}
-        </p>
       </div>
 
-      {/* WAREHOUSE TABLE */}
+      {/* ====================================== */}
+      {/* Warehouses Table */}
+      {/* ====================================== */}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b px-3 py-3">
+      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 p-5">
           <div>
-            <h2 className="text-sm font-bold text-gray-800">
-              قائمة المستودعات
-            </h2>
+            <h2 className="font-bold text-slate-800">قائمة المستودعات</h2>
 
-            <p className="mt-1 text-[10px] text-gray-400">
-              بيانات المستودعات والكميات والتكلفة
+            <p className="mt-1 text-xs text-slate-500">
+              جميع المستودعات المسجلة في الشركة
             </p>
           </div>
 
-          <span className="rounded-md bg-blue-50 px-2 py-1 text-[10px] text-blue-700">
-            {filteredWarehouses.length} مستودع
-          </span>
+          <IoFlowerSharp className="text-slate-400" size={22} />
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px] text-right text-[11px]">
-            <thead className="bg-gray-50 text-[10px] text-gray-500">
+          <table className="w-full min-w-[850px] text-right">
+            <thead className="bg-slate-50 text-xs text-slate-500">
               <tr>
-                <th className="px-3 py-3">المستودع</th>
-                <th className="px-3 py-3">الموقع</th>
-                <th className="px-3 py-3">عدد الأصناف</th>
-                <th className="px-3 py-3">الكمية المتوفرة</th>
-                <th className="px-3 py-3">تكلفة المخزون</th>
-                <th className="px-3 py-3">الأصناف المنخفضة</th>
-                <th className="px-3 py-3">نسبة الانخفاض</th>
-                <th className="px-3 py-3">الحالة</th>
-                <th className="px-3 py-3 text-center">الإجراءات</th>
+                <th className="px-5 py-4 font-semibold">المستودع</th>
+
+                <th className="px-5 py-4 font-semibold">الرمز</th>
+
+                <th className="px-5 py-4 font-semibold">الموقع</th>
+
+                <th className="px-5 py-4 font-semibold">عدد الأصناف</th>
+
+                <th className="px-5 py-4 font-semibold">إجمالي الكمية</th>
+
+                <th className="px-5 py-4 font-semibold">الحالة</th>
+
+                <th className="px-5 py-4 font-semibold">الإجراءات</th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-slate-100">
               {filteredWarehouses.map((warehouse) => {
-                const stats = getWarehouseStats(warehouse.id);
+                const summary = getWarehouseSummary(warehouse.id);
+
+                const isActive = warehouse.status === "active";
 
                 return (
                   <tr
                     key={warehouse.id}
-                    className="transition hover:bg-gray-50"
+                    className="transition hover:bg-slate-50"
                   >
-                    <td className="px-3 py-3">
-                      <Link
-                        href={`/erp/inventory/warehouses/${warehouse.id}`}
-                        className="group flex items-center gap-2"
-                      >
-                        <div className="rounded-md bg-blue-50 p-2 text-blue-600">
-                          <FiHome size={15} />
+                    {/* Name */}
+
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                          <IoCaretForwardCircle size={19} />
                         </div>
 
-                        <div className="min-w-0">
-                          <p className="font-bold text-gray-800 group-hover:text-blue-600 group-hover:underline">
+                        <div>
+                          <Link
+                            href={`/erp/inventory/warehouses/${warehouse.id}`}
+                            className="font-semibold text-slate-800 transition hover:text-blue-600"
+                          >
                             {warehouse.name}
-                          </p>
+                          </Link>
 
-                          <p className="mt-1 text-[9px] text-gray-400">
-                            عرض تفاصيل المستودع
-                          </p>
+                          {warehouse.isDefault && (
+                            <span className="mt-1 flex items-center gap-1 text-xs text-amber-600">
+                              <FiStar size={12} />
+                              افتراضي
+                            </span>
+                          )}
                         </div>
-
-                        <FiEye className="text-gray-300 group-hover:text-blue-600" />
-                      </Link>
+                      </div>
                     </td>
 
-                    <td className="px-3 py-3 text-gray-600">
-                      <div className="flex items-center gap-1">
-                        <FiMapPin className="text-gray-400" />
+                    {/* Code */}
+
+                    <td className="px-5 py-4">
+                      <span className="rounded-lg bg-slate-100 px-3 py-1.5 font-mono text-xs text-slate-700">
+                        {warehouse.code || "-"}
+                      </span>
+                    </td>
+
+                    {/* Location */}
+
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                        <FiMapPin
+                          className="shrink-0 text-slate-400"
+                          size={15}
+                        />
                         {warehouse.location || "-"}
                       </div>
                     </td>
 
-                    <td className="px-3 py-3">
-                      <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-700">
-                        {stats.productsCount}
-                      </span>
+                    {/* Products */}
+
+                    <td className="px-5 py-4 text-sm text-slate-700">
+                      {formatNumber(summary.productsCount)}
                     </td>
 
-                    <td className="px-3 py-3 font-semibold text-gray-800">
-                      {money(stats.quantity)}
+                    {/* Quantity */}
+
+                    <td className="px-5 py-4 text-sm font-semibold text-slate-800">
+                      {formatNumber(summary.totalQuantity)}
                     </td>
 
-                    <td className="px-3 py-3 font-semibold text-green-700">
-                      {money(stats.cost)}
-                    </td>
+                    {/* Status */}
 
-                    <td className="px-3 py-3">
+                    <td className="px-5 py-4">
                       <span
-                        className={`rounded-full px-2 py-1 ${
-                          stats.lowCount > 0
-                            ? "bg-orange-50 text-orange-700"
-                            : "bg-green-50 text-green-700"
-                        }`}
-                      >
-                        {stats.lowCount}
-                      </span>
-                    </td>
-
-                    <td className="px-3 py-3">
-                      <div className="flex min-w-[90px] items-center gap-2">
-                        <span
-                          className={`font-bold ${
-                            stats.lowPercentage > 0
-                              ? "text-orange-600"
-                              : "text-green-600"
-                          }`}
-                        >
-                          {stats.lowPercentage.toFixed(1)}%
-                        </span>
-
-                        <div className="h-1.5 w-12 overflow-hidden rounded-full bg-gray-100">
-                          <div
-                            className={`h-full rounded-full ${
-                              stats.lowPercentage >= 50
-                                ? "bg-red-500"
-                                : stats.lowPercentage > 0
-                                  ? "bg-orange-400"
-                                  : "bg-green-500"
-                            }`}
-                            style={{
-                              width: `${Math.min(stats.lowPercentage, 100)}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="px-3 py-3">
-                      <span
-                        className={`rounded-full px-2 py-1 text-[9px] ${
-                          warehouse.status === "active"
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ${
+                          isActive
                             ? "bg-green-50 text-green-700"
                             : "bg-red-50 text-red-700"
                         }`}
                       >
-                        {warehouse.status === "active" ? "نشط" : "غير نشط"}
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            isActive ? "bg-green-500" : "bg-red-500"
+                          }`}
+                        />
+
+                        {isActive ? "نشط" : "غير نشط"}
                       </span>
                     </td>
 
-                    <td className="px-3 py-3">
-                      <div className="flex justify-center gap-1.5">
+                    {/* Actions */}
+
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2">
                         <Link
                           href={`/erp/inventory/warehouses/${warehouse.id}`}
-                          title="التفاصيل"
-                          className="rounded-md bg-indigo-50 p-2 text-indigo-600 hover:bg-indigo-100"
+                          title="عرض التفاصيل"
+                          className="rounded-lg bg-blue-50 p-2 text-blue-600 transition hover:bg-blue-100"
                         >
-                          <FiEye size={14} />
+                          <FiArrowUpRight size={16} />
                         </Link>
 
                         <button
-                          onClick={() => handleEdit(warehouse)}
+                          type="button"
+                          onClick={() => openEditForm(warehouse)}
                           title="تعديل"
-                          className="rounded-md bg-blue-50 p-2 text-blue-600 hover:bg-blue-100"
+                          className="rounded-lg bg-amber-50 p-2 text-amber-600 transition hover:bg-amber-100"
                         >
-                          <FiEdit2 size={14} />
+                          <FiEdit2 size={16} />
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => handleDelete(warehouse)}
+                          disabled={deletingId === warehouse.id}
                           title="حذف"
-                          className="rounded-md bg-red-50 p-2 text-red-600 hover:bg-red-100"
+                          className="rounded-lg bg-red-50 p-2 text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          <FiTrash2 size={14} />
+                          {deletingId === warehouse.id ? (
+                            <FiRefreshCw className="animate-spin" size={16} />
+                          ) : (
+                            <FiTrash2 size={16} />
+                          )}
                         </button>
                       </div>
                     </td>
@@ -1159,121 +1009,216 @@ export default function WarehousesPage() {
                 );
               })}
 
+              {/* Empty State */}
+
               {filteredWarehouses.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={9}
-                    className="px-4 py-12 text-center text-gray-400"
-                  >
-                    <FiHome className="mx-auto mb-2 text-2xl" />
+                  <td colSpan={7} className="px-5 py-16 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+                      <ImFileWord size={26} />
+                    </div>
 
-                    <p className="text-xs">
-                      لا توجد مستودعات مطابقة للفلاتر المحددة.
+                    <h3 className="mt-4 font-semibold text-slate-700">
+                      {search || statusFilter !== "all"
+                        ? "لا توجد نتائج مطابقة"
+                        : "لا توجد مستودعات حتى الآن"}
+                    </h3>
+
+                    <p className="mt-2 text-sm text-slate-400">
+                      {search || statusFilter !== "all"
+                        ? "جرّب تغيير كلمات البحث أو الفلاتر"
+                        : "ابدأ بإضافة أول مستودع لشركتك"}
                     </p>
 
-                    <button
-                      onClick={resetFilters}
-                      className="mt-2 text-[11px] text-blue-600 hover:underline"
-                    >
-                      إعادة ضبط الفلاتر
-                    </button>
+                    {!search && statusFilter === "all" && (
+                      <button
+                        type="button"
+                        onClick={openCreateForm}
+                        className="mt-5 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
+                      >
+                        <FiPlus size={17} />
+                        إضافة مستودع
+                      </button>
+                    )}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {/* Footer */}
+
+        <div className="border-t border-slate-100 bg-slate-50 px-5 py-4">
+          <p className="text-xs text-slate-500">
+            عرض {formatNumber(filteredWarehouses.length)} من أصل{" "}
+            {formatNumber(warehouses.length)} مستودع
+          </p>
+        </div>
       </div>
 
-      {/* ADD / EDIT MODAL */}
+      {/* ====================================== */}
+      {/* Create / Edit Modal */}
+      {/* ====================================== */}
 
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-3">
-          <div className="my-auto w-full max-w-xl rounded-xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b p-4">
-              <div>
-                <h2 className="text-sm font-bold text-gray-800">
-                  {editingId ? "تعديل المستودع" : "إضافة مستودع جديد"}
-                </h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+          <div className="my-auto w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+            {/* Modal Header */}
 
-                <p className="mt-1 text-[10px] text-gray-500">
-                  أدخل بيانات المستودع.
-                </p>
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
+                  {editingId ? <FiEdit2 size={20} /> : <FiPlus size={20} />}
+                </div>
+
+                <div>
+                  <h2 className="text-lg font-bold text-slate-800">
+                    {editingId ? "تعديل المستودع" : "إضافة مستودع جديد"}
+                  </h2>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    أدخل بيانات المستودع الأساسية
+                  </p>
+                </div>
               </div>
 
               <button
+                type="button"
                 onClick={() => setShowForm(false)}
-                className="rounded-md bg-gray-100 p-2 text-gray-600 hover:bg-gray-200"
+                disabled={saving}
+                className="rounded-xl bg-slate-100 p-2 text-slate-500 transition hover:bg-slate-200"
               >
-                <FiX size={17} />
+                <FiX size={20} />
               </button>
             </div>
 
+            {/* Form */}
+
             <form onSubmit={handleSave}>
-              <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <label className={labelClass}>اسم المستودع *</label>
+              <div className="space-y-5 p-5">
+                {/* Name */}
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    اسم المستودع
+                    <span className="mr-1 text-red-500">*</span>
+                  </label>
 
                   <input
+                    type="text"
                     name="name"
                     value={form.name}
-                    onChange={handleChange}
-                    className={inputClass}
-                    placeholder="المستودع الرئيسي"
+                    onChange={handleFormChange}
+                    placeholder="مثال: المستودع الرئيسي"
                     required
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </div>
 
-                <div>
-                  <label className={labelClass}>الموقع</label>
+                {/* Code and Location */}
 
-                  <input
-                    name="location"
-                    value={form.location}
-                    onChange={handleChange}
-                    className={inputClass}
-                    placeholder="المقر الرئيسي"
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                      رمز المستودع
+                      <span className="mr-1 text-red-500">*</span>
+                    </label>
+
+                    <input
+                      type="text"
+                      name="code"
+                      value={form.code}
+                      onChange={handleFormChange}
+                      placeholder="WH-001"
+                      required
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                      الموقع
+                    </label>
+
+                    <input
+                      type="text"
+                      name="location"
+                      value={form.location}
+                      onChange={handleFormChange}
+                      placeholder="مثال: صنعاء - شارع..."
+                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+
+                {/* Description */}
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    الوصف
+                  </label>
+
+                  <textarea
+                    name="description"
+                    value={form.description}
+                    onChange={handleFormChange}
+                    rows={3}
+                    placeholder="ملاحظات أو تفاصيل إضافية عن المستودع..."
+                    className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </div>
 
+                {/* Status */}
+
                 <div>
-                  <label className={labelClass}>الحالة</label>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    الحالة
+                  </label>
 
                   <select
                     name="status"
                     value={form.status}
-                    onChange={handleChange}
-                    className={inputClass}
+                    onChange={handleFormChange}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-blue-500"
                   >
                     <option value="active">نشط</option>
                     <option value="inactive">غير نشط</option>
                   </select>
                 </div>
 
-                <div className="sm:col-span-2">
-                  <label className={labelClass}>الوصف</label>
+                {/* Default Warehouse */}
 
-                  <textarea
-                    name="description"
-                    value={form.description}
-                    onChange={handleChange}
-                    rows={3}
-                    className={inputClass}
-                    placeholder="وصف مختصر للمستودع..."
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <input
+                    type="checkbox"
+                    name="isDefault"
+                    checked={form.isDefault}
+                    onChange={handleFormChange}
+                    className="mt-1 h-4 w-4 accent-amber-500"
                   />
-                </div>
 
-                <div className="rounded-md bg-blue-50 p-3 text-[11px] text-blue-700 sm:col-span-2">
-                  سيتم ربط هذا المستودع بالشركة الحالية، وتسجيل المستخدم الذي
-                  قام بإنشائه أو تعديله تلقائياً.
-                </div>
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                      <FiStar className="text-amber-500" size={16} />
+                      تعيين كمستودع افتراضي
+                    </div>
+
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      سيتم إلغاء تعيين المستودع الافتراضي السابق عند الحفظ.
+                    </p>
+                  </div>
+                </label>
               </div>
 
-              <div className="flex justify-end gap-2 border-t p-4">
+              {/* Modal Footer */}
+
+              <div className="flex flex-col-reverse justify-end gap-3 border-t border-slate-100 bg-slate-50 p-5 sm:flex-row">
                 <button
                   type="button"
                   onClick={() => setShowForm(false)}
-                  className="rounded-md border border-gray-300 px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                  disabled={saving}
+                  className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
                 >
                   إلغاء
                 </button>
@@ -1281,61 +1226,25 @@ export default function WarehousesPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                  className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {saving ? (
-                    <FiRefreshCw className="animate-spin" />
+                    <>
+                      <FiRefreshCw className="animate-spin" size={17} />
+                      جاري الحفظ...
+                    </>
                   ) : (
-                    <FiSave />
+                    <>
+                      <FiSave size={17} />
+                      {editingId ? "حفظ التعديلات" : "إضافة المستودع"}
+                    </>
                   )}
-
-                  {saving ? "جارٍ الحفظ..." : "حفظ"}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ========================================
-// STAT CARD
-// ========================================
-
-function StatCard({
-  title,
-  value,
-  icon,
-  color,
-}: {
-  title: string;
-  value: string | number;
-  icon: ReactNode;
-  color: string;
-}) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600",
-    green: "bg-green-50 text-green-600",
-    red: "bg-red-50 text-red-600",
-    orange: "bg-orange-50 text-orange-600",
-    indigo: "bg-indigo-50 text-indigo-600",
-  };
-
-  return (
-    <div className="min-w-0 rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[10px] text-gray-500">{title}</p>
-
-        <div className={`shrink-0 rounded-md p-2 text-sm ${colors[color]}`}>
-          {icon}
-        </div>
-      </div>
-
-      <h3 className="mt-2 break-words text-base font-bold text-gray-800">
-        {value}
-      </h3>
     </div>
   );
 }

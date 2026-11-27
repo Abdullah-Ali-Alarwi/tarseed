@@ -1,903 +1,1028 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import axios from "axios";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
+
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
 import {
   FiShield,
   FiUsers,
-  FiSave,
+  FiUserCheck,
+  FiUser,
+  FiBriefcase,
   FiRefreshCw,
-  FiCheck,
+  FiSearch,
+  FiSettings,
+  FiLock,
+  FiCheckCircle,
+  FiXCircle,
+  FiArrowLeft,
+  FiEdit,
   FiEye,
   FiPlus,
-  FiEdit,
   FiTrash2,
-  FiPrinter,
-  FiCheckCircle,
-  FiFileText,
-  FiXCircle,
-  FiDownload,
-  FiLayout,
   FiPackage,
   FiShoppingCart,
-  FiDollarSign,
   FiTruck,
+  FiDollarSign,
   FiBarChart2,
-  FiSettings,
-  FiChevronDown,
+  FiAlertCircle,
 } from "react-icons/fi";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+// ======================================
+// Types
+// ======================================
 
-/* =========================
-   Types
-========================= */
-
-type Role = {
-  value: string;
-  label: string;
-  description: string;
+type Permission = {
+  view: boolean;
+  create: boolean;
+  update: boolean;
+  delete: boolean;
 };
 
-type PermissionGroup = {
-  [key: string]: boolean;
-};
-
-type RolePermission = {
-  pages: PermissionGroup;
-  operations: {
-    [module: string]: PermissionGroup;
-  };
-  reports: PermissionGroup;
-};
-
-type RolePermissions = {
-  [role: string]: RolePermission;
-};
+type RolePermissions = Record<string, Record<string, Permission>>;
 
 type Company = {
   id: string;
   name: string;
-  rolePermissions?: RolePermissions;
+  rolePermissions?: RolePermissions | null;
 };
 
-/* =========================
-   Roles
-========================= */
+type CurrentUser = {
+  id: string;
+  name?: string;
+  username: string;
+  role: string;
+  type: string;
+  companyId?: string;
+  companyname?: string;
+  status?: string;
+  isActive?: boolean;
+};
 
-const roles: Role[] = [
+type RoleDefinition = {
+  value: string;
+  label: string;
+  description: string;
+  icon: typeof FiUser;
+  color: string;
+  bg: string;
+  border: string;
+  isSystem?: boolean;
+  fullAccess?: boolean;
+};
+
+type UserRecord = {
+  role: string | null;
+};
+
+// ======================================
+// Roles
+// ======================================
+
+const roles: RoleDefinition[] = [
   {
     value: "owner",
     label: "مالك الشركة",
-    description: "إدارة الشركة والإشراف على جميع العمليات",
-  },
-  {
-    value: "admin",
-    label: "مدير النظام",
-    description: "إدارة المستخدمين والإعدادات والعمليات",
+    description:
+      "المسؤول الرئيسي عن الشركة، وله صلاحيات الإدارة الكاملة على النظام.",
+    icon: FiShield,
+    color: "text-purple-700",
+    bg: "bg-purple-50",
+    border: "border-purple-200",
+    isSystem: true,
+    fullAccess: true,
   },
   {
     value: "manager",
     label: "مدير",
-    description: "متابعة وإدارة عمليات الشركة",
+    description:
+      "إدارة العمليات اليومية ومتابعة الموظفين والأقسام المختلفة في الشركة.",
+    icon: FiBriefcase,
+    color: "text-blue-700",
+    bg: "bg-blue-50",
+    border: "border-blue-200",
   },
   {
     value: "accountant",
     label: "محاسب",
-    description: "إدارة الحسابات والعمليات المالية",
+    description:
+      "إدارة العمليات المحاسبية والمالية ومتابعة المبيعات والمشتريات والتقارير.",
+    icon: FiDollarSign,
+    color: "text-emerald-700",
+    bg: "bg-emerald-50",
+    border: "border-emerald-200",
   },
   {
     value: "cashier",
     label: "كاشير",
-    description: "تنفيذ عمليات البيع والتحصيل",
+    description:
+      "تنفيذ عمليات البيع والتعامل مع العملاء ومتابعة عمليات الصندوق.",
+    icon: FiShoppingCart,
+    color: "text-orange-700",
+    bg: "bg-orange-50",
+    border: "border-orange-200",
   },
   {
     value: "employee",
     label: "موظف",
-    description: "صلاحيات محدودة حسب طبيعة العمل",
+    description: "الوصول إلى الأقسام والوظائف التي تسمح بها صلاحياته المحددة.",
+    icon: FiUser,
+    color: "text-slate-700",
+    bg: "bg-slate-100",
+    border: "border-slate-200",
   },
 ];
 
-/* =========================
-   Page Permissions
-========================= */
+// ======================================
+// Modules
+// ======================================
 
-const pages = [
-  { key: "dashboard", label: "لوحة التحكم", icon: FiLayout },
-  { key: "users", label: "المستخدمون", icon: FiUsers },
-  { key: "products", label: "المنتجات", icon: FiPackage },
-  { key: "inventory", label: "المخزون", icon: FiPackage },
-  { key: "sales", label: "المبيعات", icon: FiShoppingCart },
-  { key: "purchases", label: "المشتريات", icon: FiShoppingCart },
-  { key: "customers", label: "العملاء", icon: FiUsers },
-  { key: "suppliers", label: "الموردون", icon: FiTruck },
-  { key: "accounting", label: "المحاسبة", icon: FiDollarSign },
-  { key: "reports", label: "التقارير", icon: FiBarChart2 },
-  { key: "settings", label: "الإعدادات", icon: FiSettings },
+const modules = [
+  {
+    key: "dashboard",
+    label: "لوحة التحكم",
+    icon: FiBarChart2,
+  },
+  {
+    key: "users",
+    label: "المستخدمون",
+    icon: FiUsers,
+  },
+  {
+    key: "products",
+    label: "المنتجات",
+    icon: FiPackage,
+  },
+  {
+    key: "inventory",
+    label: "المخزون",
+    icon: FiPackage,
+  },
+  {
+    key: "sales",
+    label: "المبيعات",
+    icon: FiShoppingCart,
+  },
+  {
+    key: "purchases",
+    label: "المشتريات",
+    icon: FiShoppingCart,
+  },
+  {
+    key: "customers",
+    label: "العملاء",
+    icon: FiUsers,
+  },
+  {
+    key: "suppliers",
+    label: "الموردون",
+    icon: FiTruck,
+  },
+  {
+    key: "accounting",
+    label: "المحاسبة",
+    icon: FiDollarSign,
+  },
+  {
+    key: "reports",
+    label: "التقارير",
+    icon: FiBarChart2,
+  },
+  {
+    key: "settings",
+    label: "الإعدادات",
+    icon: FiSettings,
+  },
 ];
 
-/* =========================
-   Operations
-========================= */
+// ======================================
+// Helpers
+// ======================================
 
-const actions = [
-  { key: "read", label: "قراءة", icon: FiEye },
-  { key: "create", label: "إنشاء", icon: FiPlus },
-  { key: "update", label: "تعديل", icon: FiEdit },
-  { key: "delete", label: "حذف", icon: FiTrash2 },
-  { key: "approve", label: "موافقة", icon: FiCheckCircle },
-  { key: "print", label: "طباعة", icon: FiPrinter },
-  { key: "post", label: "ترحيل", icon: FiFileText },
-  { key: "cancel", label: "إلغاء", icon: FiXCircle },
-  { key: "export", label: "تصدير", icon: FiDownload },
-];
+function getCookie(name: string): string {
+  if (typeof document === "undefined") return "";
 
-const operationModules = [
-  { key: "users", label: "المستخدمون" },
-  { key: "products", label: "المنتجات" },
-  { key: "inventory", label: "المخزون" },
-  { key: "sales", label: "المبيعات" },
-  { key: "purchases", label: "المشتريات" },
-  { key: "customers", label: "العملاء" },
-  { key: "suppliers", label: "الموردون" },
-  { key: "accounting", label: "المحاسبة" },
-];
+  const cookie = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`));
 
-/* =========================
-   Reports
-========================= */
+  if (!cookie) return "";
 
-const reports = [
-  { key: "salesReport", label: "تقرير المبيعات" },
-  { key: "purchasesReport", label: "تقرير المشتريات" },
-  { key: "inventoryReport", label: "تقرير المخزون" },
-  { key: "productsReport", label: "تقرير المنتجات" },
-  { key: "customersReport", label: "تقرير العملاء" },
-  { key: "suppliersReport", label: "تقرير الموردين" },
-  { key: "incomeStatement", label: "قائمة الدخل" },
-  { key: "balanceSheet", label: "الميزانية العمومية" },
-  { key: "cashFlow", label: "التدفقات النقدية" },
-  { key: "trialBalance", label: "ميزان المراجعة" },
-  { key: "accountStatement", label: "كشف الحساب" },
-];
-
-/* =========================
-   Default Permissions
-========================= */
-
-function createEmptyGroup(keys: string[]) {
-  const result: PermissionGroup = {};
-
-  keys.forEach((key) => {
-    result[key] = false;
-  });
-
-  return result;
+  return decodeURIComponent(cookie.substring(name.length + 1));
 }
 
-function createDefaultPermissions(): RolePermissions {
-  const result: RolePermissions = {};
-
-  roles.forEach((role) => {
-    const rolePermission: RolePermission = {
-      pages: createEmptyGroup(pages.map((page) => page.key)),
-
-      operations: {},
-
-      reports: createEmptyGroup(reports.map((report) => report.key)),
-    };
-
-    operationModules.forEach((module) => {
-      rolePermission.operations[module.key] = createEmptyGroup(
-        actions.map((action) => action.key),
-      );
-    });
-
-    // صلاحيات افتراضية لمالك الشركة ومدير النظام
-    if (role.value === "owner" || role.value === "admin") {
-      Object.keys(rolePermission.pages).forEach((key) => {
-        rolePermission.pages[key] = true;
-      });
-
-      Object.keys(rolePermission.reports).forEach((key) => {
-        rolePermission.reports[key] = true;
-      });
-
-      operationModules.forEach((module) => {
-        actions.forEach((action) => {
-          rolePermission.operations[module.key][action.key] = true;
-        });
-      });
-    }
-
-    // المدير
-    if (role.value === "manager") {
-      pages.forEach((page) => {
-        rolePermission.pages[page.key] = page.key !== "settings";
-      });
-
-      operationModules.forEach((module) => {
-        actions.forEach((action) => {
-          rolePermission.operations[module.key][action.key] = [
-            "read",
-            "create",
-            "update",
-            "approve",
-            "print",
-            "export",
-          ].includes(action.key);
-        });
-      });
-
-      reports.forEach((report) => {
-        rolePermission.reports[report.key] = true;
-      });
-    }
-
-    // المحاسب
-    if (role.value === "accountant") {
-      [
-        "dashboard",
-        "sales",
-        "purchases",
-        "customers",
-        "suppliers",
-        "accounting",
-        "reports",
-      ].forEach((key) => {
-        rolePermission.pages[key] = true;
-      });
-
-      ["sales", "purchases", "customers", "suppliers", "accounting"].forEach(
-        (moduleKey) => {
-          ["read", "create", "update", "print", "post", "export"].forEach(
-            (actionKey) => {
-              rolePermission.operations[moduleKey][actionKey] = true;
-            },
-          );
-        },
-      );
-
-      reports.forEach((report) => {
-        rolePermission.reports[report.key] = true;
-      });
-    }
-
-    // الكاشير
-    if (role.value === "cashier") {
-      ["dashboard", "products", "sales", "customers"].forEach((key) => {
-        rolePermission.pages[key] = true;
-      });
-
-      ["read", "create", "print"].forEach((actionKey) => {
-        rolePermission.operations.sales[actionKey] = true;
-      });
-
-      rolePermission.operations.products.read = true;
-      rolePermission.operations.customers.read = true;
-      rolePermission.operations.customers.create = true;
-    }
-
-    // الموظف
-    if (role.value === "employee") {
-      ["dashboard", "products"].forEach((key) => {
-        rolePermission.pages[key] = true;
-      });
-
-      rolePermission.operations.products.read = true;
-    }
-
-    result[role.value] = rolePermission;
-  });
-
-  return result;
+function normalizeRole(role?: string | null): string {
+  return String(role || "")
+    .trim()
+    .toLowerCase();
 }
 
-/* =========================
-   Normalize Saved Data
-========================= */
+function isActiveUser(user: CurrentUser): boolean {
+  return (
+    user.isActive !== false &&
+    !["inactive", "غير نشط"].includes(String(user.status || "").toLowerCase())
+  );
+}
 
-function normalizePermissions(saved?: RolePermissions): RolePermissions {
-  const defaults = createDefaultPermissions();
+function getRoleLabel(role: string): string {
+  return (
+    roles.find((item) => item.value === normalizeRole(role))?.label ||
+    role ||
+    "غير محدد"
+  );
+}
 
-  if (!saved) return defaults;
+function createEmptyPermission(): Permission {
+  return {
+    view: false,
+    create: false,
+    update: false,
+    delete: false,
+  };
+}
 
-  roles.forEach((role) => {
-    const savedRole = saved[role.value];
+function getPermissionSummary(
+  permissions: RolePermissions | null | undefined,
+  role: string,
+) {
+  const rolePermissions = permissions?.[role];
 
-    if (!savedRole) return;
-
-    defaults[role.value].pages = {
-      ...defaults[role.value].pages,
-      ...(savedRole.pages || {}),
+  if (!rolePermissions) {
+    return {
+      enabledModules: 0,
+      totalPermissions: 0,
+      view: 0,
+      create: 0,
+      update: 0,
+      delete: 0,
     };
+  }
 
-    defaults[role.value].reports = {
-      ...defaults[role.value].reports,
-      ...(savedRole.reports || {}),
-    };
+  const summary = {
+    enabledModules: 0,
+    totalPermissions: 0,
+    view: 0,
+    create: 0,
+    update: 0,
+    delete: 0,
+  };
 
-    operationModules.forEach((module) => {
-      defaults[role.value].operations[module.key] = {
-        ...defaults[role.value].operations[module.key],
-        ...(savedRole.operations?.[module.key] || {}),
-      };
+  Object.values(rolePermissions).forEach((permission) => {
+    if (!permission) return;
+
+    const actions = ["view", "create", "update", "delete"] as const;
+
+    const enabled = actions.filter((action) => permission[action] === true);
+
+    if (enabled.length > 0) {
+      summary.enabledModules++;
+    }
+
+    summary.totalPermissions += enabled.length;
+
+    enabled.forEach((action) => {
+      summary[action]++;
     });
   });
 
-  return defaults;
+  return summary;
 }
 
-/* =========================
-   Page Component
-========================= */
+// ======================================
+// Main Page
+// ======================================
 
 export default function RolesPage() {
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+
   const [company, setCompany] = useState<Company | null>(null);
-  const [companyId, setCompanyId] = useState("");
+
+  const [users, setUsers] = useState<UserRecord[]>([]);
 
   const [selectedRole, setSelectedRole] = useState("accountant");
 
-  const [permissions, setPermissions] = useState<RolePermissions>(
-    createDefaultPermissions(),
-  );
+  const [search, setSearch] = useState("");
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
-  const [activeSection, setActiveSection] = useState("pages");
+  const [refreshing, setRefreshing] = useState(false);
 
-  /* =========================
-     Load Company
-  ========================= */
+  // ======================================
+  // Load Data
+  // ======================================
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (showRefresh = false) => {
+    if (showRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
 
     try {
-      const storedUser = localStorage.getItem("authUser");
+      // المستخدم الحالي
 
-      if (!storedUser) {
-        toast.error("يرجى تسجيل الدخول أولاً");
+      const username = getCookie("username");
+
+      if (!username) {
+        toast.error("يرجى تسجيل الدخول مجددًا");
+        window.location.href = "/login";
         return;
       }
 
-      const user = JSON.parse(storedUser);
+      const response = await getUserByUsername(username);
 
-      const id = String(user.companyId || user.company?.id || "");
+      const user = Array.isArray(response) ? response[0] : response;
 
-      if (!id) {
-        toast.error("لم يتم العثور على الشركة الحالية");
+      if (!user) {
+        toast.error("تعذر العثور على المستخدم الحالي");
+        window.location.href = "/login";
         return;
       }
 
-      setCompanyId(id);
+      if (user.type === "platform") {
+        toast.error("هذه الصفحة مخصصة لمستخدمي الشركات");
+        window.location.href = "/wezzan/dashboard";
+        return;
+      }
 
-      const response = await axios.get(`${API_URL}/companies/${id}`);
+      const normalizedUser: CurrentUser = {
+        id: String(user.id),
+        name: user.name,
+        username: user.username,
+        role: user.role,
+        type: user.type,
+        companyId: user.companyId ? String(user.companyId) : undefined,
+        companyname: user.companyname,
+        status: user.status,
+        isActive: user.isActive,
+      };
 
-      setCompany(response.data);
+      if (!isActiveUser(normalizedUser)) {
+        toast.error("حسابك غير نشط");
+        window.location.href = "/login";
+        return;
+      }
 
-      setPermissions(normalizePermissions(response.data.rolePermissions));
+      if (!normalizedUser.companyId) {
+        toast.error("حسابك غير مرتبط بشركة");
+        return;
+      }
+
+      if (!["owner", "manager"].includes(normalizeRole(normalizedUser.role))) {
+        toast.error("ليس لديك صلاحية الوصول إلى المجموعات الوظيفية");
+        window.location.href = "/erp/dashboard";
+        return;
+      }
+
+      setCurrentUser(normalizedUser);
+
+      // ======================================
+      // Load Company
+      // ======================================
+
+      const { data: companyData, error: companyError } = await supabase
+        .from("companies")
+        .select('id, name, "rolePermissions"')
+        .eq("id", normalizedUser.companyId)
+        .maybeSingle();
+
+      if (companyError) {
+        console.error("Load company error:", companyError);
+
+        toast.error("تعذر تحميل بيانات الشركة");
+        return;
+      }
+
+      if (!companyData) {
+        toast.error("لم يتم العثور على الشركة");
+        return;
+      }
+
+      const loadedCompany: Company = {
+        id: companyData.id,
+        name: companyData.name,
+        rolePermissions: companyData.rolePermissions,
+      };
+
+      setCompany(loadedCompany);
+
+      // ======================================
+      // Load Company Users
+      // ======================================
+
+      const { data: usersData, error: usersError } = await supabase
+        .from("users")
+        .select("role")
+        .eq("companyId", normalizedUser.companyId)
+        .eq("type", "erp");
+
+      if (usersError) {
+        console.error("Load company users error:", usersError);
+
+        toast.error("تعذر تحميل المستخدمين");
+        return;
+      }
+
+      setUsers(usersData || []);
     } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحميل بيانات الأدوار");
+      console.error("Load roles page error:", error);
+
+      toast.error("حدث خطأ أثناء تحميل المجموعات الوظيفية");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
+  // ======================================
+  // Initial Load
+  // ======================================
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    loadData();
+  }, [loadData]);
 
-  /* =========================
-     Update Permission
-  ========================= */
+  // ======================================
+  // Search
+  // ======================================
 
-  const updatePermission = (
-    section: "pages" | "operations" | "reports",
-    itemKey: string,
-    actionKey?: string,
-  ) => {
-    setPermissions((prev) => {
-      const updated = structuredClone(prev);
-      const role = updated[selectedRole];
+  const filteredRoles = useMemo(() => {
+    const value = search.trim().toLowerCase();
 
-      if (section === "pages") {
-        role.pages[itemKey] = !role.pages[itemKey];
-      }
+    if (!value) return roles;
 
-      if (section === "reports") {
-        role.reports[itemKey] = !role.reports[itemKey];
-      }
-
-      if (section === "operations" && actionKey) {
-        const current = role.operations[itemKey][actionKey];
-
-        role.operations[itemKey][actionKey] = !current;
-      }
-
-      return updated;
+    return roles.filter((role) => {
+      return (
+        role.label.toLowerCase().includes(value) ||
+        role.value.toLowerCase().includes(value) ||
+        role.description.includes(value)
+      );
     });
+  }, [search]);
+
+  // ======================================
+  // Role Statistics
+  // ======================================
+
+  const getRoleUsersCount = (role: string) => {
+    return users.filter((user) => normalizeRole(user.role) === role).length;
   };
 
-  /* =========================
-     Toggle All
-  ========================= */
+  const totalUsers = users.length;
 
-  const toggleAllPages = (enabled: boolean) => {
-    setPermissions((prev) => {
-      const updated = structuredClone(prev);
+  const selectedRoleData = roles.find((role) => role.value === selectedRole);
 
-      pages.forEach((page) => {
-        updated[selectedRole].pages[page.key] = enabled;
-      });
+  const selectedRoleCount = getRoleUsersCount(selectedRole);
 
-      return updated;
-    });
-  };
+  const permissionSummary = getPermissionSummary(
+    company?.rolePermissions,
+    selectedRole,
+  );
 
-  const toggleAllReports = (enabled: boolean) => {
-    setPermissions((prev) => {
-      const updated = structuredClone(prev);
-
-      reports.forEach((report) => {
-        updated[selectedRole].reports[report.key] = enabled;
-      });
-
-      return updated;
-    });
-  };
-
-  const toggleAllOperations = (enabled: boolean) => {
-    setPermissions((prev) => {
-      const updated = structuredClone(prev);
-
-      operationModules.forEach((module) => {
-        actions.forEach((action) => {
-          updated[selectedRole].operations[module.key][action.key] = enabled;
-        });
-      });
-
-      return updated;
-    });
-  };
-
-  /* =========================
-     Save
-  ========================= */
-
-  const handleSave = async () => {
-    if (!companyId || !company) {
-      toast.error("بيانات الشركة غير مكتملة");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      await axios.patch(`${API_URL}/companies/${companyId}`, {
-        rolePermissions: permissions,
-      });
-
-      toast.success("تم حفظ الأدوار والصلاحيات بنجاح");
-    } catch (error) {
-      console.error(error);
-      toast.error("حدث خطأ أثناء حفظ الصلاحيات");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /* =========================
-     Loading
-  ========================= */
+  // ======================================
+  // Loading
+  // ======================================
 
   if (loading) {
     return (
-      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
-        <div className="h-9 w-9 animate-spin rounded-full border-4 border-slate-200 border-t-[#0E1F33]" />
+      <div
+        dir="rtl"
+        className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-slate-500"
+      >
+        <FiRefreshCw className="animate-spin text-3xl" />
+
+        <p className="text-sm">جاري تحميل المجموعات الوظيفية...</p>
       </div>
     );
   }
 
-  if (!companyId || !company) {
+  // ======================================
+  // Error State
+  // ======================================
+
+  if (!currentUser || !company) {
     return (
       <div
         dir="rtl"
-        className="rounded-xl border border-red-200 bg-red-50 p-6 text-center"
+        className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center"
       >
-        <p className="font-bold text-red-700">
-          لم يتم العثور على بيانات الشركة
-        </p>
+        <FiAlertCircle size={38} className="text-rose-500" />
+
+        <h2 className="font-bold text-slate-800">تعذر تحميل بيانات الشركة</h2>
+
+        <button
+          type="button"
+          onClick={() => loadData()}
+          className="rounded-xl bg-[#0E1F33] px-5 py-2.5 text-sm text-white"
+        >
+          إعادة المحاولة
+        </button>
       </div>
     );
   }
 
-  const currentRole = roles.find((role) => role.value === selectedRole);
-
-  /* =========================
-     Render
-  ========================= */
+  // ======================================
+  // Render
+  // ======================================
 
   return (
     <div dir="rtl" className="mx-auto max-w-7xl space-y-6 pb-10">
       {/* Header */}
 
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="mb-2 text-sm text-slate-500">
-            المستخدمون / الأدوار الوظيفية
+          <div className="mb-2 flex items-center gap-2 text-sm text-slate-400">
+            <span>المستخدمون</span>
+
+            <span>/</span>
+
+            <span className="text-slate-600">المجموعات الوظيفية</span>
           </div>
 
           <h1 className="text-2xl font-bold text-[#0E1F33]">
-            إدارة الأدوار الوظيفية
+            المجموعات الوظيفية
           </h1>
 
-          <p className="mt-1 text-sm text-slate-500">
-            إنشاء وإدارة صلاحيات الأدوار داخل الشركة
+          <p className="mt-2 text-sm text-slate-500">
+            إدارة الأدوار الوظيفية ومتابعة توزيع المستخدمين والصلاحيات.
           </p>
         </div>
 
-        <button
-          onClick={fetchData}
-          className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
-        >
-          <FiRefreshCw />
-          تحديث
-        </button>
-      </div>
-
-      {/* Company */}
-
-      <div className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
-          <FiShield size={22} />
-        </div>
-
-        <div>
-          <p className="text-xs text-slate-500">الشركة الحالية</p>
-
-          <p className="font-bold text-[#0E1F33]">{company.name}</p>
-        </div>
-      </div>
-
-      {/* Roles */}
-
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <div className="mb-4">
-          <h2 className="font-bold text-[#0E1F33]">المجموعات الوظيفية</h2>
-
-          <p className="mt-1 text-xs text-slate-500">
-            اختر المجموعة التي تريد إدارة صلاحياتها.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          {roles.map((role) => (
-            <button
-              key={role.value}
-              onClick={() => setSelectedRole(role.value)}
-              className={`rounded-xl border p-4 text-right transition ${
-                selectedRole === role.value
-                  ? "border-[#0E1F33] bg-[#0E1F33] text-white"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              <FiUsers size={20} className="mb-3" />
-
-              <p className="text-sm font-bold">{role.label}</p>
-
-              <p
-                className={`mt-2 text-[11px] leading-5 ${
-                  selectedRole === role.value
-                    ? "text-slate-300"
-                    : "text-slate-500"
-                }`}
-              >
-                {role.description}
-              </p>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Selected Role */}
-
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
-        <div>
-          <h2 className="font-bold text-[#0E1F33]">
-            صلاحيات {currentRole?.label}
-          </h2>
-
-          <p className="mt-1 text-xs text-slate-500">
-            حدد الصفحات والعمليات والتقارير المسموح بها.
-          </p>
-        </div>
-
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 rounded-lg bg-[#0E1F33] px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-        >
-          <FiSave />
-          {saving ? "جاري الحفظ..." : "حفظ الصلاحيات"}
-        </button>
-      </div>
-
-      {/* Section Navigation */}
-
-      <div className="flex flex-wrap gap-2">
-        {[
-          { key: "pages", label: "صلاحيات الصفحات" },
-          { key: "operations", label: "صلاحيات العمليات" },
-          { key: "reports", label: "صلاحيات التقارير" },
-        ].map((section) => (
+        <div className="flex flex-wrap gap-2">
           <button
-            key={section.key}
-            onClick={() => setActiveSection(section.key)}
-            className={`rounded-lg px-5 py-3 text-sm font-semibold transition ${
-              activeSection === section.key
-                ? "bg-blue-600 text-white"
-                : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
+            type="button"
+            onClick={() => loadData(true)}
+            disabled={refreshing}
+            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            {section.label}
+            <FiRefreshCw className={refreshing ? "animate-spin" : ""} />
+            تحديث
           </button>
-        ))}
+
+          <Link
+            href="/erp/users/permissions"
+            className="flex items-center justify-center gap-2 rounded-xl bg-[#0E1F33] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+          >
+            <FiSettings size={17} />
+            إدارة الصلاحيات
+          </Link>
+        </div>
       </div>
 
-      {/* Pages Permissions */}
+      {/* Company Information */}
 
-      {activeSection === "pages" && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
+      <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-blue-700">
+          <FiBriefcase size={21} />
+        </div>
+
+        <div>
+          <p className="text-xs text-blue-600">المجموعات الوظيفية للشركة</p>
+
+          <p className="mt-1 font-bold text-[#0E1F33]">{company.name}</p>
+        </div>
+      </div>
+
+      {/* Statistics */}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-[#0E1F33]">
-                صلاحيات الوصول إلى الصفحات
-              </h3>
+              <p className="text-sm text-slate-500">المجموعات الوظيفية</p>
 
-              <p className="mt-1 text-xs text-slate-500">
-                تحديد الصفحات التي يمكن لهذا الدور الوصول إليها.
+              <p className="mt-2 text-3xl font-bold text-[#0E1F33]">
+                {roles.length}
               </p>
             </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => toggleAllPages(true)}
-                className="rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700"
-              >
-                تحديد الكل
-              </button>
-
-              <button
-                onClick={() => toggleAllPages(false)}
-                className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
-              >
-                إلغاء الكل
-              </button>
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+              <FiShield size={23} />
             </div>
           </div>
+        </div>
 
-          <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
-            {pages.map((page) => {
-              const Icon = page.icon;
-              const checked = permissions[selectedRole].pages[page.key];
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">إجمالي المستخدمين</p>
+
+              <p className="mt-2 text-3xl font-bold text-[#0E1F33]">
+                {totalUsers}
+              </p>
+            </div>
+
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+              <FiUsers size={23} />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">الأدوار ذات المستخدمين</p>
+
+              <p className="mt-2 text-3xl font-bold text-[#0E1F33]">
+                {
+                  roles.filter((role) => getRoleUsersCount(role.value) > 0)
+                    .length
+                }
+              </p>
+            </div>
+
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-50 text-purple-700">
+              <FiUserCheck size={23} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Search */}
+
+      <div className="relative">
+        <FiSearch className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="ابحث عن مجموعة وظيفية..."
+          className="w-full rounded-xl border border-slate-200 bg-white py-3.5 pr-11 pl-4 text-sm outline-none transition focus:border-blue-400"
+        />
+      </div>
+
+      {/* Main Content */}
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_1fr]">
+        {/* Roles List */}
+
+        <aside className="h-fit overflow-hidden rounded-2xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-100 p-5">
+            <h2 className="font-bold text-[#0E1F33]">قائمة المجموعات</h2>
+
+            <p className="mt-1 text-xs text-slate-400">
+              اختر المجموعة لعرض تفاصيلها
+            </p>
+          </div>
+
+          <div className="space-y-2 p-3">
+            {filteredRoles.map((role) => {
+              const Icon = role.icon;
+
+              const count = getRoleUsersCount(role.value);
+
+              const active = selectedRole === role.value;
 
               return (
                 <button
-                  key={page.key}
-                  onClick={() => updatePermission("pages", page.key)}
-                  className={`flex items-center justify-between rounded-xl border p-4 text-right transition ${
-                    checked
-                      ? "border-green-200 bg-green-50"
-                      : "border-slate-200 bg-white hover:bg-slate-50"
+                  type="button"
+                  key={role.value}
+                  onClick={() => setSelectedRole(role.value)}
+                  className={`w-full rounded-xl border p-4 text-right transition ${
+                    active
+                      ? "border-[#0E1F33] bg-[#0E1F33] text-white"
+                      : "border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50"
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                      <Icon size={18} />
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                          active
+                            ? "bg-white/10 text-white"
+                            : `${role.bg} ${role.color}`
+                        }`}
+                      >
+                        <Icon size={19} />
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold">
+                          {role.label}
+                        </p>
+
+                        <p
+                          className={`mt-1 text-xs ${
+                            active ? "text-slate-300" : "text-slate-400"
+                          }`}
+                        >
+                          {role.value}
+                        </p>
+                      </div>
                     </div>
 
-                    <span className="text-sm font-semibold text-slate-700">
-                      {page.label}
+                    <span
+                      className={`rounded-lg px-2.5 py-1 text-xs font-bold ${
+                        active
+                          ? "bg-white/10 text-white"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {count}
                     </span>
                   </div>
-
-                  <span
-                    className={`flex h-7 w-7 items-center justify-center rounded-lg ${
-                      checked
-                        ? "bg-green-600 text-white"
-                        : "border border-slate-300 text-transparent"
-                    }`}
-                  >
-                    <FiCheck size={16} />
-                  </span>
                 </button>
               );
             })}
-          </div>
-        </div>
-      )}
 
-      {/* Operations Permissions */}
-
-      {activeSection === "operations" && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 p-5">
-            <h3 className="font-bold text-[#0E1F33]">صلاحيات العمليات</h3>
-
-            <p className="mt-1 text-xs text-slate-500">
-              التحكم في العمليات المتاحة لكل قسم.
-            </p>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                onClick={() => toggleAllOperations(true)}
-                className="rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700"
-              >
-                تفعيل جميع العمليات
-              </button>
-
-              <button
-                onClick={() => toggleAllOperations(false)}
-                className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
-              >
-                إلغاء جميع العمليات
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1000px] text-right">
-              <thead className="bg-slate-50 text-xs text-slate-600">
-                <tr>
-                  <th className="px-5 py-4">القسم</th>
-
-                  {actions.map((action) => {
-                    const Icon = action.icon;
-
-                    return (
-                      <th key={action.key} className="px-3 py-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <Icon size={14} />
-                          {action.label}
-                        </div>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-100">
-                {operationModules.map((module) => (
-                  <tr key={module.key} className="hover:bg-slate-50">
-                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">
-                      {module.label}
-                    </td>
-
-                    {actions.map((action) => {
-                      const checked =
-                        permissions[selectedRole].operations[module.key][
-                          action.key
-                        ];
-
-                      return (
-                        <td key={action.key} className="px-3 py-4 text-center">
-                          <button
-                            onClick={() =>
-                              updatePermission(
-                                "operations",
-                                module.key,
-                                action.key,
-                              )
-                            }
-                            className={`mx-auto flex h-7 w-7 items-center justify-center rounded-lg border transition ${
-                              checked
-                                ? "border-green-600 bg-green-600 text-white"
-                                : "border-slate-300 bg-white text-transparent hover:border-slate-400"
-                            }`}
-                          >
-                            <FiCheck size={15} />
-                          </button>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Reports Permissions */}
-
-      {activeSection === "reports" && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
-            <div>
-              <h3 className="font-bold text-[#0E1F33]">صلاحيات التقارير</h3>
-
-              <p className="mt-1 text-xs text-slate-500">
-                تحديد التقارير التي يمكن للمستخدم الاطلاع عليها.
+            {filteredRoles.length === 0 && (
+              <p className="py-8 text-center text-sm text-slate-400">
+                لا توجد مجموعات مطابقة للبحث
               </p>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => toggleAllReports(true)}
-                className="rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700"
-              >
-                تحديد الكل
-              </button>
-
-              <button
-                onClick={() => toggleAllReports(false)}
-                className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
-              >
-                إلغاء الكل
-              </button>
-            </div>
+            )}
           </div>
+        </aside>
 
-          <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
-            {reports.map((report) => {
-              const checked = permissions[selectedRole].reports[report.key];
+        {/* Selected Role Details */}
 
-              return (
-                <button
-                  key={report.key}
-                  onClick={() => updatePermission("reports", report.key)}
-                  className={`flex items-center justify-between rounded-xl border p-4 text-right transition ${
-                    checked
-                      ? "border-green-200 bg-green-50"
-                      : "border-slate-200 bg-white hover:bg-slate-50"
-                  }`}
-                >
-                  <span className="text-sm font-semibold text-slate-700">
-                    {report.label}
-                  </span>
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+          {selectedRoleData && (
+            <>
+              {/* Role Header */}
 
-                  <span
-                    className={`flex h-7 w-7 items-center justify-center rounded-lg ${
-                      checked
-                        ? "bg-green-600 text-white"
-                        : "border border-slate-300 text-transparent"
-                    }`}
+              <div className="flex flex-col gap-4 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex h-12 w-12 items-center justify-center rounded-xl ${selectedRoleData.bg} ${selectedRoleData.color}`}
                   >
-                    <FiCheck size={16} />
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                    {(() => {
+                      const Icon = selectedRoleData.icon;
 
-      {/* Bottom Save */}
+                      return <Icon size={23} />;
+                    })()}
+                  </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5">
-        <div>
-          <p className="text-sm font-bold text-[#0E1F33]">
-            حفظ إعدادات {currentRole?.label}
-          </p>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-bold text-[#0E1F33]">
+                        {selectedRoleData.label}
+                      </h2>
 
-          <p className="mt-1 text-xs text-slate-500">
-            احفظ التغييرات حتى يتم تطبيقها على إعدادات الشركة.
-          </p>
-        </div>
+                      {selectedRoleData.isSystem && (
+                        <span className="rounded-md bg-purple-50 px-2 py-1 text-xs font-semibold text-purple-700">
+                          دور أساسي
+                        </span>
+                      )}
+                    </div>
 
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 rounded-lg bg-[#0E1F33] px-7 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-        >
-          <FiSave size={17} />
-          {saving ? "جاري الحفظ..." : "حفظ التغييرات"}
-        </button>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {selectedRoleData.value}
+                    </p>
+                  </div>
+                </div>
+
+                <Link
+                  href="/erp/users/permissions"
+                  className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                >
+                  <FiEdit size={15} />
+                  إدارة الصلاحيات
+                </Link>
+              </div>
+
+              {/* Description */}
+
+              <div className="border-b border-slate-100 p-5">
+                <h3 className="text-sm font-bold text-slate-700">
+                  وصف المجموعة
+                </h3>
+
+                <p className="mt-2 text-sm leading-7 text-slate-500">
+                  {selectedRoleData.description}
+                </p>
+              </div>
+
+              {/* Statistics */}
+
+              <div className="grid grid-cols-2 gap-4 border-b border-slate-100 bg-slate-50/70 p-5 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs text-slate-500">عدد المستخدمين</p>
+
+                  <p className="mt-2 text-2xl font-bold text-[#0E1F33]">
+                    {selectedRoleCount}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-slate-500">الأقسام المفعلة</p>
+
+                  <p className="mt-2 text-2xl font-bold text-[#0E1F33]">
+                    {selectedRoleData.fullAccess
+                      ? modules.length
+                      : permissionSummary.enabledModules}
+                  </p>
+                </div>
+
+                <div className="col-span-2 sm:col-span-1">
+                  <p className="text-xs text-slate-500">إجمالي الصلاحيات</p>
+
+                  <p className="mt-2 text-2xl font-bold text-[#0E1F33]">
+                    {selectedRoleData.fullAccess
+                      ? "كاملة"
+                      : permissionSummary.totalPermissions}
+                  </p>
+                </div>
+              </div>
+
+              {/* Permissions */}
+
+              <div className="p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-[#0E1F33]">
+                      ملخص صلاحيات المجموعة
+                    </h3>
+
+                    <p className="mt-1 text-xs text-slate-400">
+                      الصلاحيات المحددة حاليًا في إعدادات الشركة
+                    </p>
+                  </div>
+
+                  <Link
+                    href="/erp/users/permissions"
+                    className="text-xs font-semibold text-blue-700 hover:underline"
+                  >
+                    تعديل الصلاحيات
+                  </Link>
+                </div>
+
+                {selectedRoleData.fullAccess ? (
+                  <div className="flex items-start gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4">
+                    <FiShield className="mt-0.5 shrink-0 text-purple-700" />
+
+                    <div>
+                      <p className="font-bold text-purple-800">
+                        صلاحيات إدارية كاملة
+                      </p>
+
+                      <p className="mt-1 text-sm leading-6 text-purple-700">
+                        يمتلك مالك الشركة صلاحيات الإدارة الكاملة، ولا تُدار
+                        صلاحياته من إعدادات الأدوار العادية.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {[
+                        {
+                          key: "view",
+                          label: "عرض",
+                          icon: FiEye,
+                          value: permissionSummary.view,
+                        },
+                        {
+                          key: "create",
+                          label: "إضافة",
+                          icon: FiPlus,
+                          value: permissionSummary.create,
+                        },
+                        {
+                          key: "update",
+                          label: "تعديل",
+                          icon: FiEdit,
+                          value: permissionSummary.update,
+                        },
+                        {
+                          key: "delete",
+                          label: "حذف",
+                          icon: FiTrash2,
+                          value: permissionSummary.delete,
+                        },
+                      ].map((item) => {
+                        const Icon = item.icon;
+
+                        return (
+                          <div
+                            key={item.key}
+                            className="rounded-xl border border-slate-200 p-3"
+                          >
+                            <div className="flex items-center gap-2 text-slate-500">
+                              <Icon size={15} />
+
+                              <span className="text-xs">{item.label}</span>
+                            </div>
+
+                            <p className="mt-2 text-xl font-bold text-[#0E1F33]">
+                              {item.value}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="space-y-2">
+                      {modules.map((module) => {
+                        const permission =
+                          company.rolePermissions?.[selectedRole]?.[
+                            module.key
+                          ] || createEmptyPermission();
+
+                        const enabled = [
+                          permission.view,
+                          permission.create,
+                          permission.update,
+                          permission.delete,
+                        ].filter(Boolean).length;
+
+                        const Icon = module.icon;
+
+                        return (
+                          <div
+                            key={module.key}
+                            className="flex flex-col gap-3 rounded-xl border border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                                <Icon size={17} />
+                              </div>
+
+                              <div>
+                                <p className="text-sm font-semibold text-slate-700">
+                                  {module.label}
+                                </p>
+
+                                <p className="mt-1 text-xs text-slate-400">
+                                  {enabled} من 4 صلاحيات
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              {[
+                                ["view", "عرض"],
+                                ["create", "إضافة"],
+                                ["update", "تعديل"],
+                                ["delete", "حذف"],
+                              ].map(([key, label]) => {
+                                const active =
+                                  permission[key as keyof Permission];
+
+                                return (
+                                  <span
+                                    key={key}
+                                    className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
+                                      active
+                                        ? "bg-emerald-50 text-emerald-700"
+                                        : "bg-slate-100 text-slate-400"
+                                    }`}
+                                  >
+                                    {active ? (
+                                      <FiCheckCircle size={12} />
+                                    ) : (
+                                      <FiXCircle size={12} />
+                                    )}
+
+                                    {label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {!company.rolePermissions?.[selectedRole] && (
+                      <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <FiAlertCircle className="mt-0.5 shrink-0 text-amber-600" />
+
+                        <p className="text-xs leading-6 text-amber-800">
+                          لم يتم العثور على إعدادات مخصصة لهذا الدور. قد تكون
+                          الصلاحيات الافتراضية هي المستخدمة في النظام. راجع صفحة
+                          إدارة الصلاحيات.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Footer */}
+
+              <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <FiLock size={14} />
+                  إدارة الصلاحيات متاحة من صفحة إعدادات الصلاحيات.
+                </div>
+
+                <Link
+                  href="/erp/users/permissions"
+                  className="flex items-center justify-center gap-2 rounded-xl bg-[#0E1F33] px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                >
+                  <FiSettings size={16} />
+                  الذهاب إلى إدارة الصلاحيات
+                  <FiArrowLeft size={15} />
+                </Link>
+              </div>
+            </>
+          )}
+        </section>
       </div>
     </div>
   );

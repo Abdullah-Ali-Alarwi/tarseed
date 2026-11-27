@@ -1,4 +1,4 @@
-import {
+import type {
   Account,
   AccountId,
   AccountNature,
@@ -24,8 +24,8 @@ export function getAccountNature(
 // ==============================
 
 export function isSameAccountId(
-  first: AccountId | null,
-  second: AccountId | null
+  first: AccountId | null | undefined,
+  second: AccountId | null | undefined
 ): boolean {
   return String(first ?? "") === String(second ?? "");
 }
@@ -88,7 +88,11 @@ export function buildAccountTree(
     .filter((account) =>
       isSameAccountId(account.parentId, parentId)
     )
-    .sort((a, b) => a.code.localeCompare(b.code))
+    .sort((a, b) =>
+      a.code.localeCompare(b.code, "en", {
+        numeric: true,
+      })
+    )
     .flatMap((account) => {
       const accountKey = String(account.id);
 
@@ -129,7 +133,11 @@ export function hasChildren(
 // ==============================
 
 export function canBeParent(account: Account): boolean {
-  return account.isGroup && account.isActive;
+  return (
+    account.isGroup === true &&
+    account.isActive !== false &&
+    account.allowPosting === false
+  );
 }
 
 // ==============================

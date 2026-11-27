@@ -4,14 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode } from "react";
 
-import {
-  FiHome,
-  FiFileText,
-  FiShoppingCart,
-  FiUsers,
-  FiDollarSign,
-  FiClipboard,
-} from "react-icons/fi";
+import { FiHome, FiFileText, FiShoppingCart } from "react-icons/fi";
 
 const salesLinks = [
   {
@@ -28,21 +21,6 @@ const salesLinks = [
     name: "فواتير المبيعات",
     href: "/erp/sales/invoices",
     icon: FiShoppingCart,
-  },
-  {
-    name: "قائمة المبيعات",
-    href: "/erp/sales/list",
-    icon: FiClipboard,
-  },
-  {
-    name: "العملاء",
-    href: "/erp/customers",
-    icon: FiUsers,
-  },
-  {
-    name: "سداد العملاء",
-    href: "/erp/sales/payments",
-    icon: FiDollarSign,
   },
 ];
 

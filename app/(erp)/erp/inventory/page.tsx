@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import axios from "axios";
 import { toast } from "sonner";
+
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
 import {
   FiPackage,
@@ -22,19 +24,7 @@ import {
   FiTrendingUp,
   FiLayers,
   FiShoppingCart,
-  FiBox,
 } from "react-icons/fi";
-
-// ========================================
-// API
-// ========================================
-
-const api = axios.create({
-  baseURL: "http://localhost:3001",
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
 
 // ========================================
 // Types
@@ -165,9 +155,9 @@ export default function InventoryPage() {
   const initialize = async () => {
     try {
       const type = getCookie("type");
-      const currentCompanyId = getCookie("companyId");
+      const username = getCookie("username");
 
-      if (!type) {
+      if (!type || !username) {
         toast.error("لم يتم العثور على بيانات تسجيل الدخول");
         return;
       }
@@ -177,8 +167,37 @@ export default function InventoryPage() {
         return;
       }
 
+      // جلب المستخدم من Supabase
+      const response = await getUserByUsername(username);
+
+      const user = Array.isArray(response) ? response[0] : response;
+
+      if (!user) {
+        toast.error("تعذر العثور على بيانات المستخدم");
+        return;
+      }
+
+      // التحقق من حالة المستخدم
+      if (
+        user.isActive === false ||
+        user.status === "inactive" ||
+        user.status === "غير نشط"
+      ) {
+        toast.error("حساب المستخدم غير نشط");
+        return;
+      }
+
+      // التحقق من نوع الحساب
+      if (user.type === "platform") {
+        toast.error("لا يمكن لحساب المنصة الدخول إلى مخزون الشركات");
+        return;
+      }
+
+      // تحديد الشركة من سجل المستخدم
+      const currentCompanyId = String(user.companyId || "");
+
       if (!currentCompanyId) {
-        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
+        toast.error("المستخدم غير مرتبط بشركة");
         return;
       }
 
@@ -195,7 +214,7 @@ export default function InventoryPage() {
   };
 
   // ======================================
-  // Load Inventory Data
+  // Load Inventory Data From Supabase
   // ======================================
 
   const loadInventory = async (currentCompanyId: string) => {
@@ -206,29 +225,62 @@ export default function InventoryPage() {
         warehouseStocksResponse,
         movementsResponse,
       ] = await Promise.all([
-        api.get("/products", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase.from("products").select("*").eq("companyId", currentCompanyId),
 
-        api.get("/warehouses", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("warehouses")
+          .select("*")
+          .eq("companyId", currentCompanyId),
 
-        api.get("/warehouseStocks", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("warehouseStocks")
+          .select("*")
+          .eq("companyId", currentCompanyId),
 
-        api.get("/inventoryMovements", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("inventoryMovements")
+          .select("*")
+          .eq("companyId", currentCompanyId)
+          .order("createdAt", { ascending: false }),
       ]);
 
-      setProducts(productsResponse.data);
-      setWarehouses(warehousesResponse.data);
-      setWarehouseStocks(warehouseStocksResponse.data);
+      // التحقق من أخطاء Supabase
+      if (productsResponse.error) {
+        throw productsResponse.error;
+      }
+
+      if (warehousesResponse.error) {
+        throw warehousesResponse.error;
+      }
+
+      if (warehouseStocksResponse.error) {
+        throw warehouseStocksResponse.error;
+      }
+
+      if (movementsResponse.error) {
+        throw movementsResponse.error;
+      }
+
+      // التأكد من أن البيانات مصفوفات
+      const productsData = (productsResponse.data ?? []) as Product[];
+
+      const warehousesData = (warehousesResponse.data ?? []) as Warehouse[];
+
+      const warehouseStocksData = (warehouseStocksResponse.data ??
+        []) as WarehouseStock[];
+
+      const movementsData = (movementsResponse.data ??
+        []) as InventoryMovement[];
+
+      // تحديث الحالة
+      setProducts(productsData);
+
+      setWarehouses(warehousesData);
+
+      setWarehouseStocks(warehouseStocksData);
 
       setMovements(
-        [...movementsResponse.data].sort((a, b) => {
+        [...movementsData].sort((a, b) => {
           const dateA = new Date(a.createdAt || a.date || 0).getTime();
 
           const dateB = new Date(b.createdAt || b.date || 0).getTime();
@@ -239,7 +291,7 @@ export default function InventoryPage() {
     } catch (error) {
       console.error("Load Inventory Error:", error);
 
-      toast.error("تعذر تحميل بيانات المخزون");
+      toast.error("تعذر تحميل بيانات المخزون من قاعدة البيانات");
     }
   };
 
@@ -508,7 +560,9 @@ export default function InventoryPage() {
           لم يتم العثور على الشركة المرتبطة بالمستخدم
         </h2>
 
-        <p className="mt-2 text-sm">تحقق من وجود companyId في Cookies.</p>
+        <p className="mt-2 text-sm">
+          تحقق من تسجيل الدخول وارتباط المستخدم بالشركة.
+        </p>
       </div>
     );
   }
@@ -574,8 +628,6 @@ export default function InventoryPage() {
       {/* Main Statistics */}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {/* Products */}
-
         <StatCard
           title="الأصناف النشطة"
           value={formatNumber(activeProducts.length)}
@@ -585,8 +637,6 @@ export default function InventoryPage() {
           href="/erp/products"
           linkText="عرض الأصناف"
         />
-
-        {/* Warehouses */}
 
         <StatCard
           title="المستودعات النشطة"
@@ -598,8 +648,6 @@ export default function InventoryPage() {
           linkText="عرض المستودعات"
         />
 
-        {/* Total Quantity */}
-
         <StatCard
           title="إجمالي الكميات"
           value={formatNumber(totalQuantity)}
@@ -607,8 +655,6 @@ export default function InventoryPage() {
           color="cyan"
           description="مجموع أرصدة جميع المستودعات"
         />
-
-        {/* Low Stock */}
 
         <StatCard
           title="أصناف منخفضة المخزون"
@@ -633,8 +679,6 @@ export default function InventoryPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {/* Purchase Value */}
-
           <StatCard
             title="قيمة المخزون بالتكلفة المسجلة"
             value={formatMoney(totalPurchaseValue)}
@@ -642,8 +686,6 @@ export default function InventoryPage() {
             color="blue"
             description="الكمية المتوفرة × سعر الشراء"
           />
-
-          {/* Selling Value */}
 
           <StatCard
             title="القيمة المتوقعة للبيع"
@@ -653,8 +695,6 @@ export default function InventoryPage() {
             description="الكمية المتوفرة × سعر البيع"
           />
 
-          {/* Expected Profit */}
-
           <StatCard
             title="الربح المتوقع"
             value={formatMoney(expectedProfit)}
@@ -662,8 +702,6 @@ export default function InventoryPage() {
             color={expectedProfit >= 0 ? "green" : "red"}
             description="فرق سعر البيع والشراء للكميات الحالية"
           />
-
-          {/* Movements */}
 
           <StatCard
             title="إجمالي حركات المخزون"

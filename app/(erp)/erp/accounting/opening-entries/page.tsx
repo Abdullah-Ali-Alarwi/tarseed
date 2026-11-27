@@ -1,618 +1,883 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
-import Link from "next/link";
 import {
-  FiPlus,
-  FiSearch,
-  FiRefreshCw,
-  FiTrash2,
-  FiEdit,
-  FiBookOpen,
-  FiDollarSign,
-  FiCheckCircle,
-  FiAlertCircle,
-  FiCalendar,
-  FiFilter,
-} from "react-icons/fi";
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
+
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+import {
+  FiArrowRight,
+  FiPlus,
+  FiTrash2,
+  FiSave,
+  FiRefreshCw,
+  FiAlertCircle,
+} from "react-icons/fi";
+
+import { supabase } from "@/lib/supabase";
+
+// =====================================================
+// TYPES
+// =====================================================
+
+interface CurrentUser {
+  id: string | number;
+  username: string;
+  name?: string;
+  type: string;
+  companyId?: string | number;
+  companyname?: string;
+  isActive?: boolean;
+  status?: string;
+}
 
 interface Account {
-  id: string;
+  id: string | number;
   code: string;
   name: string;
   type: string;
-  nature?: "debit" | "credit";
-  isGroup?: boolean;
-  allowPosting?: boolean;
-  isActive?: boolean;
+  isGroup: boolean;
+  allowPosting: boolean;
+  isActive: boolean;
+  status?: string;
   companyId: string | number;
+  extra?: Record<string, any>;
 }
 
-interface OpeningEntry {
-  id: string;
+interface OpeningEntryLine {
   accountId: string;
-  date: string;
-  debit: number;
-  credit: number;
-  companyId: string | number;
-  description?: string;
-  reference?: string;
-  createdAt?: string;
-  updatedAt?: string;
+  debit: string;
+  credit: string;
 }
 
-interface CurrentUser {
-  id: string;
-  name?: string;
-  username: string;
-  role?: string;
-  type?: string;
-  companyId: string | number;
-  companyName?: string;
+// =====================================================
+// HELPERS
+// =====================================================
+
+function getCurrentUsername(): string {
+  if (typeof window === "undefined") return "";
+
+  // أولاً: قراءة اسم المستخدم من Cookie
+  const cookie = document.cookie
+    .split(";")
+    .find((item) => item.trim().startsWith("username="));
+
+  let cookieUsername = "";
+
+  try {
+    cookieUsername = cookie
+      ? decodeURIComponent(cookie.split("=").slice(1).join("="))
+      : "";
+  } catch {
+    cookieUsername = "";
+  }
+
+  // ثانياً: الرجوع إلى localStorage
+  let storedUser: Partial<CurrentUser> | null = null;
+
+  try {
+    storedUser = JSON.parse(localStorage.getItem("authUser") || "null");
+  } catch {
+    storedUser = null;
+  }
+
+  return cookieUsername || storedUser?.username || "";
 }
 
-const formatMoney = (value: number) =>
-  new Intl.NumberFormat("ar-YE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+function normalizeAccount(account: any): Account {
+  const extra =
+    account.extra && typeof account.extra === "object" ? account.extra : {};
 
-const formatDate = (date?: string) => {
-  if (!date) return "-";
+  return {
+    ...extra,
+    ...account,
 
-  return new Date(date).toLocaleDateString("ar-YE");
+    allowPosting:
+      extra.allowPosting ?? account.allowPosting ?? !account.isGroup,
+
+    isGroup: account.isGroup === true,
+
+    isActive: account.isActive !== false,
+
+    extra,
+  } as Account;
+}
+
+function isValidPostingAccount(account: Account): boolean {
+  return (
+    account.isActive === true &&
+    account.status !== "inactive" &&
+    account.isGroup === false &&
+    account.allowPosting === true
+  );
+}
+
+function sortAccounts(accounts: Account[]): Account[] {
+  return [...accounts].sort((a, b) =>
+    String(a.code).localeCompare(String(b.code), undefined, { numeric: true }),
+  );
+}
+
+const emptyLine: OpeningEntryLine = {
+  accountId: "",
+  debit: "",
+  credit: "",
 };
 
-export default function OpeningEntriesPage() {
-  const [user, setUser] = useState<CurrentUser | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [entries, setEntries] = useState<OpeningEntry[]>([]);
+// =====================================================
+// COMPONENT
+// =====================================================
+
+export default function CreateOpeningEntriesPage() {
+  const router = useRouter();
+
+  // ===================================================
+  // STATES
+  // ===================================================
 
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const [search, setSearch] = useState("");
-  const [selectedDate, setSelectedDate] = useState("");
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
 
-  const getCurrentUser = useCallback(async () => {
-    const username = document.cookie
-      .split("; ")
-      .find((row) => row.startsWith("username="))
-      ?.split("=")[1];
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
-    if (!username) {
-      throw new Error("لم يتم العثور على المستخدم الحالي");
-    }
+  const [companyId, setCompanyId] = useState("");
 
-    const decodedUsername = decodeURIComponent(username);
+  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
 
-    const response = await api.get(
-      `/users?username=${encodeURIComponent(decodedUsername)}`,
-    );
+  const [reference, setReference] = useState("");
+  const [description, setDescription] = useState("");
 
-    const dbUser = response.data?.[0];
+  const [lines, setLines] = useState<OpeningEntryLine[]>([
+    { ...emptyLine },
+    { ...emptyLine },
+  ]);
 
-    if (!dbUser) {
-      throw new Error("المستخدم غير موجود");
-    }
-
-    if (dbUser.type === "platform") {
-      throw new Error("ليس لديك صلاحية الوصول إلى هذه الصفحة");
-    }
-
-    if (!dbUser.companyId) {
-      throw new Error("المستخدم غير مرتبط بشركة");
-    }
-
-    return {
-      id: String(dbUser.id),
-      name: dbUser.name || dbUser.fullName || dbUser.username,
-      username: dbUser.username,
-      role: dbUser.role,
-      type: dbUser.type,
-      companyId: dbUser.companyId,
-      companyName: dbUser.companyName || dbUser.companyname,
-    } as CurrentUser;
-  }, []);
+  // ===================================================
+  // LOAD USER AND ACCOUNTS
+  // ===================================================
 
   const loadData = useCallback(async () => {
+    setLoading(true);
+
     try {
-      setLoading(true);
+      const username = getCurrentUsername();
 
-      const currentUser = await getCurrentUser();
-      setUser(currentUser);
+      if (!username) {
+        throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
+      }
 
-      const [accountsResponse, entriesResponse] = await Promise.all([
-        api.get("/accounts", {
-          params: { companyId: currentUser.companyId },
-        }),
-        api.get("/openingEntries", {
-          params: { companyId: currentUser.companyId },
-        }),
-      ]);
+      // جلب المستخدم الحالي
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("username", username)
+        .maybeSingle();
 
-      const companyAccounts = (accountsResponse.data || []).filter(
-        (account: Account) =>
-          String(account.companyId) === String(currentUser.companyId),
+      if (userError) {
+        console.error("Get current user error:", userError);
+        throw new Error(userError.message);
+      }
+
+      if (!user) {
+        throw new Error("المستخدم غير موجود");
+      }
+
+      if (user.type === "platform") {
+        throw new Error("لا يمكن لمستخدم المنصة إنشاء أرصدة افتتاحية للشركة");
+      }
+
+      if (!user.companyId) {
+        throw new Error("المستخدم غير مرتبط بأي شركة");
+      }
+
+      if (user.isActive === false || user.status === "inactive") {
+        throw new Error("حساب المستخدم غير نشط");
+      }
+
+      const currentCompanyId = String(user.companyId);
+
+      setCurrentUser(user);
+      setCompanyId(currentCompanyId);
+
+      // جلب حسابات الشركة
+      const { data: accountsData, error: accountsError } = await supabase
+        .from("accounts")
+        .select("*")
+        .eq("companyId", currentCompanyId)
+        .order("code", { ascending: true });
+
+      if (accountsError) {
+        console.error("Get accounts error:", accountsError);
+
+        throw new Error(accountsError.message);
+      }
+
+      const normalizedAccounts = (accountsData || []).map(normalizeAccount);
+
+      // الحسابات النهائية القابلة للترحيل فقط
+      const postingAccounts = sortAccounts(
+        normalizedAccounts.filter(isValidPostingAccount),
       );
 
-      const companyEntries = (entriesResponse.data || []).filter(
-        (entry: OpeningEntry) =>
-          String(entry.companyId) === String(currentUser.companyId),
-      );
-
-      setAccounts(companyAccounts);
-      setEntries(companyEntries);
+      setAccounts(postingAccounts);
     } catch (error) {
-      console.error(error);
+      console.error("Opening Entries Load Error:", error);
+
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "حدث خطأ أثناء تحميل الأرصدة الافتتاحية",
+        error instanceof Error ? error.message : "تعذر تحميل البيانات",
       );
+
+      setCompanyId("");
     } finally {
       setLoading(false);
     }
-  }, [getCurrentUser]);
+  }, []);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const accountMap = useMemo(() => {
-    const map = new Map<string, Account>();
+  // ===================================================
+  // TOTALS
+  // ===================================================
 
-    accounts.forEach((account) => {
-      map.set(String(account.id), account);
-    });
+  const totalDebit = useMemo(
+    () => lines.reduce((total, line) => total + (Number(line.debit) || 0), 0),
+    [lines],
+  );
 
-    return map;
-  }, [accounts]);
+  const totalCredit = useMemo(
+    () => lines.reduce((total, line) => total + (Number(line.credit) || 0), 0),
+    [lines],
+  );
 
-  const getAccount = (accountId: string) => {
-    return accountMap.get(String(accountId));
-  };
+  const difference = totalDebit - totalCredit;
 
-  const filteredEntries = useMemo(() => {
-    return entries.filter((entry) => {
-      const account = getAccount(entry.accountId);
+  const isBalanced =
+    totalDebit > 0 && totalCredit > 0 && Math.abs(difference) < 0.000001;
 
-      const searchValue = search.trim().toLowerCase();
+  // ===================================================
+  // LINES MANAGEMENT
+  // ===================================================
 
-      const matchesSearch =
-        !searchValue ||
-        account?.name?.toLowerCase().includes(searchValue) ||
-        account?.code?.toLowerCase().includes(searchValue) ||
-        entry.reference?.toLowerCase().includes(searchValue) ||
-        entry.description?.toLowerCase().includes(searchValue);
+  function updateLine(
+    index: number,
+    field: keyof OpeningEntryLine,
+    value: string,
+  ) {
+    setLines((previous) =>
+      previous.map((line, i) => {
+        if (i !== index) return line;
 
-      const matchesDate =
-        !selectedDate || entry.date?.slice(0, 10) === selectedDate;
+        const updated = {
+          ...line,
+          [field]: value,
+        };
 
-      return matchesSearch && matchesDate;
-    });
-  }, [entries, search, selectedDate, accountMap]);
+        // منع إدخال مدين ودائن في السطر نفسه
+        if (field === "debit" && Number(value) > 0) {
+          updated.credit = "";
+        }
 
-  const totals = useMemo(() => {
-    const debit = filteredEntries.reduce(
-      (sum, entry) => sum + Number(entry.debit || 0),
-      0,
+        if (field === "credit" && Number(value) > 0) {
+          updated.debit = "";
+        }
+
+        return updated;
+      }),
     );
+  }
 
-    const credit = filteredEntries.reduce(
-      (sum, entry) => sum + Number(entry.credit || 0),
-      0,
-    );
+  function addLine() {
+    setLines((previous) => [...previous, { ...emptyLine }]);
+  }
 
-    return {
-      debit,
-      credit,
-      difference: Math.abs(debit - credit),
-      balanced: Math.abs(debit - credit) < 0.01,
-    };
-  }, [filteredEntries]);
+  function removeLine(index: number) {
+    if (lines.length <= 2) {
+      toast.error("يجب أن يحتوي المستند على سطرين على الأقل");
+      return;
+    }
 
-  const accountCount = useMemo(() => {
-    return new Set(filteredEntries.map((entry) => entry.accountId)).size;
-  }, [filteredEntries]);
+    setLines((previous) => previous.filter((_, i) => i !== index));
+  }
 
-  const handleDelete = async (entry: OpeningEntry) => {
-    if (!user) return;
+  // ===================================================
+  // VALIDATION
+  // ===================================================
 
-    const account = getAccount(entry.accountId);
+  function validateForm(): boolean {
+    if (!currentUser || !companyId) {
+      toast.error("لم يتم تحديد المستخدم أو الشركة");
+      return false;
+    }
 
-    const confirmed = window.confirm(
-      `هل أنت متأكد من حذف الرصيد الافتتاحي للحساب ${account?.name || ""}؟`,
-    );
+    if (!date) {
+      toast.error("يرجى تحديد تاريخ الأرصدة الافتتاحية");
+      return false;
+    }
 
-    if (!confirmed) return;
+    if (lines.length < 2) {
+      toast.error("يجب إدخال حسابين على الأقل");
+      return false;
+    }
+
+    const selectedAccounts = lines.map((line) => line.accountId);
+
+    if (selectedAccounts.some((id) => !id)) {
+      toast.error("يرجى اختيار حساب لكل سطر");
+      return false;
+    }
+
+    // منع تكرار الحساب
+    if (new Set(selectedAccounts).size !== selectedAccounts.length) {
+      toast.error("لا يمكن اختيار الحساب نفسه أكثر من مرة");
+      return false;
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      const debit = Number(line.debit) || 0;
+      const credit = Number(line.credit) || 0;
+
+      if (
+        !Number.isFinite(debit) ||
+        !Number.isFinite(credit) ||
+        debit < 0 ||
+        credit < 0
+      ) {
+        toast.error(`القيم في السطر ${i + 1} غير صحيحة`);
+        return false;
+      }
+
+      if (debit === 0 && credit === 0) {
+        toast.error(`يرجى إدخال مبلغ في السطر ${i + 1}`);
+        return false;
+      }
+
+      if (debit > 0 && credit > 0) {
+        toast.error(`لا يمكن إدخال مدين ودائن في السطر ${i + 1}`);
+        return false;
+      }
+
+      const account = accounts.find(
+        (item) => String(item.id) === line.accountId,
+      );
+
+      if (!account) {
+        toast.error(`الحساب المحدد في السطر ${i + 1} غير صالح`);
+        return false;
+      }
+
+      if (String(account.companyId) !== companyId) {
+        toast.error("يوجد حساب لا يتبع الشركة الحالية");
+        return false;
+      }
+
+      if (!isValidPostingAccount(account)) {
+        toast.error(`الحساب ${account.name} غير قابل للترحيل`);
+        return false;
+      }
+    }
+
+    if (!isBalanced) {
+      toast.error("الأرصدة الافتتاحية غير متوازنة");
+      return false;
+    }
+
+    return true;
+  }
+
+  // ===================================================
+  // SAVE
+  // ===================================================
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (saving) return;
+
+    if (!validateForm()) return;
+
+    setSaving(true);
 
     try {
-      setDeleting(entry.id);
+      // إعادة التحقق من المستخدم قبل الحفظ
+      const username = getCurrentUsername();
 
-      // التأكد من أن السجل تابع للشركة الحالية
-      const response = await api.get(`/openingEntries/${entry.id}`);
+      if (!username) {
+        throw new Error("تعذر تحديد المستخدم الحالي");
+      }
 
-      const existingEntry = response.data as OpeningEntry;
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select("id, username, type, companyId, isActive, status")
+        .eq("username", username)
+        .maybeSingle();
 
-      if (String(existingEntry.companyId) !== String(user.companyId)) {
-        toast.error("لا تملك صلاحية حذف هذا السجل");
+      if (userError) {
+        throw new Error(userError.message);
+      }
+
+      if (!user) {
+        throw new Error("المستخدم غير موجود");
+      }
+
+      if (user.type === "platform" || String(user.companyId) !== companyId) {
+        throw new Error("لا تملك صلاحية إنشاء أرصدة لهذه الشركة");
+      }
+
+      if (user.isActive === false || user.status === "inactive") {
+        throw new Error("حساب المستخدم غير نشط");
+      }
+
+      const createdAt = new Date().toISOString();
+
+      /*
+       * بنية جدول openingEntries:
+       *
+       * id
+       * companyId
+       * extra JSONB
+       *
+       * لذلك accountId والتاريخ والمبالغ
+       * تحفظ داخل extra وليس كأعمدة مستقلة.
+       */
+
+      const payload = lines.map((line) => ({
+        id: crypto.randomUUID(),
+        companyId,
+        extra: {
+          accountId: line.accountId,
+          date,
+          debit: Number(line.debit) || 0,
+          credit: Number(line.credit) || 0,
+          description: description.trim(),
+          reference: reference.trim(),
+          createdBy: String(currentUser.id),
+          createdAt: new Date().toISOString(),
+        },
+      }));
+
+      const { error } = await supabase.from("openingEntries").insert(payload);
+
+      if (error) {
+        console.error("Submit error:", error);
+        toast.error("حدث خطأ أثناء حفظ الأرصدة الافتتاحية");
         return;
       }
+      // إدخال جميع الأسطر في طلب واحد
+      const { error: insertError } = await supabase
+        .from("openingEntries")
+        .insert(payload);
 
-      await api.delete(`/openingEntries/${entry.id}`);
+      if (insertError) {
+        console.error("Opening Entries Insert Error:", insertError);
 
-      // تسجيل العملية في سجل نشاط المستخدمين
-      try {
-        await api.post("/activityLogs", {
-          id: crypto.randomUUID(),
-          companyId: user.companyId,
-          userId: user.id,
-          username: user.username,
-          userName: user.name,
-          userRole: user.role,
-          action: "delete",
-          module: "openingEntries",
-          description: `حذف رصيد افتتاحي للحساب ${account?.name || entry.accountId}`,
-          recordId: entry.id,
-          recordName: account?.name || entry.accountId,
-          oldData: existingEntry,
-          createdAt: new Date().toISOString(),
-        });
-      } catch (activityError) {
-        console.error("تعذر تسجيل نشاط الحذف:", activityError);
+        throw new Error(insertError.message);
       }
 
-      setEntries((previous) => previous.filter((item) => item.id !== entry.id));
+      toast.success("تم حفظ الأرصدة الافتتاحية بنجاح");
 
-      toast.success("تم حذف الرصيد الافتتاحي بنجاح");
-    } catch (error) {
-      console.error(error);
-      toast.error("حدث خطأ أثناء حذف الرصيد الافتتاحي");
-    } finally {
-      setDeleting(null);
+      router.push("/erp/accounting/opening-entries");
+
+      router.refresh();
+    } catch (error: any) {
+      console.error("Submit error:", error);
+
+      console.error("Error details:", {
+        message: error?.message,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+        name: error?.name,
+        stack: error?.stack,
+        json: JSON.stringify(error, Object.getOwnPropertyNames(error ?? {})),
+      });
+
+      toast.error(error?.message || "تعذر حفظ الأرصدة الافتتاحية");
     }
-  };
+  }
+
+  // ===================================================
+  // LOADING
+  // ===================================================
 
   if (loading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <div className="text-center">
-          <FiRefreshCw className="mx-auto mb-3 animate-spin text-3xl text-slate-600" />
-          <p className="text-sm text-slate-500">
-            جاري تحميل الأرصدة الافتتاحية...
-          </p>
+      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
+        <div className="flex items-center gap-3 text-gray-500">
+          <FiRefreshCw className="animate-spin" size={20} />
+
+          <span>جاري تحميل البيانات...</span>
         </div>
       </div>
     );
   }
 
-  return (
-    <div dir="rtl" className="space-y-6 pb-10">
-      {/* Header */}
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <div className="flex items-center gap-2">
-            <FiBookOpen className="text-2xl text-slate-700" />
+  // ===================================================
+  // NO COMPANY
+  // ===================================================
 
-            <h1 className="text-2xl font-bold text-slate-800">
-              الأرصدة الافتتاحية
-            </h1>
-          </div>
-
-          <p className="mt-2 text-sm text-slate-500">
-            إدارة الأرصدة الافتتاحية وربطها بالحسابات المحاسبية
-          </p>
-
-          {user?.companyName && (
-            <p className="mt-1 text-xs text-slate-400">
-              الشركة: {user.companyName}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={loadData}
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <FiRefreshCw />
-            تحديث
-          </button>
-
-          <Link
-            href="/erp/accounting/opening-entries/create"
-            className="flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
-          >
-            <FiPlus />
-            إضافة أرصدة افتتاحية
-          </Link>
-        </div>
-      </div>
-
-      {/* Statistics */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-slate-500">عدد الحسابات</p>
-
-              <h3 className="mt-2 text-2xl font-bold text-slate-800">
-                {accountCount}
-              </h3>
-            </div>
-
-            <div className="rounded-lg bg-blue-50 p-3 text-blue-600">
-              <FiBookOpen size={22} />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-slate-500">إجمالي المدين</p>
-
-              <h3 className="mt-2 text-xl font-bold text-blue-700">
-                {formatMoney(totals.debit)}
-              </h3>
-            </div>
-
-            <div className="rounded-lg bg-blue-50 p-3 text-blue-600">
-              <FiDollarSign size={22} />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-slate-500">إجمالي الدائن</p>
-
-              <h3 className="mt-2 text-xl font-bold text-emerald-700">
-                {formatMoney(totals.credit)}
-              </h3>
-            </div>
-
-            <div className="rounded-lg bg-emerald-50 p-3 text-emerald-600">
-              <FiDollarSign size={22} />
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-slate-500">الفرق</p>
-
-              <h3
-                className={`mt-2 text-xl font-bold ${
-                  totals.balanced ? "text-emerald-700" : "text-red-600"
-                }`}
-              >
-                {formatMoney(totals.difference)}
-              </h3>
-            </div>
-
-            <div
-              className={`rounded-lg p-3 ${
-                totals.balanced
-                  ? "bg-emerald-50 text-emerald-600"
-                  : "bg-red-50 text-red-600"
-              }`}
-            >
-              {totals.balanced ? (
-                <FiCheckCircle size={22} />
-              ) : (
-                <FiAlertCircle size={22} />
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Balance status */}
+  if (!companyId || !currentUser) {
+    return (
       <div
-        className={`flex items-center gap-3 rounded-xl border p-4 ${
-          totals.balanced
-            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-            : "border-amber-200 bg-amber-50 text-amber-800"
-        }`}
+        dir="rtl"
+        className="m-6 rounded-xl border border-red-200 bg-red-50 p-6 text-red-700"
       >
-        {totals.balanced ? (
-          <FiCheckCircle size={22} />
-        ) : (
+        <div className="flex items-center gap-2">
           <FiAlertCircle size={22} />
-        )}
 
+          <h2 className="font-bold">تعذر فتح صفحة الأرصدة الافتتاحية</h2>
+        </div>
+
+        <p className="mt-2 text-sm">
+          تحقق من تسجيل الدخول وربط المستخدم بالشركة.
+        </p>
+
+        <button
+          onClick={() => router.back()}
+          className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm text-white"
+        >
+          رجوع
+        </button>
+      </div>
+    );
+  }
+
+  // ===================================================
+  // UI
+  // ===================================================
+
+  return (
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
+      {/* Header */}
+
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="font-semibold">
-            {totals.balanced ? "الأرصدة متوازنة" : "الأرصدة غير متوازنة"}
-          </p>
-
-          <p className="mt-1 text-xs">
-            {totals.balanced
-              ? "إجمالي المدين يساوي إجمالي الدائن."
-              : `يوجد فرق بمقدار ${formatMoney(totals.difference)} بين المدين والدائن.`}
-          </p>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="relative">
-            <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="ابحث برقم الحساب أو اسمه..."
-              className="w-full rounded-lg border border-slate-200 py-2.5 pr-10 pl-3 text-sm outline-none focus:border-slate-500"
-            />
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <span>المحاسبة</span>
+            <span>/</span>
+            <span>الأرصدة الافتتاحية</span>
+            <span>/</span>
+            <span className="text-blue-600">إضافة أرصدة</span>
           </div>
 
-          <div className="relative">
-            <FiCalendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <h1 className="mt-3 text-2xl font-bold text-gray-800">
+            إضافة الأرصدة الافتتاحية
+          </h1>
 
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 py-2.5 pr-10 pl-3 text-sm outline-none focus:border-slate-500"
-            />
-          </div>
-
-          <button
-            onClick={() => {
-              setSearch("");
-              setSelectedDate("");
-            }}
-            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
-          >
-            <FiFilter />
-            إعادة ضبط البحث
-          </button>
+          <p className="mt-1 text-sm text-gray-500">
+            إدخال الأرصدة الافتتاحية لحسابات الشركة
+          </p>
         </div>
+
+        <button
+          type="button"
+          onClick={() => router.push("/erp/accounting/opening-entries")}
+          className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
+        >
+          <FiArrowRight />
+          العودة للقائمة
+        </button>
       </div>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 p-4">
-          <h2 className="font-bold text-slate-800">
-            تفاصيل الأرصدة الافتتاحية
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Basic Information */}
+
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-5 border-b border-gray-100 pb-3 text-lg font-bold text-gray-800">
+            بيانات المستند
           </h2>
 
-          <span className="text-xs text-slate-500">
-            {filteredEntries.length} سجل
-          </span>
-        </div>
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                تاريخ الأرصدة الافتتاحية
+                <span className="text-red-500"> *</span>
+              </label>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-right text-sm">
-            <thead className="bg-slate-50 text-slate-600">
-              <tr>
-                <th className="px-4 py-4">#</th>
-                <th className="px-4 py-4">رقم الحساب</th>
-                <th className="px-4 py-4">اسم الحساب</th>
-                <th className="px-4 py-4">التاريخ</th>
-                <th className="px-4 py-4">مدين</th>
-                <th className="px-4 py-4">دائن</th>
-                <th className="px-4 py-4">البيان</th>
-                <th className="px-4 py-4 text-center">الإجراءات</th>
-              </tr>
-            </thead>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                required
+              />
+            </div>
 
-            <tbody className="divide-y divide-slate-100">
-              {filteredEntries.length === 0 ? (
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                رقم المرجع
+              </label>
+
+              <input
+                type="text"
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder="مثال: OPEN-001"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                وصف المستند
+              </label>
+
+              <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="الأرصدة الافتتاحية للشركة"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Opening Entry Lines */}
+
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-5">
+            <div>
+              <h2 className="text-lg font-bold text-gray-800">
+                تفاصيل الأرصدة
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500">
+                اختر الحساب وأدخل رصيده المدين أو الدائن
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={addLine}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+            >
+              <FiPlus size={17} />
+              إضافة حساب
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[750px] text-sm">
+              <thead className="bg-gray-50 text-gray-600">
                 <tr>
-                  <td
-                    colSpan={8}
-                    className="px-4 py-12 text-center text-slate-400"
-                  >
-                    لا توجد أرصدة افتتاحية
-                  </td>
+                  <th className="w-12 px-4 py-4 text-center">#</th>
+
+                  <th className="px-4 py-4 text-right">الحساب</th>
+
+                  <th className="w-48 px-4 py-4 text-right">مدين</th>
+
+                  <th className="w-48 px-4 py-4 text-right">دائن</th>
+
+                  <th className="w-16 px-4 py-4 text-center">حذف</th>
                 </tr>
-              ) : (
-                filteredEntries.map((entry, index) => {
-                  const account = getAccount(entry.accountId);
+              </thead>
 
-                  return (
-                    <tr key={entry.id} className="transition hover:bg-slate-50">
-                      <td className="px-4 py-4 text-slate-400">{index + 1}</td>
+              <tbody className="divide-y divide-gray-100">
+                {lines.map((line, index) => (
+                  <tr key={index} className="hover:bg-gray-50/70">
+                    <td className="px-4 py-3 text-center text-gray-500">
+                      {index + 1}
+                    </td>
 
-                      <td className="px-4 py-4 font-semibold text-slate-700">
-                        {account?.code || "-"}
-                      </td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={line.accountId}
+                        onChange={(e) =>
+                          updateLine(index, "accountId", e.target.value)
+                        }
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                        required
+                      >
+                        <option value="">اختر الحساب</option>
 
-                      <td className="px-4 py-4 font-medium text-slate-800">
-                        {account?.name || "حساب غير معروف"}
-                      </td>
+                        {accounts.map((account) => (
+                          <option key={account.id} value={String(account.id)}>
+                            {account.code} - {account.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
 
-                      <td className="px-4 py-4 text-slate-500">
-                        {formatDate(entry.date)}
-                      </td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.debit}
+                        onChange={(e) =>
+                          updateLine(index, "debit", e.target.value)
+                        }
+                        placeholder="0.00"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-left outline-none focus:border-blue-500"
+                        dir="ltr"
+                      />
+                    </td>
 
-                      <td className="px-4 py-4 font-semibold text-blue-700">
-                        {formatMoney(Number(entry.debit || 0))}
-                      </td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.credit}
+                        onChange={(e) =>
+                          updateLine(index, "credit", e.target.value)
+                        }
+                        placeholder="0.00"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-left outline-none focus:border-blue-500"
+                        dir="ltr"
+                      />
+                    </td>
 
-                      <td className="px-4 py-4 font-semibold text-emerald-700">
-                        {formatMoney(Number(entry.credit || 0))}
-                      </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => removeLine(index)}
+                        title="حذف السطر"
+                        className="rounded-lg p-2 text-red-500 transition hover:bg-red-50"
+                      >
+                        <FiTrash2 size={17} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
 
-                      <td className="max-w-[200px] truncate px-4 py-4 text-slate-500">
-                        {entry.description || entry.reference || "-"}
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <div className="flex items-center justify-center gap-2">
-                          <Link
-                            href={`/erp/accounting/opening-entries/${entry.id}/edit`}
-                            title="تعديل"
-                            className="rounded-lg border border-blue-100 p-2 text-blue-600 hover:bg-blue-50"
-                          >
-                            <FiEdit size={16} />
-                          </Link>
-
-                          <button
-                            onClick={() => handleDelete(entry)}
-                            disabled={deleting === entry.id}
-                            title="حذف"
-                            className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                          >
-                            {deleting === entry.id ? (
-                              <FiRefreshCw className="animate-spin" size={16} />
-                            ) : (
-                              <FiTrash2 size={16} />
-                            )}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-
-            {filteredEntries.length > 0 && (
-              <tfoot className="border-t-2 border-slate-200 bg-slate-50 font-bold">
+              <tfoot className="border-t-2 border-gray-200 bg-gray-50 font-bold">
                 <tr>
-                  <td colSpan={4} className="px-4 py-4 text-slate-700">
+                  <td colSpan={2} className="px-4 py-4 text-left">
                     الإجمالي
                   </td>
 
-                  <td className="px-4 py-4 text-blue-700">
-                    {formatMoney(totals.debit)}
+                  <td className="px-4 py-4 text-left text-blue-700" dir="ltr">
+                    {totalDebit.toLocaleString("en-US", {
+                      minimumFractionDigits: 2,
+                    })}
                   </td>
 
-                  <td className="px-4 py-4 text-emerald-700">
-                    {formatMoney(totals.credit)}
+                  <td className="px-4 py-4 text-left text-green-700" dir="ltr">
+                    {totalCredit.toLocaleString("en-US", {
+                      minimumFractionDigits: 2,
+                    })}
                   </td>
 
-                  <td colSpan={2} className="px-4 py-4">
-                    {totals.balanced ? (
-                      <span className="text-emerald-700">متوازن</span>
-                    ) : (
-                      <span className="text-red-600">غير متوازن</span>
-                    )}
-                  </td>
+                  <td />
                 </tr>
               </tfoot>
+            </table>
+          </div>
+
+          {accounts.length === 0 && (
+            <div className="border-t border-gray-100 p-6 text-center text-sm text-amber-700">
+              لا توجد حسابات نهائية قابلة للترحيل. أضف الحسابات أولاً من دليل
+              الحسابات.
+            </div>
+          )}
+        </section>
+
+        {/* Balance Summary */}
+
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-lg font-bold text-gray-800">ملخص الأرصدة</h2>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="rounded-lg bg-blue-50 p-4">
+              <p className="text-sm text-gray-600">إجمالي المدين</p>
+
+              <p className="mt-2 text-xl font-bold text-blue-700" dir="ltr">
+                {totalDebit.toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                })}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-green-50 p-4">
+              <p className="text-sm text-gray-600">إجمالي الدائن</p>
+
+              <p className="mt-2 text-xl font-bold text-green-700" dir="ltr">
+                {totalCredit.toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                })}
+              </p>
+            </div>
+
+            <div
+              className={`rounded-lg p-4 ${
+                isBalanced ? "bg-green-50" : "bg-red-50"
+              }`}
+            >
+              <p className="text-sm text-gray-600">الفرق</p>
+
+              <p
+                className={`mt-2 text-xl font-bold ${
+                  isBalanced ? "text-green-700" : "text-red-700"
+                }`}
+                dir="ltr"
+              >
+                {Math.abs(difference).toLocaleString("en-US", {
+                  minimumFractionDigits: 2,
+                })}
+              </p>
+            </div>
+          </div>
+
+          <div
+            className={`mt-4 flex items-center gap-2 rounded-lg p-3 text-sm ${
+              isBalanced
+                ? "bg-green-50 text-green-700"
+                : "bg-amber-50 text-amber-700"
+            }`}
+          >
+            <FiAlertCircle />
+
+            {isBalanced
+              ? "الأرصدة متوازنة ويمكن حفظها."
+              : "يجب أن يتساوى إجمالي المدين مع إجمالي الدائن قبل الحفظ."}
+          </div>
+        </section>
+
+        {/* Actions */}
+
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => router.push("/erp/accounting/opening-entries")}
+            disabled={saving}
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            إلغاء
+          </button>
+
+          <button
+            type="submit"
+            disabled={saving || accounts.length === 0}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? (
+              <>
+                <FiRefreshCw className="animate-spin" />
+                جاري الحفظ...
+              </>
+            ) : (
+              <>
+                <FiSave />
+                حفظ الأرصدة الافتتاحية
+              </>
             )}
-          </table>
+          </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

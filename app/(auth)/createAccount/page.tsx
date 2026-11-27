@@ -1,11 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-import { getUsers } from "@/lib/api/users";
-import { createOwner } from "@/lib/api/services/createOwner";
+import { supabase } from "@/lib/supabase";
 
 import {
   FiUser,
@@ -27,13 +25,14 @@ const normalizeUsername = (value: string) => {
   return value.trim().normalize("NFC").toLocaleLowerCase();
 };
 
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "حدث خطأ أثناء إنشاء الحساب. حاول مرة أخرى.";
-};
+function getErrorMessage(error: any): string {
+  return (
+    error?.context?.message ||
+    error?.message ||
+    error?.error_description ||
+    "حدث خطأ أثناء إنشاء الحساب. حاول مرة أخرى."
+  );
+}
 
 // =====================================================
 // PAGE
@@ -58,13 +57,11 @@ export default function Page() {
   // HANDLE CHANGE
   // =====================================================
 
-  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-
-    setForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm({
+      ...form,
+      [e.target.name]: e.target.value,
+    });
 
     setError("");
     setSuccess("");
@@ -74,7 +71,7 @@ export default function Page() {
   // HANDLE SUBMIT
   // =====================================================
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     setError("");
@@ -99,7 +96,9 @@ export default function Page() {
       return;
     }
 
-    if (form.username.trim().length < 3) {
+    const username = normalizeUsername(form.username);
+
+    if (username.length < 3) {
       setError("اسم المستخدم يجب ألا يقل عن 3 أحرف.");
       return;
     }
@@ -107,85 +106,101 @@ export default function Page() {
     try {
       setLoading(true);
 
-      const username = normalizeUsername(form.username);
-      const companyName = form.companyname.trim();
-
       // ===============================================
-      // 2. CHECK DUPLICATE USERNAME
+      // 2. CHECK AUTH SESSION
       // ===============================================
 
-      const users = await getUsers();
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
 
-      const existingUser = users.find(
-        (user) => normalizeUsername(user.username) === username,
-      );
+      if (sessionError) {
+        throw sessionError;
+      }
 
-      if (existingUser) {
-        setError("اسم المستخدم مستخدم بالفعل، اختر اسماً آخر.");
-        return;
+      if (!session?.access_token) {
+        throw new Error("انتهت جلسة تسجيل الدخول. يرجى تسجيل الدخول مرة أخرى.");
       }
 
       // ===============================================
-      // 3. GENERATE IDS
+      // 3. PREPARE DATA
       // ===============================================
 
-      const userId = crypto.randomUUID();
-      const companyId = crypto.randomUUID();
+      const companyData = {
+        name: form.companyname.trim(),
+        nameEn: form.companyname.trim(),
+        code: `CMP-${Date.now()}`,
+        country: "YE",
+        timezone: "Asia/Aden",
+        currency: "YER",
+        locale: "ar",
+        status: "active",
+        extra: {},
+      };
 
-      const now = new Date().toISOString();
+      const userData = {
+        name: form.name.trim(),
+        username,
+        password: form.password,
+      };
 
       // ===============================================
-      // 4. CREATE OWNER
+      // 4. CALL EDGE FUNCTION
       // ===============================================
 
-      await createOwner({
-        companyData: {
-          id: companyId,
-
-          name: companyName,
-          nameEn: companyName,
-
-          code: `CMP-${Date.now()}`,
-
-          country: "YE",
-          timezone: "Asia/Aden",
-          currency: "YER",
-          locale: "ar",
-
-          status: "active",
-          isActive: true,
-
-          createdAt: now,
+      const { data, error: functionError } = await supabase.functions.invoke(
+        "create-owner",
+        {
+          body: {
+            companyData,
+            userData,
+          },
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
         },
+      );
 
-        userData: {
-          id: userId,
+      if (functionError) {
+        console.error("Create owner function error:", functionError);
 
-          name: form.name.trim(),
-          username,
+        let errorMessage = getErrorMessage(functionError);
 
-          password: form.password,
-          email: "",
+        if (functionError.context instanceof Response) {
+          const responseText = await functionError.context.clone().text();
 
-          role: "owner",
-          type: "erp",
+          console.error("Create owner response body:", responseText);
 
-          companyId,
-          companyname: companyName,
+          try {
+            const responseData = JSON.parse(responseText);
 
-          status: "active",
-          isActive: true,
+            errorMessage = responseData.message || responseText || errorMessage;
+          } catch {
+            errorMessage = responseText || errorMessage;
+          }
+        }
 
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
+        throw new Error(errorMessage);
+      }
 
       // ===============================================
-      // 5. SUCCESS
+      // 5. CHECK RESPONSE
       // ===============================================
 
-      setSuccess("تم إنشاء الشركة ودليل الحسابات وحساب المالك بنجاح.");
+      if (!data?.success || data?.created !== true) {
+        throw new Error(
+          data?.message || "لم تكتمل عملية إنشاء الشركة وحساب المالك.",
+        );
+      }
+
+      // ===============================================
+      // 6. SUCCESS
+      // ===============================================
+
+      setSuccess(
+        "تم إنشاء الشركة وحساب مالك الشركة بنجاح. تم إنشاء دليل الحسابات تلقائياً بواسطة Supabase.",
+      );
 
       setForm({
         name: "",
@@ -194,20 +209,18 @@ export default function Page() {
         companyname: "",
       });
 
-      setShowPassword(false);
-
-      // ===============================================
-      // 6. REDIRECT
-      // ===============================================
-
       setTimeout(() => {
-        router.push("/erp");
+        router.push("/wezzan/platform-users");
         router.refresh();
-      }, 1500);
+      }, 2000);
     } catch (err) {
       console.error("Create owner error:", err);
 
-      setError(getErrorMessage(err));
+      setError(
+        err instanceof Error
+          ? err.message
+          : "حدث خطأ أثناء إنشاء الحساب. حاول مرة أخرى.",
+      );
     } finally {
       setLoading(false);
     }
@@ -369,8 +382,8 @@ export default function Page() {
                 </div>
 
                 <p className="mt-2 text-xs text-slate-400">
-                  سيتم إنشاء سجل الشركة ودليل الحسابات الخاص بها وربطه بحساب
-                  المالك تلقائياً.
+                  سيتم إنشاء سجل الشركة وربطه بحساب المالك، وسيقوم Supabase
+                  بإنشاء دليل الحسابات الافتراضي تلقائياً.
                 </p>
               </div>
             </div>

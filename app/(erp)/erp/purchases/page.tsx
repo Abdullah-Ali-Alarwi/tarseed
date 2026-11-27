@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FiPlus,
   FiSearch,
@@ -16,8 +16,9 @@ import {
   FiCreditCard,
   FiUser,
 } from "react-icons/fi";
+import { toast } from "sonner";
 
-import { useERPStore } from "@/Store/erpStore";
+import { supabase } from "@/lib/supabase";
 
 /* =========================================================
    الأنواع
@@ -27,19 +28,71 @@ type PaymentMethod = "cash" | "bank" | "credit";
 
 type PurchaseStatus = "paid" | "pending" | "cancelled" | string;
 
+interface PurchaseItem {
+  id?: string;
+  name?: string;
+  productName?: string;
+  productCode?: string;
+  quantity?: number;
+  price?: number;
+  unitPrice?: number;
+  total?: number;
+  unit?: string;
+}
+
+interface Purchase {
+  id: string;
+  companyId: string;
+  invoiceNumber: string;
+  date: string;
+  supplier: string;
+  supplierId: string;
+  accountCode?: string;
+  accountName?: string;
+  itemCount?: number;
+  totalQuantity?: number;
+  items?: PurchaseItem[];
+  subtotal?: number;
+  discount?: number;
+  tax?: number;
+  taxRate?: number;
+  total?: number;
+  paymentMethod: PaymentMethod;
+  paymentMethodName?: string;
+  paymentAccountId?: string;
+  status: PurchaseStatus;
+  notes?: string;
+  createdAt?: string;
+  extra?: Record<string, any>;
+
+  supplierDisplayName?: string;
+  supplierPhone?: string;
+  supplierAccountCode?: string;
+  supplierAccountName?: string;
+  linkedAccountCode?: string;
+  linkedAccountName?: string;
+}
+
+interface Supplier {
+  id: string;
+  companyId: string;
+  name: string;
+  phone?: string | null;
+  accountId?: string | null;
+  accountCode?: string | null;
+  accountName?: string | null;
+  isActive?: boolean;
+}
+
 /* =========================================================
-   تنسيق العملة
+   التنسيق
 ========================================================= */
 
-const formatMoney = (value: number = 0) => {
+const formatMoney = (value: number | string | null | undefined) => {
   return new Intl.NumberFormat("ar-SA-u-nu-latn", {
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(Number(value) || 0);
 };
-
-/* =========================================================
-   أسماء طرق الدفع
-========================================================= */
 
 const paymentLabels: Record<PaymentMethod, string> = {
   cash: "نقدي",
@@ -47,37 +100,158 @@ const paymentLabels: Record<PaymentMethod, string> = {
   credit: "آجل",
 };
 
+const getStatusLabel = (status: PurchaseStatus) => {
+  switch (status) {
+    case "paid":
+      return "مدفوعة";
+    case "pending":
+      return "آجلة";
+    case "cancelled":
+      return "ملغاة";
+    default:
+      return status || "غير محدد";
+  }
+};
+
+const getStatusClass = (status: PurchaseStatus) => {
+  switch (status) {
+    case "paid":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "pending":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    case "cancelled":
+      return "bg-red-50 text-red-700 border-red-200";
+    default:
+      return "bg-gray-50 text-gray-600 border-gray-200";
+  }
+};
+
 /* =========================================================
    الصفحة
 ========================================================= */
 
 export default function PurchasesPage() {
-  /* =======================================================
-     ERP STORE
-  ======================================================= */
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
-  const purchases = useERPStore((state) => state.purchases);
-  const suppliers = useERPStore((state) => state.suppliers);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  /* =======================================================
-     States
-  ======================================================= */
+  const [companyId, setCompanyId] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
-  const [selectedPurchase, setSelectedPurchase] = useState<any>(null);
+  const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(
+    null,
+  );
+
   const [showDetails, setShowDetails] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+
+  /* =======================================================
+     بيانات المستخدم والشركة
+  ======================================================= */
+
+  useEffect(() => {
+    try {
+      const storedUser = localStorage.getItem("authUser");
+
+      if (!storedUser) {
+        toast.error("لم يتم العثور على بيانات المستخدم");
+        setLoading(false);
+        return;
+      }
+
+      const user = JSON.parse(storedUser);
+
+      if (user.type === "platform") {
+        toast.error("ليس لديك صلاحية الوصول إلى المشتريات");
+        setLoading(false);
+        return;
+      }
+
+      if (!user.companyId) {
+        toast.error("لم يتم تحديد الشركة");
+        setLoading(false);
+        return;
+      }
+
+      setCompanyId(String(user.companyId));
+    } catch (error) {
+      console.error("User data error:", error);
+      toast.error("تعذر قراءة بيانات المستخدم");
+      setLoading(false);
+    }
+  }, []);
+
+  /* =======================================================
+     جلب المشتريات والموردين من Supabase
+  ======================================================= */
+
+  const fetchData = useCallback(
+    async (isRefresh = false) => {
+      if (!companyId) return;
+
+      try {
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
+
+        const [purchasesResult, suppliersResult] = await Promise.all([
+          supabase
+            .from("purchases")
+            .select("*")
+            .eq("companyId", companyId)
+            .order("createdAt", { ascending: false }),
+
+          supabase
+            .from("suppliers")
+            .select(
+              "id, companyId, name, phone, accountId, accountCode, accountName, isActive",
+            )
+            .eq("companyId", companyId),
+        ]);
+
+        if (purchasesResult.error) {
+          throw purchasesResult.error;
+        }
+
+        if (suppliersResult.error) {
+          throw suppliersResult.error;
+        }
+
+        setPurchases((purchasesResult.data || []) as Purchase[]);
+
+        setSuppliers((suppliersResult.data || []) as Supplier[]);
+      } catch (error: any) {
+        console.error("Fetch purchases error:", error);
+
+        toast.error(error?.message || "حدث خطأ أثناء تحميل فواتير المشتريات");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [companyId],
+  );
+
+  useEffect(() => {
+    if (companyId) {
+      fetchData();
+    }
+  }, [companyId, fetchData]);
 
   /* =======================================================
      خريطة الموردين
   ======================================================= */
 
   const supplierMap = useMemo(() => {
-    const map = new Map<string, (typeof suppliers)[number]>();
+    const map = new Map<string, Supplier>();
 
     suppliers.forEach((supplier) => {
       map.set(supplier.id, supplier);
@@ -87,19 +261,17 @@ export default function PurchasesPage() {
   }, [suppliers]);
 
   /* =======================================================
-     تجهيز المشتريات
+     ربط المشتريات بالموردين
   ======================================================= */
 
   const purchasesWithSupplier = useMemo(() => {
-    return purchases.map((purchase: any) => {
+    return purchases.map((purchase) => {
       const supplier = supplierMap.get(purchase.supplierId);
 
       const isCredit = purchase.paymentMethod === "credit";
 
       return {
         ...purchase,
-
-        supplierData: supplier,
 
         supplierDisplayName: supplier?.name || purchase.supplier || "غير محدد",
 
@@ -123,13 +295,13 @@ export default function PurchasesPage() {
   }, [purchases, supplierMap]);
 
   /* =======================================================
-     الفلترة
+     البحث والفلاتر
   ======================================================= */
 
   const filteredPurchases = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return purchasesWithSupplier.filter((purchase: any) => {
+    return purchasesWithSupplier.filter((purchase) => {
       const matchesSearch =
         !query ||
         String(purchase.invoiceNumber || "")
@@ -173,23 +345,23 @@ export default function PurchasesPage() {
     const totalInvoices = filteredPurchases.length;
 
     const totalPurchases = filteredPurchases.reduce(
-      (sum: number, purchase: any) => sum + Number(purchase.total || 0),
+      (sum, purchase) => sum + Number(purchase.total || 0),
       0,
     );
 
-    const paid = filteredPurchases.reduce((sum: number, purchase: any) => {
-      if (
-        purchase.paymentMethod === "credit" ||
-        purchase.status === "pending"
-      ) {
-        return sum;
+    const paid = filteredPurchases.reduce((sum, purchase) => {
+      if (purchase.status === "paid") {
+        return sum + Number(purchase.total || 0);
       }
 
-      return sum + Number(purchase.total || 0);
+      return sum;
     }, 0);
 
-    const credit = filteredPurchases.reduce((sum: number, purchase: any) => {
-      if (purchase.paymentMethod === "credit") {
+    const credit = filteredPurchases.reduce((sum, purchase) => {
+      if (
+        purchase.paymentMethod === "credit" &&
+        purchase.status !== "cancelled"
+      ) {
         return sum + Number(purchase.total || 0);
       }
 
@@ -208,7 +380,7 @@ export default function PurchasesPage() {
      عرض التفاصيل
   ======================================================= */
 
-  const handleView = (purchase: any) => {
+  const handleView = (purchase: Purchase) => {
     setSelectedPurchase(purchase);
     setShowDetails(true);
     setOpenMenu(null);
@@ -218,50 +390,33 @@ export default function PurchasesPage() {
      الطباعة
   ======================================================= */
 
-  const handlePrint = (purchase: any) => {
+  const handlePrint = (purchase: Purchase) => {
     setSelectedPurchase(purchase);
+    setShowDetails(true);
     setOpenMenu(null);
 
     setTimeout(() => {
       window.print();
-    }, 200);
+    }, 300);
   };
 
   /* =======================================================
-     حالة الفاتورة
+     شاشة التحميل
   ======================================================= */
 
-  const getStatusLabel = (status: PurchaseStatus) => {
-    switch (status) {
-      case "paid":
-        return "مدفوعة";
+  if (loading) {
+    return (
+      <div dir="rtl" className="flex min-h-[300px] items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-[#0E1F33]" />
 
-      case "pending":
-        return "آجلة";
-
-      case "cancelled":
-        return "ملغاة";
-
-      default:
-        return status || "غير محدد";
-    }
-  };
-
-  const getStatusClass = (status: PurchaseStatus) => {
-    switch (status) {
-      case "paid":
-        return "bg-emerald-50 text-emerald-700 border-emerald-200";
-
-      case "pending":
-        return "bg-amber-50 text-amber-700 border-amber-200";
-
-      case "cancelled":
-        return "bg-red-50 text-red-700 border-red-200";
-
-      default:
-        return "bg-gray-50 text-gray-600 border-gray-200";
-    }
-  };
+          <p className="text-xs text-gray-500">
+            جاري تحميل فواتير المشتريات...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   /* =======================================================
      UI
@@ -272,9 +427,7 @@ export default function PurchasesPage() {
       dir="rtl"
       className="min-h-screen bg-gray-50 text-[12px] text-gray-800"
     >
-      {/* ===================================================
-          رأس الصفحة
-      =================================================== */}
+      {/* رأس الصفحة */}
 
       <div className="px-3 pb-2 pt-3 sm:px-4 lg:px-5">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -288,98 +441,65 @@ export default function PurchasesPage() {
             </p>
           </div>
 
-          <Link
-            href="/erp/purchases/new"
-            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#0E1F33] px-3 text-[11px] font-semibold text-white transition hover:bg-[#162d49]"
-          >
-            <FiPlus size={14} />
-            فاتورة شراء جديدة
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => fetchData(true)}
+              disabled={refreshing}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <span className={refreshing ? "animate-spin" : ""}>↻</span>
+              تحديث
+            </button>
+
+            <Link
+              href="/erp/purchases/new"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#0E1F33] px-3 text-[11px] font-semibold text-white transition hover:bg-[#162d49]"
+            >
+              <FiPlus size={14} />
+              فاتورة شراء جديدة
+            </Link>
+          </div>
         </div>
       </div>
 
-      {/* ===================================================
-          الإحصائيات
-      =================================================== */}
+      {/* الإحصائيات */}
 
       <div className="grid grid-cols-2 gap-2 px-3 sm:grid-cols-4 sm:px-4 lg:px-5">
-        {/* عدد الفواتير */}
-        <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[10px] text-gray-500">عدد الفواتير</p>
+        <StatCard
+          title="عدد الفواتير"
+          value={formatMoney(statistics.totalInvoices)}
+          icon={<FiFileText size={14} />}
+          color="blue"
+        />
 
-              <p className="mt-0.5 text-base font-bold text-gray-900">
-                {statistics.totalInvoices}
-              </p>
-            </div>
+        <StatCard
+          title="إجمالي المشتريات"
+          value={formatMoney(statistics.totalPurchases)}
+          icon={<FiDollarSign size={14} />}
+          color="purple"
+        />
 
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-50 text-blue-600">
-              <FiFileText size={14} />
-            </div>
-          </div>
-        </div>
+        <StatCard
+          title="المدفوع"
+          value={formatMoney(statistics.paid)}
+          icon={<FiCheckCircle size={14} />}
+          color="green"
+        />
 
-        {/* إجمالي المشتريات */}
-        <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[10px] text-gray-500">إجمالي المشتريات</p>
-
-              <p className="mt-0.5 text-base font-bold text-gray-900">
-                {formatMoney(statistics.totalPurchases)}
-              </p>
-            </div>
-
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-purple-50 text-purple-600">
-              <FiDollarSign size={14} />
-            </div>
-          </div>
-        </div>
-
-        {/* المدفوع */}
-        <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[10px] text-gray-500">المدفوع</p>
-
-              <p className="mt-0.5 text-base font-bold text-emerald-600">
-                {formatMoney(statistics.paid)}
-              </p>
-            </div>
-
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-50 text-emerald-600">
-              <FiCheckCircle size={14} />
-            </div>
-          </div>
-        </div>
-
-        {/* الآجل */}
-        <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[10px] text-gray-500">المشتريات الآجلة</p>
-
-              <p className="mt-0.5 text-base font-bold text-amber-600">
-                {formatMoney(statistics.credit)}
-              </p>
-            </div>
-
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-50 text-amber-600">
-              <FiClock size={14} />
-            </div>
-          </div>
-        </div>
+        <StatCard
+          title="المشتريات الآجلة"
+          value={formatMoney(statistics.credit)}
+          icon={<FiClock size={14} />}
+          color="orange"
+        />
       </div>
 
-      {/* ===================================================
-          البحث والفلاتر
-      =================================================== */}
+      {/* البحث والفلاتر */}
 
       <div className="px-3 pt-3 sm:px-4 lg:px-5">
         <div className="rounded-lg border border-gray-200 bg-white p-2.5 shadow-sm">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {/* البحث */}
             <div className="relative">
               <FiSearch
                 size={14}
@@ -395,7 +515,6 @@ export default function PurchasesPage() {
               />
             </div>
 
-            {/* المورد */}
             <select
               value={supplierFilter}
               onChange={(e) => setSupplierFilter(e.target.value)}
@@ -412,7 +531,6 @@ export default function PurchasesPage() {
                 ))}
             </select>
 
-            {/* طريقة الدفع */}
             <select
               value={paymentFilter}
               onChange={(e) => setPaymentFilter(e.target.value)}
@@ -424,7 +542,6 @@ export default function PurchasesPage() {
               <option value="credit">آجل</option>
             </select>
 
-            {/* الحالة */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -439,13 +556,10 @@ export default function PurchasesPage() {
         </div>
       </div>
 
-      {/* ===================================================
-          الجدول
-      =================================================== */}
+      {/* جدول المشتريات */}
 
       <div className="px-3 pb-4 pt-3 sm:px-4 lg:px-5">
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-          {/* رأس الجدول */}
           <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
             <div>
               <h2 className="text-[12px] font-bold text-gray-900">
@@ -458,48 +572,38 @@ export default function PurchasesPage() {
             </div>
           </div>
 
-          {/* الجدول */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50 text-[10px] text-gray-500">
-                  <th className="whitespace-nowrap px-2.5 py-2 text-right font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-right">
                     #
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-right font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-right">
                     رقم الفاتورة
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-right font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-right">
                     التاريخ
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-right font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-right">
                     المورد
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-right font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-right">
                     الحساب
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-center font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-center">
                     الأصناف
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-right font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-right">
                     الإجمالي
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-center font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-center">
                     الدفع
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-center font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-center">
                     الحالة
                   </th>
-
-                  <th className="whitespace-nowrap px-2.5 py-2 text-center font-semibold">
+                  <th className="whitespace-nowrap px-2.5 py-2 text-center">
                     الإجراءات
                   </th>
                 </tr>
@@ -509,50 +613,47 @@ export default function PurchasesPage() {
                 {filteredPurchases.length === 0 ? (
                   <tr>
                     <td colSpan={10} className="py-12 text-center">
-                      <div className="flex flex-col items-center justify-center">
-                        <FiFileText size={30} className="mb-2 text-gray-300" />
+                      <FiFileText
+                        size={30}
+                        className="mx-auto mb-2 text-gray-300"
+                      />
 
-                        <p className="text-[11px] font-semibold text-gray-500">
-                          لا توجد فواتير مشتريات
-                        </p>
+                      <p className="text-[11px] font-semibold text-gray-500">
+                        لا توجد فواتير مشتريات
+                      </p>
 
-                        <p className="mt-1 text-[9px] text-gray-400">
-                          جرّب تغيير البحث أو الفلاتر
-                        </p>
-                      </div>
+                      <p className="mt-1 text-[9px] text-gray-400">
+                        جرّب تغيير البحث أو الفلاتر
+                      </p>
                     </td>
                   </tr>
                 ) : (
-                  filteredPurchases.map((purchase: any, index: number) => {
+                  filteredPurchases.map((purchase, index) => {
                     const isCredit = purchase.paymentMethod === "credit";
 
                     return (
                       <tr
-                        key={purchase.id || purchase.invoiceNumber || index}
+                        key={purchase.id}
                         className="border-b border-gray-100 transition hover:bg-gray-50"
                       >
-                        {/* الرقم */}
                         <td className="whitespace-nowrap px-2.5 py-2 text-[10px] text-gray-400">
                           {index + 1}
                         </td>
 
-                        {/* رقم الفاتورة */}
                         <td className="whitespace-nowrap px-2.5 py-2">
                           <button
                             type="button"
                             onClick={() => handleView(purchase)}
                             className="font-semibold text-[#0E1F33] hover:underline"
                           >
-                            {purchase.invoiceNumber || purchase.id || "-"}
+                            {purchase.invoiceNumber || purchase.id}
                           </button>
                         </td>
 
-                        {/* التاريخ */}
                         <td className="whitespace-nowrap px-2.5 py-2 text-[10px] text-gray-600">
                           {purchase.date || "-"}
                         </td>
 
-                        {/* المورد */}
                         <td className="px-2.5 py-2">
                           <div className="flex items-center gap-1.5">
                             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600">
@@ -573,7 +674,6 @@ export default function PurchasesPage() {
                           </div>
                         </td>
 
-                        {/* الحساب المحاسبي */}
                         <td className="px-2.5 py-2">
                           {isCredit ? (
                             <div className="min-w-[125px]">
@@ -598,19 +698,16 @@ export default function PurchasesPage() {
                           )}
                         </td>
 
-                        {/* عدد الأصناف */}
                         <td className="whitespace-nowrap px-2.5 py-2 text-center text-[10px] text-gray-600">
                           {purchase.itemCount ?? purchase.items?.length ?? 0}
                         </td>
 
-                        {/* الإجمالي */}
                         <td className="whitespace-nowrap px-2.5 py-2">
                           <span className="text-[10px] font-bold text-gray-900">
-                            {formatMoney(purchase.total || 0)}
+                            {formatMoney(purchase.total)}
                           </span>
                         </td>
 
-                        {/* طريقة الدفع */}
                         <td className="whitespace-nowrap px-2.5 py-2 text-center">
                           <span
                             className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-medium ${
@@ -621,15 +718,13 @@ export default function PurchasesPage() {
                                   : "border-emerald-200 bg-emerald-50 text-emerald-700"
                             }`}
                           >
-                            {paymentLabels[
-                              purchase.paymentMethod as PaymentMethod
-                            ] ||
+                            {purchase.paymentMethodName ||
+                              paymentLabels[purchase.paymentMethod] ||
                               purchase.paymentMethod ||
                               "-"}
                           </span>
                         </td>
 
-                        {/* الحالة */}
                         <td className="whitespace-nowrap px-2.5 py-2 text-center">
                           <span
                             className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-medium ${getStatusClass(
@@ -640,7 +735,6 @@ export default function PurchasesPage() {
                           </span>
                         </td>
 
-                        {/* الإجراءات */}
                         <td className="relative px-2.5 py-2 text-center">
                           <button
                             type="button"
@@ -686,20 +780,17 @@ export default function PurchasesPage() {
         </div>
       </div>
 
-      {/* ===================================================
-          نافذة التفاصيل
-      =================================================== */}
+      {/* نافذة التفاصيل */}
 
       {showDetails && selectedPurchase && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3"
+          className="purchase-modal fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3"
           onClick={() => setShowDetails(false)}
         >
           <div
-            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-2xl"
+            className="purchase-modal-content max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* رأس النافذة */}
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-4 py-3">
               <div>
                 <h2 className="text-sm font-bold text-gray-900">
@@ -707,7 +798,7 @@ export default function PurchasesPage() {
                 </h2>
 
                 <p className="mt-0.5 text-[10px] text-gray-400">
-                  {selectedPurchase.invoiceNumber || selectedPurchase.id}
+                  {selectedPurchase.invoiceNumber}
                 </p>
               </div>
 
@@ -721,45 +812,32 @@ export default function PurchasesPage() {
             </div>
 
             {/* معلومات الفاتورة */}
+
             <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-4">
-              <div className="rounded-md bg-gray-50 p-2">
-                <p className="text-[9px] text-gray-400">رقم الفاتورة</p>
+              <DetailBox
+                label="رقم الفاتورة"
+                value={selectedPurchase.invoiceNumber}
+              />
 
-                <p className="mt-1 text-[10px] font-bold">
-                  {selectedPurchase.invoiceNumber || "-"}
-                </p>
-              </div>
+              <DetailBox label="التاريخ" value={selectedPurchase.date} />
 
-              <div className="rounded-md bg-gray-50 p-2">
-                <p className="text-[9px] text-gray-400">التاريخ</p>
+              <DetailBox
+                label="المورد"
+                value={selectedPurchase.supplierDisplayName}
+              />
 
-                <p className="mt-1 text-[10px] font-bold">
-                  {selectedPurchase.date || "-"}
-                </p>
-              </div>
-
-              <div className="rounded-md bg-gray-50 p-2">
-                <p className="text-[9px] text-gray-400">المورد</p>
-
-                <p className="mt-1 truncate text-[10px] font-bold">
-                  {selectedPurchase.supplierDisplayName}
-                </p>
-              </div>
-
-              <div className="rounded-md bg-gray-50 p-2">
-                <p className="text-[9px] text-gray-400">طريقة الدفع</p>
-
-                <p className="mt-1 text-[10px] font-bold">
-                  {paymentLabels[
-                    selectedPurchase.paymentMethod as PaymentMethod
-                  ] ||
-                    selectedPurchase.paymentMethod ||
-                    "-"}
-                </p>
-              </div>
+              <DetailBox
+                label="طريقة الدفع"
+                value={
+                  selectedPurchase.paymentMethodName ||
+                  paymentLabels[selectedPurchase.paymentMethod] ||
+                  "-"
+                }
+              />
             </div>
 
-            {/* الحساب الآجل */}
+            {/* الحساب المحاسبي */}
+
             {selectedPurchase.paymentMethod === "credit" && (
               <div className="mx-4 mb-3 rounded-md border border-amber-200 bg-amber-50 p-3">
                 <div className="mb-1 flex items-center gap-1.5">
@@ -795,95 +873,100 @@ export default function PurchasesPage() {
             )}
 
             {/* الأصناف */}
+
             <div className="px-4 pb-4">
               <div className="overflow-hidden rounded-md border border-gray-200">
                 <table className="w-full border-collapse">
                   <thead>
                     <tr className="bg-gray-50 text-[9px] text-gray-500">
                       <th className="px-2 py-2 text-right">الصنف</th>
-
                       <th className="px-2 py-2 text-center">الكمية</th>
-
                       <th className="px-2 py-2 text-center">السعر</th>
-
                       <th className="px-2 py-2 text-left">الإجمالي</th>
                     </tr>
                   </thead>
 
                   <tbody>
-                    {(selectedPurchase.items || []).map(
-                      (item: any, index: number) => (
-                        <tr
-                          key={index}
-                          className="border-t border-gray-100 text-[9px]"
+                    {(selectedPurchase.items || []).map((item, index) => (
+                      <tr
+                        key={item.id || index}
+                        className="border-t border-gray-100 text-[9px]"
+                      >
+                        <td className="px-2 py-2">
+                          {item.name || item.productName || "-"}
+                        </td>
+
+                        <td className="px-2 py-2 text-center">
+                          {formatMoney(item.quantity)}
+                        </td>
+
+                        <td className="px-2 py-2 text-center">
+                          {formatMoney(item.price ?? item.unitPrice)}
+                        </td>
+
+                        <td className="px-2 py-2 text-left font-semibold">
+                          {formatMoney(
+                            item.total ??
+                              Number(item.quantity || 0) *
+                                Number(item.price ?? item.unitPrice ?? 0),
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {(!selectedPurchase.items ||
+                      selectedPurchase.items.length === 0) && (
+                      <tr>
+                        <td
+                          colSpan={4}
+                          className="py-6 text-center text-gray-400"
                         >
-                          <td className="px-2 py-2">
-                            {item.name || item.productName || "-"}
-                          </td>
-
-                          <td className="px-2 py-2 text-center">
-                            {item.quantity || 0}
-                          </td>
-
-                          <td className="px-2 py-2 text-center">
-                            {formatMoney(item.price || item.unitPrice || 0)}
-                          </td>
-
-                          <td className="px-2 py-2 text-left font-semibold">
-                            {formatMoney(
-                              item.total ||
-                                Number(item.quantity || 0) *
-                                  Number(item.price || item.unitPrice || 0),
-                            )}
-                          </td>
-                        </tr>
-                      ),
+                          لا توجد أصناف مسجلة
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
               </div>
 
               {/* الإجماليات */}
+
               <div className="mt-3 mr-auto w-full max-w-xs space-y-1 rounded-md bg-gray-50 p-3">
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-gray-500">الإجمالي قبل الخصم</span>
+                <TotalRow
+                  label="الإجمالي قبل الخصم"
+                  value={selectedPurchase.subtotal}
+                />
 
-                  <span className="font-semibold">
-                    {formatMoney(selectedPurchase.subtotal || 0)}
-                  </span>
-                </div>
+                <TotalRow label="الخصم" value={selectedPurchase.discount} />
 
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-gray-500">الخصم</span>
-
-                  <span className="font-semibold">
-                    {formatMoney(selectedPurchase.discount || 0)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-gray-500">الضريبة</span>
-
-                  <span className="font-semibold">
-                    {formatMoney(selectedPurchase.tax || 0)}
-                  </span>
-                </div>
+                <TotalRow label="الضريبة" value={selectedPurchase.tax} />
 
                 <div className="mt-1 flex justify-between border-t border-gray-200 pt-2 text-[11px]">
                   <span className="font-bold">الإجمالي النهائي</span>
 
                   <span className="font-bold text-[#0E1F33]">
-                    {formatMoney(selectedPurchase.total || 0)}
+                    {formatMoney(selectedPurchase.total)}
                   </span>
                 </div>
               </div>
+
+              {selectedPurchase.notes && (
+                <div className="mt-3 rounded-md border border-gray-100 p-3">
+                  <p className="text-[9px] text-gray-400">ملاحظات</p>
+
+                  <p className="mt-1 text-[10px] text-gray-700">
+                    {selectedPurchase.notes}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* أسفل النافذة */}
-            <div className="flex justify-end gap-2 border-t border-gray-100 px-4 py-3">
+
+            <div className="flex justify-end gap-2 border-t border-gray-100 px-4 py-3 no-print">
               <button
                 type="button"
-                onClick={() => handlePrint(selectedPurchase)}
+                onClick={() => window.print()}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#0E1F33] px-3 text-[10px] font-semibold text-white"
               >
                 <FiPrinter size={13} />
@@ -902,34 +985,120 @@ export default function PurchasesPage() {
         </div>
       )}
 
-      {/* ===================================================
-          CSS للطباعة
-      =================================================== */}
+      {/* الطباعة */}
 
       <style jsx global>{`
         @media print {
           body * {
-            visibility: hidden;
+            visibility: hidden !important;
           }
 
-          .fixed,
-          .fixed * {
-            visibility: visible;
+          .purchase-modal,
+          .purchase-modal * {
+            visibility: visible !important;
           }
 
-          .fixed {
+          .purchase-modal {
             position: absolute !important;
             inset: 0 !important;
+            display: block !important;
+            padding: 0 !important;
             background: white !important;
           }
 
-          .fixed > div {
-            box-shadow: none !important;
+          .purchase-modal-content {
+            position: static !important;
+            width: 100% !important;
             max-width: 100% !important;
             max-height: none !important;
+            overflow: visible !important;
+            box-shadow: none !important;
+          }
+
+          .no-print {
+            display: none !important;
+          }
+
+          body {
+            background: white !important;
           }
         }
       `}</style>
+    </div>
+  );
+}
+
+/* =========================================================
+   بطاقة الإحصائيات
+========================================================= */
+
+function StatCard({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: string;
+  icon: React.ReactNode;
+  color: "blue" | "purple" | "green" | "orange";
+}) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600",
+    purple: "bg-purple-50 text-purple-600",
+    green: "bg-emerald-50 text-emerald-600",
+    orange: "bg-amber-50 text-amber-600",
+  };
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[10px] text-gray-500">{title}</p>
+
+          <p className="mt-0.5 text-base font-bold text-gray-900">{value}</p>
+        </div>
+
+        <div
+          className={`flex h-7 w-7 items-center justify-center rounded-md ${colors[color]}`}
+        >
+          {icon}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   صندوق تفاصيل
+========================================================= */
+
+function DetailBox({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div className="rounded-md bg-gray-50 p-2">
+      <p className="text-[9px] text-gray-400">{label}</p>
+
+      <p className="mt-1 truncate text-[10px] font-bold">{value || "-"}</p>
+    </div>
+  );
+}
+
+/* =========================================================
+   صف الإجماليات
+========================================================= */
+
+function TotalRow({
+  label,
+  value,
+}: {
+  label: string;
+  value?: number | string | null;
+}) {
+  return (
+    <div className="flex justify-between text-[10px]">
+      <span className="text-gray-500">{label}</span>
+
+      <span className="font-semibold">{formatMoney(value)}</span>
     </div>
   );
 }

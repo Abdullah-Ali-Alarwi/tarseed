@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import axios from "axios";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 
 import {
   FiHome,
@@ -20,28 +20,6 @@ import {
 
 import { toast } from "sonner";
 
-import {
-  getCreateActivity,
-  getUpdateActivity,
-  getCurrentActor,
-  logCreate,
-  logUpdate,
-  logDelete,
-} from "@/app/(erp)/erp/lib/activity";
-
-// ========================================
-// API
-// ========================================
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
 // ========================================
 // Types
 // ========================================
@@ -54,40 +32,34 @@ interface BaseItem {
   id: string;
   companyId: string;
   status: Status;
-
-  createdBy?: string;
-  createdByName?: string;
+  name: string;
   createdAt?: string;
-
-  updatedBy?: string;
-  updatedByName?: string;
   updatedAt?: string;
+  [key: string]: any;
 }
 
 interface Warehouse extends BaseItem {
-  name: string;
-  code: string;
-  location: string;
-  description: string;
-  isDefault: boolean;
+  code?: string;
+  location?: string;
+  description?: string;
+  isDefault?: boolean;
 }
 
 interface Category extends BaseItem {
-  name: string;
   code: string;
-  description: string;
+  description?: string;
+  extra?: Record<string, unknown>;
 }
 
 interface Unit extends BaseItem {
-  name: string;
   symbol: string;
   isDefault: boolean;
+  extra?: Record<string, unknown>;
 }
 
 interface Product extends BaseItem {
-  name: string;
   sku: string;
-  barcode: string;
+  barcode?: string;
   categoryId: string;
   categoryName: string;
   unitId: string;
@@ -109,7 +81,6 @@ interface ReferenceRecord {
   destinationWarehouseId?: string;
 
   itemId?: string;
-  referenceId?: string;
 
   items?: Array<{
     productId?: string;
@@ -124,48 +95,21 @@ type FormData = Record<string, string | boolean>;
 // ========================================
 
 const DEFAULT_UNITS = [
-  {
-    name: "جرام",
-    symbol: "g",
-  },
-  {
-    name: "كيلوجرام",
-    symbol: "kg",
-  },
-  {
-    name: "لتر",
-    symbol: "L",
-  },
-  {
-    name: "حبة",
-    symbol: "pcs",
-  },
-  {
-    name: "كرتونة",
-    symbol: "ctn",
-  },
+  { name: "جرام", symbol: "g" },
+  { name: "كيلوجرام", symbol: "kg" },
+  { name: "لتر", symbol: "L" },
+  { name: "حبة", symbol: "pcs" },
+  { name: "كرتونة", symbol: "ctn" },
 ];
 
 // ========================================
 // Helpers
 // ========================================
 
-const getCookie = (name: string) => {
-  if (typeof document === "undefined") return "";
-
-  const cookies = document.cookie.split("; ");
-
-  const cookie = cookies.find((item) => item.startsWith(`${name}=`));
-
-  return cookie ? decodeURIComponent(cookie.substring(name.length + 1)) : "";
-};
+const createId = () => crypto.randomUUID();
 
 const getRecordName = (item: BaseItem) => {
-  return "name" in item ? String(item.name) : String(item.id);
-};
-
-const isCompanyRecord = (record: ReferenceRecord, currentCompanyId: string) => {
-  return String(record.companyId || "") === currentCompanyId;
+  return item.name || item.id;
 };
 
 const hasProductReference = (record: ReferenceRecord, productId: string) => {
@@ -195,12 +139,17 @@ const hasWarehouseReference = (
   );
 };
 
+const getErrorMessage = (error: any) => {
+  return error?.message || "حدث خطأ غير متوقع";
+};
+
 // ========================================
 // Main Component
 // ========================================
 
 export default function InventorySettingPage() {
   const [companyId, setCompanyId] = useState("");
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   const [activeSection, setActiveSection] = useState<Section>("warehouses");
 
@@ -263,51 +212,62 @@ export default function InventorySettingPage() {
 
   const initialize = async () => {
     try {
-      const userType = getCookie("type");
+      const {
+        data: { user: authUser },
+        error: authError,
+      } = await supabase.auth.getUser();
 
-      if (!userType) {
-        toast.error("لم يتم العثور على بيانات تسجيل الدخول");
+      if (authError) throw authError;
+
+      if (!authUser) {
+        toast.error("يرجى تسجيل الدخول أولاً");
         return;
       }
 
-      if (userType === "platform") {
+      const { data: user, error: userError } = await supabase
+        .from("users")
+        .select(
+          "id,name,username,role,type,companyId,status,isActive,auth_user_id",
+        )
+        .eq("auth_user_id", authUser.id)
+        .maybeSingle();
+
+      if (userError) throw userError;
+
+      if (!user) {
+        toast.error("لم يتم العثور على بيانات المستخدم");
+        return;
+      }
+
+      if (user.type === "platform") {
         toast.error("هذا القسم مخصص لمستخدمي الشركات");
         return;
       }
 
-      const currentCompanyId = getCookie("companyId");
-
-      if (!currentCompanyId) {
-        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
+      if (!user.companyId) {
+        toast.error("المستخدم غير مرتبط بشركة");
         return;
       }
 
-      const actor = getCurrentActor();
-
-      if (!actor) {
-        toast.error("تعذر تحديد المستخدم الحالي");
+      if (user.isActive === false || user.status === "inactive") {
+        toast.error("حساب المستخدم غير نشط");
         return;
       }
 
-      if (actor.companyId && actor.companyId !== currentCompanyId) {
-        toast.error("بيانات الشركة لا تتطابق مع بيانات المستخدم");
-        return;
-      }
+      setCurrentUser(user);
+      setCompanyId(String(user.companyId));
 
-      setCompanyId(currentCompanyId);
-
-      await loadData(currentCompanyId);
+      await loadData(String(user.companyId));
     } catch (error) {
       console.error("Initialize Error:", error);
-
-      toast.error("حدث خطأ أثناء تحميل البيانات");
+      toast.error(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
   };
 
   // ======================================
-  // Seed Default Units Per Company
+  // Seed Default Units
   // ======================================
 
   const seedDefaultUnits = async (
@@ -318,36 +278,29 @@ export default function InventorySettingPage() {
       (defaultUnit) =>
         !existingUnits.some(
           (unit) =>
-            unit.companyId === currentCompanyId &&
-            unit.symbol.toLowerCase() === defaultUnit.symbol.toLowerCase(),
+            String(unit.companyId) === currentCompanyId &&
+            String(unit.symbol || "").toLowerCase() ===
+              defaultUnit.symbol.toLowerCase(),
         ),
     );
 
-    if (missingUnits.length === 0) return;
+    if (!missingUnits.length) return;
 
-    for (const unit of missingUnits) {
-      const payload = {
-        companyId: currentCompanyId,
-        name: unit.name,
-        symbol: unit.symbol,
-        status: "active",
-        isDefault: true,
+    const payload = missingUnits.map((unit) => ({
+      id: createId(),
+      companyId: currentCompanyId,
+      name: unit.name,
+      symbol: unit.symbol,
+      status: "active",
+      isDefault: true,
+      extra: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
 
-        ...getCreateActivity(),
+    const { error } = await supabase.from("units").insert(payload);
 
-        companyId: currentCompanyId,
-      };
-
-      const response = await api.post("/units", payload);
-
-      await logCreate(
-        "inventory",
-        `إنشاء وحدة قياس افتراضية: ${unit.name}`,
-        response.data.id,
-        unit.name,
-        payload,
-      );
-    }
+    if (error) throw error;
   };
 
   // ======================================
@@ -356,44 +309,105 @@ export default function InventorySettingPage() {
 
   const loadData = async (currentCompanyId: string) => {
     try {
-      const [warehouseRes, categoryRes, unitRes, productRes] =
+      const [warehouseResult, categoryResult, unitResult, productResult] =
         await Promise.all([
-          api.get("/warehouses", {
-            params: { companyId: currentCompanyId },
-          }),
+          supabase
+            .from("warehouses")
+            .select("*")
+            .eq("companyId", currentCompanyId),
 
-          api.get("/categories", {
-            params: { companyId: currentCompanyId },
-          }),
+          supabase
+            .from("categories")
+            .select(
+              "id,companyId,name,status,code,description,extra,createdAt,updatedAt",
+            )
+            .eq("companyId", currentCompanyId),
 
-          api.get("/units", {
-            params: { companyId: currentCompanyId },
-          }),
+          supabase
+            .from("units")
+            .select(
+              "id,companyId,name,symbol,status,isDefault,extra,createdAt,updatedAt",
+            )
+            .eq("companyId", currentCompanyId),
 
-          api.get("/products", {
-            params: { companyId: currentCompanyId },
-          }),
+          supabase
+            .from("products")
+            .select("*")
+            .eq("companyId", currentCompanyId),
         ]);
 
-      let companyUnits: Unit[] = unitRes.data;
+      if (warehouseResult.error) throw warehouseResult.error;
+      if (categoryResult.error) throw categoryResult.error;
+      if (unitResult.error) throw unitResult.error;
+      if (productResult.error) throw productResult.error;
+
+      let companyUnits = (unitResult.data || []) as Unit[];
 
       await seedDefaultUnits(currentCompanyId, companyUnits);
 
-      const updatedUnits = await api.get("/units", {
-        params: { companyId: currentCompanyId },
-      });
+      const { data: updatedUnits, error: updatedUnitsError } = await supabase
+        .from("units")
+        .select(
+          "id,companyId,name,symbol,status,isDefault,extra,createdAt,updatedAt",
+        )
+        .eq("companyId", currentCompanyId);
 
-      companyUnits = updatedUnits.data;
+      if (updatedUnitsError) throw updatedUnitsError;
 
-      setWarehouses(warehouseRes.data);
-      setCategories(categoryRes.data);
+      companyUnits = (updatedUnits || []) as Unit[];
+
+      setWarehouses((warehouseResult.data || []) as Warehouse[]);
+      setCategories((categoryResult.data || []) as Category[]);
       setUnits(companyUnits);
-      setProducts(productRes.data);
+      setProducts((productResult.data || []) as Product[]);
     } catch (error) {
       console.error("Load Data Error:", error);
-
-      toast.error("تعذر تحميل بيانات المخزون");
+      toast.error(`تعذر تحميل بيانات المخزون: ${getErrorMessage(error)}`);
     }
+  };
+
+  // ======================================
+  // Generate Warehouse Code
+  // ======================================
+
+  const generateWarehouseCode = async (): Promise<string> => {
+    if (!companyId) {
+      throw new Error("الشركة غير محددة");
+    }
+
+    // قراءة الرموز الموجودة مباشرة من قاعدة البيانات
+    const { data, error } = await supabase
+      .from("warehouses")
+      .select("code")
+      .eq("companyId", companyId);
+
+    if (error) throw error;
+
+    const existingCodes = (data || []).map((item: any) =>
+      String(item.code || "")
+        .trim()
+        .toUpperCase(),
+    );
+
+    // استخراج أكبر رقم مستخدم
+    const maxNumber = existingCodes.reduce((max, code) => {
+      const match = code.match(/^WH-(\d+)$/);
+
+      if (!match) return max;
+
+      return Math.max(max, Number(match[1]));
+    }, 0);
+
+    // البحث عن أول رقم غير مستخدم
+    let nextNumber = maxNumber + 1;
+    let generatedCode = "";
+
+    do {
+      generatedCode = `WH-${String(nextNumber).padStart(3, "0")}`;
+      nextNumber++;
+    } while (existingCodes.includes(generatedCode));
+
+    return generatedCode;
   };
 
   // ======================================
@@ -431,7 +445,7 @@ export default function InventorySettingPage() {
   // Current Data
   // ======================================
 
-  const getCurrentData = () => {
+  const getCurrentData = (): BaseItem[] => {
     switch (activeSection) {
       case "warehouses":
         return warehouses;
@@ -450,22 +464,29 @@ export default function InventorySettingPage() {
     }
   };
 
-  // ======================================
-  // Current Endpoint
-  // ======================================
-
-  const getEndpoint = () => `/${activeSection}`;
+  const getEndpoint = () => activeSection;
 
   // ======================================
   // Open Add Form
   // ======================================
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     setEditingId(null);
 
     switch (activeSection) {
       case "warehouses":
-        setForm(emptyWarehouse);
+        try {
+          const generatedCode = await generateWarehouseCode();
+
+          setForm({
+            ...emptyWarehouse,
+            code: generatedCode,
+          });
+        } catch (error) {
+          console.error("Generate Warehouse Code Error:", error);
+          toast.error(`تعذر إنشاء رمز المستودع: ${getErrorMessage(error)}`);
+          return;
+        }
         break;
 
       case "categories":
@@ -505,6 +526,14 @@ export default function InventorySettingPage() {
         unitId: product.unitId,
         trackInventory: product.trackInventory,
         status: product.status,
+      });
+    } else if (activeSection === "units") {
+      const unit = item as Unit;
+
+      setForm({
+        name: unit.name,
+        symbol: unit.symbol,
+        status: unit.status,
       });
     } else {
       setForm({ ...item });
@@ -555,6 +584,46 @@ export default function InventorySettingPage() {
   };
 
   // ======================================
+  // Verify Current User
+  // ======================================
+
+  const verifyCurrentUser = async () => {
+    const {
+      data: { user: authUser },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError) throw authError;
+
+    if (!authUser) {
+      throw new Error("انتهت جلسة تسجيل الدخول");
+    }
+
+    const { data: user, error } = await supabase
+      .from("users")
+      .select(
+        "id,name,username,role,type,companyId,status,isActive,auth_user_id",
+      )
+      .eq("auth_user_id", authUser.id)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (
+      !user ||
+      user.type === "platform" ||
+      !user.companyId ||
+      String(user.companyId) !== companyId ||
+      user.isActive === false ||
+      user.status === "inactive"
+    ) {
+      throw new Error("ليس لديك صلاحية لتنفيذ هذه العملية");
+    }
+
+    return user;
+  };
+
+  // ======================================
   // Save Form
   // ======================================
 
@@ -563,18 +632,6 @@ export default function InventorySettingPage() {
 
     if (!companyId) {
       toast.error("الشركة غير محددة");
-      return;
-    }
-
-    const actor = getCurrentActor();
-
-    if (!actor) {
-      toast.error("تعذر تحديد المستخدم الحالي");
-      return;
-    }
-
-    if (actor.companyId && actor.companyId !== companyId) {
-      toast.error("لا يمكنك تعديل بيانات شركة أخرى");
       return;
     }
 
@@ -587,8 +644,6 @@ export default function InventorySettingPage() {
       toast.error("حدد المجموعة ووحدة القياس");
       return;
     }
-
-    // Validate Product Category and Unit
 
     if (activeSection === "products") {
       const categoryExists = categories.some(
@@ -614,6 +669,9 @@ export default function InventorySettingPage() {
     try {
       setSaving(true);
 
+      const user = await verifyCurrentUser();
+      setCurrentUser(user);
+
       const oldItem = editingId
         ? getCurrentData().find((item) => String(item.id) === editingId)
         : undefined;
@@ -628,9 +686,11 @@ export default function InventorySettingPage() {
         return;
       }
 
+      const now = new Date().toISOString();
+
       let payload: Record<string, unknown> = {
-        ...form,
         companyId,
+        updatedAt: now,
       };
 
       // ----------------------------------
@@ -639,15 +699,11 @@ export default function InventorySettingPage() {
 
       if (activeSection === "products") {
         const category = categories.find(
-          (item) =>
-            String(item.id) === String(form.categoryId) &&
-            item.companyId === companyId,
+          (item) => String(item.id) === String(form.categoryId),
         );
 
         const unit = units.find(
-          (item) =>
-            String(item.id) === String(form.unitId) &&
-            item.companyId === companyId,
+          (item) => String(item.id) === String(form.unitId),
         );
 
         if (!category || !unit) {
@@ -657,7 +713,6 @@ export default function InventorySettingPage() {
 
         payload = {
           companyId,
-
           name: String(form.name).trim(),
 
           categoryId: String(category.id),
@@ -667,15 +722,18 @@ export default function InventorySettingPage() {
           unitName: unit.name,
 
           trackInventory: Boolean(form.trackInventory),
-
           status: String(form.status || "active"),
+
+          updatedAt: now,
         };
 
-        if (editingId === null) {
+        if (!editingId) {
           const generated = generateProductNumber();
 
           payload.sku = generated.sku;
           payload.barcode = generated.barcode;
+
+          payload.createdAt = now;
         }
       }
 
@@ -684,23 +742,73 @@ export default function InventorySettingPage() {
       // ----------------------------------
 
       if (activeSection === "warehouses") {
-        if (!String(form.code || "").trim()) {
-          toast.error("أدخل رمز المستودع");
-          return;
+        // الاحتفاظ بالرمز الحالي عند التعديل
+        // وإنشاء رمز جديد عند الإضافة
+        let warehouseCode = "";
+
+        if (editingId && oldItem) {
+          warehouseCode = String((oldItem as Warehouse).code || "").trim();
+
+          // إذا كان المستودع القديم بلا رمز، أنشئ له رمزًا تلقائيًا
+          if (!warehouseCode) {
+            warehouseCode = await generateWarehouseCode();
+          }
+        } else {
+          warehouseCode = await generateWarehouseCode();
+        }
+
+        // التحقق من عدم وجود الرمز مسبقًا في قاعدة البيانات
+        const { data: duplicateWarehouse, error: duplicateError } =
+          await supabase
+            .from("warehouses")
+            .select("id")
+            .eq("companyId", companyId)
+            .ilike("code", warehouseCode)
+            .maybeSingle();
+
+        if (duplicateError) throw duplicateError;
+
+        if (
+          duplicateWarehouse &&
+          String(duplicateWarehouse.id) !== String(editingId || "")
+        ) {
+          // إذا كان الرمز مكررًا، نحاول إنشاء رمز جديد عند الإضافة
+          if (!editingId) {
+            warehouseCode = await generateWarehouseCode();
+
+            const { data: secondCheck, error: secondCheckError } =
+              await supabase
+                .from("warehouses")
+                .select("id")
+                .eq("companyId", companyId)
+                .ilike("code", warehouseCode)
+                .maybeSingle();
+
+            if (secondCheckError) throw secondCheckError;
+
+            if (secondCheck) {
+              throw new Error("تعذر إنشاء رمز فريد للمستودع. حاول مرة أخرى.");
+            }
+          } else {
+            toast.error("رمز المستودع مستخدم بالفعل");
+            return;
+          }
         }
 
         payload = {
-          ...payload,
-
+          companyId,
           name: String(form.name).trim(),
-          code: String(form.code).trim(),
+          code: warehouseCode,
           location: String(form.location || ""),
           description: String(form.description || ""),
-
           isDefault: Boolean(form.isDefault),
-
           status: String(form.status || "active"),
+          updatedAt: now,
         };
+
+        if (!editingId) {
+          payload.createdAt = now;
+        }
       }
 
       // ----------------------------------
@@ -714,14 +822,18 @@ export default function InventorySettingPage() {
         }
 
         payload = {
-          ...payload,
-
+          companyId,
           name: String(form.name).trim(),
           code: String(form.code).trim(),
           description: String(form.description || ""),
-
           status: String(form.status || "active"),
+          updatedAt: now,
         };
+
+        if (!editingId) {
+          payload.createdAt = now;
+          payload.extra = {};
+        }
       }
 
       // ----------------------------------
@@ -735,79 +847,43 @@ export default function InventorySettingPage() {
         }
 
         payload = {
-          ...payload,
-
+          companyId,
           name: String(form.name).trim(),
           symbol: String(form.symbol).trim(),
-
           status: String(form.status || "active"),
-
-          isDefault: editingId ? Boolean((oldItem as Unit)?.isDefault) : false,
+          updatedAt: now,
         };
-      }
 
-      // ----------------------------------
-      // Actor Fields
-      // ----------------------------------
-
-      if (editingId !== null) {
-        payload = {
-          ...payload,
-          ...getUpdateActivity(),
-
-          companyId,
-        };
-      } else {
-        payload = {
-          ...payload,
-          ...getCreateActivity(),
-
-          companyId,
-        };
+        if (!editingId) {
+          payload.isDefault = false;
+          payload.createdAt = now;
+          payload.extra = {};
+        }
       }
 
       // ----------------------------------
       // Create / Update
       // ----------------------------------
 
-      let savedRecord: BaseItem;
+      const table = getEndpoint();
 
-      if (editingId !== null) {
-        const response = await api.patch(
-          `${getEndpoint()}/${editingId}`,
-          payload,
-        );
+      if (editingId) {
+        const { error } = await supabase
+          .from(table)
+          .update(payload)
+          .eq("id", editingId)
+          .eq("companyId", companyId);
 
-        savedRecord = response.data;
-
-        await logUpdate(
-          "inventory",
-          `تعديل ${
-            sections.find((section) => section.id === activeSection)?.title
-          }: ${getRecordName(savedRecord)}`,
-          savedRecord.id,
-          getRecordName(savedRecord),
-          oldItem as unknown as Record<string, unknown>,
-          {
-            ...payload,
-          },
-        );
+        if (error) throw error;
 
         toast.success("تم تحديث البيانات بنجاح");
       } else {
-        const response = await api.post(getEndpoint(), payload);
+        const { error } = await supabase.from(table).insert({
+          id: createId(),
+          ...payload,
+        });
 
-        savedRecord = response.data;
-
-        await logCreate(
-          "inventory",
-          `إضافة ${
-            sections.find((section) => section.id === activeSection)?.title
-          }: ${getRecordName(savedRecord)}`,
-          savedRecord.id,
-          getRecordName(savedRecord),
-          payload,
-        );
+        if (error) throw error;
 
         toast.success("تمت الإضافة بنجاح");
       }
@@ -825,24 +901,16 @@ export default function InventorySettingPage() {
         );
 
         for (const warehouse of otherDefaults) {
-          const updatePayload = {
-            isDefault: false,
-            ...getUpdateActivity(),
-          };
+          const { error } = await supabase
+            .from("warehouses")
+            .update({
+              isDefault: false,
+              updatedAt: new Date().toISOString(),
+            })
+            .eq("id", warehouse.id)
+            .eq("companyId", companyId);
 
-          await api.patch(`/warehouses/${warehouse.id}`, updatePayload);
-
-          await logUpdate(
-            "inventory",
-            `إلغاء المستودع الافتراضي: ${warehouse.name}`,
-            warehouse.id,
-            warehouse.name,
-            warehouse as unknown as Record<string, unknown>,
-            {
-              ...warehouse,
-              ...updatePayload,
-            },
-          );
+          if (error) throw error;
         }
       }
 
@@ -851,10 +919,20 @@ export default function InventorySettingPage() {
       setForm({});
 
       await loadData(companyId);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Save Inventory Setting Error:", error);
 
-      toast.error("حدث خطأ أثناء حفظ البيانات");
+      // معالجة خطأ القيد الفريد في قاعدة البيانات
+      if (
+        error?.code === "23505" ||
+        String(error?.message || "")
+          .toLowerCase()
+          .includes("duplicate")
+      ) {
+        toast.error("رمز المستودع مستخدم بالفعل، حاول مرة أخرى");
+      } else {
+        toast.error(`تعذر حفظ البيانات: ${getErrorMessage(error)}`);
+      }
     } finally {
       setSaving(false);
     }
@@ -865,32 +943,36 @@ export default function InventorySettingPage() {
   // ======================================
 
   const loadDeleteReferences = async () => {
-    const endpoints = [
-      "/warehouseStocks",
-      "/inventoryMovements",
-      "/transfers",
-      "/stockAdjustments",
-      "/stocktakes",
-      "/purchases",
-      "/sales",
+    const tables = [
+      "warehouseStocks",
+      "inventoryMovements",
+      "transfers",
+      "stockAdjustments",
+      "stocktakes",
+      "purchases",
+      "sales",
     ];
 
-    const responses = await Promise.all(
-      endpoints.map((endpoint) =>
-        api.get(endpoint, {
-          params: { companyId },
-        }),
+    const results = await Promise.all(
+      tables.map((table) =>
+        supabase.from(table).select("*").eq("companyId", companyId),
       ),
     );
 
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].error) {
+        throw results[i].error;
+      }
+    }
+
     return {
-      warehouseStocks: responses[0].data as ReferenceRecord[],
-      inventoryMovements: responses[1].data as ReferenceRecord[],
-      transfers: responses[2].data as ReferenceRecord[],
-      stockAdjustments: responses[3].data as ReferenceRecord[],
-      stocktakes: responses[4].data as ReferenceRecord[],
-      purchases: responses[5].data as ReferenceRecord[],
-      sales: responses[6].data as ReferenceRecord[],
+      warehouseStocks: results[0].data as ReferenceRecord[],
+      inventoryMovements: results[1].data as ReferenceRecord[],
+      transfers: results[2].data as ReferenceRecord[],
+      stockAdjustments: results[3].data as ReferenceRecord[],
+      stocktakes: results[4].data as ReferenceRecord[],
+      purchases: results[5].data as ReferenceRecord[],
+      sales: results[6].data as ReferenceRecord[],
     };
   };
 
@@ -904,89 +986,77 @@ export default function InventorySettingPage() {
       return;
     }
 
-    const actor = getCurrentActor();
-
-    if (!actor) {
-      toast.error("تعذر تحديد المستخدم الحالي");
-      return;
-    }
-
-    if (actor.companyId && actor.companyId !== companyId) {
-      toast.error("لا يمكنك حذف بيانات شركة أخرى");
-      return;
-    }
-
-    // ----------------------------------
-    // Unit References
-    // ----------------------------------
-
-    if (
-      activeSection === "units" &&
-      products.some(
-        (product) =>
-          product.companyId === companyId &&
-          String(product.unitId) === String(item.id),
-      )
-    ) {
-      toast.error("لا يمكن حذف وحدة مستخدمة في أصناف");
-      return;
-    }
-
-    // ----------------------------------
-    // Category References
-    // ----------------------------------
-
-    if (
-      activeSection === "categories" &&
-      products.some(
-        (product) =>
-          product.companyId === companyId &&
-          String(product.categoryId) === String(item.id),
-      )
-    ) {
-      toast.error("لا يمكن حذف مجموعة تحتوي على أصناف");
-      return;
-    }
-
-    // ----------------------------------
-    // Warehouse Rules
-    // ----------------------------------
-
-    if (activeSection === "warehouses") {
-      if (
-        warehouses.filter((warehouse) => warehouse.companyId === companyId)
-          .length <= 1
-      ) {
-        toast.error("يجب الاحتفاظ بمستودع واحد على الأقل");
-        return;
-      }
-
-      if ((item as Warehouse).isDefault) {
-        toast.error("لا يمكن حذف المستودع الافتراضي. عيّن مستودعًا آخر أولاً.");
-        return;
-      }
-    }
-
-    // ----------------------------------
-    // Default Unit
-    // ----------------------------------
-
-    if (activeSection === "units" && (item as Unit).isDefault) {
-      toast.error("لا يمكن حذف وحدة القياس الافتراضية");
-      return;
-    }
-
-    // ----------------------------------
-    // Confirm
-    // ----------------------------------
-
-    const confirmed = window.confirm(
-      `هل أنت متأكد من حذف "${getRecordName(item)}"؟`,
-    );
-
-    if (!confirmed) return;
-
     try {
+      await verifyCurrentUser();
+
+      // ----------------------------------
+      // Unit References
+      // ----------------------------------
+
+      if (
+        activeSection === "units" &&
+        products.some(
+          (product) =>
+            product.companyId === companyId &&
+            String(product.unitId) === String(item.id),
+        )
+      ) {
+        toast.error("لا يمكن حذف وحدة مستخدمة في أصناف");
+        return;
+      }
+
+      // ----------------------------------
+      // Category References
+      // ----------------------------------
+
+      if (
+        activeSection === "categories" &&
+        products.some(
+          (product) =>
+            product.companyId === companyId &&
+            String(product.categoryId) === String(item.id),
+        )
+      ) {
+        toast.error("لا يمكن حذف مجموعة تحتوي على أصناف");
+        return;
+      }
+
+      // ----------------------------------
+      // Warehouse Rules
+      // ----------------------------------
+
+      if (activeSection === "warehouses") {
+        if (
+          warehouses.filter((warehouse) => warehouse.companyId === companyId)
+            .length <= 1
+        ) {
+          toast.error("يجب الاحتفاظ بمستودع واحد على الأقل");
+          return;
+        }
+
+        if ((item as Warehouse).isDefault) {
+          toast.error(
+            "لا يمكن حذف المستودع الافتراضي. عيّن مستودعًا آخر أولاً.",
+          );
+          return;
+        }
+      }
+
+      // ----------------------------------
+      // Default Unit
+      // ----------------------------------
+
+      if (activeSection === "units" && (item as Unit).isDefault) {
+        toast.error("لا يمكن حذف وحدة القياس الافتراضية");
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `هل أنت متأكد من حذف "${getRecordName(item)}"؟`,
+      );
+
+      if (!confirmed) return;
+
       setSaving(true);
 
       // ----------------------------------
@@ -1008,24 +1078,22 @@ export default function InventorySettingPage() {
           return;
         }
 
+        const referenceGroups = [
+          references.warehouseStocks,
+          references.inventoryMovements,
+          references.transfers,
+          references.stockAdjustments,
+          references.stocktakes,
+          references.purchases,
+          references.sales,
+        ];
+
         if (activeSection === "warehouses") {
           const warehouseId = String(item.id);
 
-          const referenceGroups = [
-            references.warehouseStocks,
-            references.inventoryMovements,
-            references.transfers,
-            references.stockAdjustments,
-            references.stocktakes,
-            references.purchases,
-            references.sales,
-          ];
-
           const isUsed = referenceGroups.some((records) =>
-            records.some(
-              (record) =>
-                isCompanyRecord(record, companyId) &&
-                hasWarehouseReference(record, warehouseId),
+            records.some((record) =>
+              hasWarehouseReference(record, warehouseId),
             ),
           );
 
@@ -1040,22 +1108,8 @@ export default function InventorySettingPage() {
         if (activeSection === "products") {
           const productId = String(item.id);
 
-          const referenceGroups = [
-            references.warehouseStocks,
-            references.inventoryMovements,
-            references.transfers,
-            references.stockAdjustments,
-            references.stocktakes,
-            references.purchases,
-            references.sales,
-          ];
-
           const isUsed = referenceGroups.some((records) =>
-            records.some(
-              (record) =>
-                isCompanyRecord(record, companyId) &&
-                hasProductReference(record, productId),
-            ),
+            records.some((record) => hasProductReference(record, productId)),
           );
 
           if (isUsed) {
@@ -1071,17 +1125,13 @@ export default function InventorySettingPage() {
       // Delete Request
       // ----------------------------------
 
-      await logDelete(
-        "inventory",
-        `حذف ${
-          sections.find((section) => section.id === activeSection)?.title
-        }: ${getRecordName(item)}`,
-        item.id,
-        getRecordName(item),
-        item as unknown as Record<string, unknown>,
-      );
+      const { error } = await supabase
+        .from(getEndpoint())
+        .delete()
+        .eq("id", item.id)
+        .eq("companyId", companyId);
 
-      await api.delete(`${getEndpoint()}/${item.id}`);
+      if (error) throw error;
 
       toast.success("تم الحذف بنجاح");
 
@@ -1089,7 +1139,7 @@ export default function InventorySettingPage() {
     } catch (error) {
       console.error("Delete Inventory Setting Error:", error);
 
-      toast.error("تعذر حذف السجل");
+      toast.error(`تعذر حذف السجل: ${getErrorMessage(error)}`);
     } finally {
       setSaving(false);
     }
@@ -1106,12 +1156,10 @@ export default function InventorySettingPage() {
 
     const code =
       "sku" in item
-        ? String(item.sku)
+        ? String(item.sku || "")
         : "symbol" in item
-          ? String(item.symbol)
-          : "code" in item
-            ? String(item.code)
-            : "";
+          ? String(item.symbol || "")
+          : String(item.code || "");
 
     return (
       item.companyId === companyId &&
@@ -1320,9 +1368,7 @@ export default function InventorySettingPage() {
                       ? item.sku
                       : "symbol" in item
                         ? item.symbol
-                        : "code" in item
-                          ? item.code
-                          : "-"}
+                        : item.code || "-"}
                   </td>
 
                   {activeSection === "products" && (
@@ -1447,11 +1493,16 @@ export default function InventorySettingPage() {
                       <input
                         name="code"
                         value={String(form.code || "")}
-                        onChange={handleChange}
-                        className={inputClass}
+                        className={`${inputClass} cursor-not-allowed bg-gray-100 text-gray-500`}
                         placeholder="WH-001"
-                        required
+                        readOnly
+                        disabled
+                        dir="ltr"
                       />
+
+                      <p className="mt-1 text-xs text-gray-500">
+                        يتم إنشاء رمز المستودع تلقائيًا.
+                      </p>
                     </div>
 
                     <div>

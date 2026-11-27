@@ -20,10 +20,7 @@ import {
 } from "react-icons/fi";
 
 import { toast } from "sonner";
-
-// =====================================================
-// API
-// =====================================================
+import { supabase } from "@/lib/supabase";
 
 import { getUserByUsername } from "@/lib/api/users";
 import { getAccounts } from "@/lib/api/accounts";
@@ -35,27 +32,24 @@ import { getInventoryMovements } from "@/lib/api/inventoryMovements";
 // TYPES
 // =====================================================
 
+type AccountId = string | number;
+
 type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
 
 type AccountNature = "debit" | "credit";
-
-type AccountId = string | number;
 
 interface Account {
   id: AccountId;
   code: string;
   name: string;
   nameEn?: string;
-
   type: AccountType;
   nature: AccountNature;
-
   parentId?: AccountId | null;
-
-  isGroup: boolean;
-  allowPosting: boolean;
-  isActive: boolean;
-
+  isGroup?: boolean;
+  allowPosting?: boolean;
+  isActive?: boolean;
+  status?: string;
   companyId: string;
   balance?: number;
 }
@@ -65,15 +59,21 @@ interface CurrentUser {
   username: string;
   type: string;
   companyId?: AccountId;
+  name?: string;
+  companyname?: string;
+  isActive?: boolean;
+  status?: string;
 }
 
 interface Journal {
   id: AccountId;
-  journalNumber: string;
+  journalNumber?: string;
+  entryNumber?: string;
   date: string;
-  description: string;
+  description?: string;
   reference?: string;
-  status: "draft" | "posted" | "cancelled";
+  referenceNumber?: string;
+  status: string;
   companyId: string;
 }
 
@@ -81,32 +81,27 @@ interface JournalLine {
   id: AccountId;
   journalId: AccountId;
   accountId: AccountId;
-
   debit: number;
   credit: number;
-
   companyId: string;
+  status?: string;
+  description?: string;
+  date?: string;
 }
 
 interface OpeningEntry {
   id: AccountId;
   accountId: AccountId;
-
   date: string;
-
   debit: number;
   credit: number;
-
   description?: string;
   reference?: string;
-
   companyId: string;
 }
 
-// حركات المخزون
 interface InventoryMovement {
   id: AccountId;
-
   companyId: string;
 
   productId?: AccountId;
@@ -123,6 +118,7 @@ interface InventoryMovement {
   transactionType?: string;
 
   reference?: string;
+  referenceNumber?: string;
   documentNumber?: string;
 
   description?: string;
@@ -136,9 +132,6 @@ interface InventoryMovement {
   amount?: number;
 
   status?: string;
-
-  fromWarehouseId?: AccountId;
-  toWarehouseId?: AccountId;
 
   [key: string]: unknown;
 }
@@ -170,7 +163,7 @@ interface InventoryRow {
 }
 
 // =====================================================
-// HELPERS
+// AUTH HELPERS
 // =====================================================
 
 function getCookie(name: string): string | null {
@@ -182,8 +175,47 @@ function getCookie(name: string): string | null {
 
   if (!cookie) return null;
 
-  return decodeURIComponent(cookie.substring(name.length + 1));
+  try {
+    return decodeURIComponent(cookie.substring(name.length + 1));
+  } catch {
+    return cookie.substring(name.length + 1);
+  }
 }
+
+/**
+ * تحديد اسم المستخدم الحالي:
+ * 1. البحث في Cookie باسم username.
+ * 2. إذا لم يوجد، البحث في localStorage داخل authUser.
+ */
+function getCurrentUsername(): string | null {
+  const cookieUsername = getCookie("username");
+
+  if (cookieUsername) {
+    return cookieUsername;
+  }
+
+  if (typeof window !== "undefined") {
+    try {
+      const authUser = localStorage.getItem("authUser");
+
+      if (authUser) {
+        const user = JSON.parse(authUser);
+
+        if (user?.username) {
+          return String(user.username);
+        }
+      }
+    } catch (error) {
+      console.error("Error reading authUser:", error);
+    }
+  }
+
+  return null;
+}
+
+// =====================================================
+// GENERAL HELPERS
+// =====================================================
 
 function getToday() {
   const date = new Date();
@@ -246,6 +278,12 @@ function sameId(
   return String(first ?? "") === String(second ?? "");
 }
 
+function toNumber(value: unknown): number {
+  const number = Number(value ?? 0);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
 function getBalance(
   previous: number,
   debit: number,
@@ -259,37 +297,69 @@ function getBalance(
   return previous + credit - debit;
 }
 
+/**
+ * دعم البيانات المباشرة والبيانات الموجودة داخل extra.
+ */
+function normalizeRecord<T extends Record<string, unknown>>(
+  row: Record<string, unknown>,
+): T {
+  let extra: Record<string, unknown> = {};
+
+  if (row.extra && typeof row.extra === "object") {
+    extra = row.extra as Record<string, unknown>;
+  } else if (typeof row.extra === "string") {
+    try {
+      const parsed = JSON.parse(row.extra);
+
+      if (parsed && typeof parsed === "object") {
+        extra = parsed;
+      }
+    } catch {
+      extra = {};
+    }
+  }
+
+  return {
+    ...extra,
+    ...row,
+  } as T;
+}
+
 function getMovementTypeName(type?: string) {
   if (!type) return "حركة مخزنية";
 
   const value = type.toLowerCase();
 
+  if (value.includes("transfer")) {
+    return "تحويل مخزني";
+  }
+
   if (
-    value.includes("purchase") ||
-    value.includes("in") ||
-    value.includes("receipt")
+    value === "purchase_in" ||
+    value === "in" ||
+    value === "receipt" ||
+    value === "transfer_in" ||
+    value === "adjustment_in"
   ) {
     return "إضافة للمخزون";
   }
 
   if (
-    value.includes("sale") ||
-    value.includes("out") ||
-    value.includes("issue")
+    value === "sale" ||
+    value === "out" ||
+    value === "transfer_out" ||
+    value === "adjustment_out" ||
+    value === "issue"
   ) {
     return "صرف من المخزون";
   }
 
-  if (value.includes("transfer")) {
-    return "تحويل مخزني";
-  }
-
-  if (value.includes("adjust") || value.includes("increase")) {
-    return "تسوية مخزنية";
-  }
-
   if (value.includes("return")) {
     return "مرتجع";
+  }
+
+  if (value.includes("adjust")) {
+    return "تسوية مخزنية";
   }
 
   return type;
@@ -297,26 +367,29 @@ function getMovementTypeName(type?: string) {
 
 function getMovementAmount(movement: InventoryMovement) {
   if (movement.totalCost !== undefined) {
-    return Number(movement.totalCost) || 0;
+    return toNumber(movement.totalCost);
   }
 
   if (movement.amount !== undefined) {
-    return Number(movement.amount) || 0;
+    return toNumber(movement.amount);
   }
 
   if (movement.cost !== undefined) {
-    return Number(movement.cost) || 0;
+    return toNumber(movement.cost);
   }
 
-  const quantity = Number(movement.quantity || 0);
-
-  const unitCost = Number(movement.unitCost ?? movement.purchasePrice ?? 0);
-
-  return quantity * unitCost;
+  return (
+    toNumber(movement.quantity) *
+    toNumber(movement.unitCost ?? movement.purchasePrice)
+  );
 }
 
 function escapeCSV(value: unknown) {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+function isPosted(status?: string) {
+  return String(status || "").toLowerCase() === "posted";
 }
 
 // =====================================================
@@ -325,7 +398,6 @@ function escapeCSV(value: unknown) {
 
 export default function AccountStatementPage() {
   const router = useRouter();
-
   const params = useParams();
 
   const accountId = String(params.id);
@@ -363,30 +435,36 @@ export default function AccountStatementPage() {
   // ===================================================
 
   const loadData = useCallback(
-    async (showRefresh = false) => {
+    async (showRefresh = false, isCurrent: () => boolean = () => true) => {
       if (showRefresh) {
-        setRefreshing(true);
+        if (isCurrent()) setRefreshing(true);
       } else {
-        setLoading(true);
+        if (isCurrent()) setLoading(true);
       }
 
-      setError("");
+      if (isCurrent()) setError("");
 
       try {
         // -----------------------------------------------
         // المستخدم الحالي
         // -----------------------------------------------
 
-        const username = getCookie("username");
+        const username = getCurrentUsername();
 
         if (!username) {
-          throw new Error("لم يتم العثور على المستخدم الحالي");
+          throw new Error(
+            "لم يتم العثور على المستخدم الحالي. يرجى تسجيل الدخول مرة أخرى.",
+          );
         }
 
         const user = await getUserByUsername(username);
 
+        if (!isCurrent()) return;
+
         if (!user) {
-          throw new Error("المستخدم غير موجود");
+          throw new Error(
+            "لم يتم العثور على بيانات المستخدم في قاعدة البيانات",
+          );
         }
 
         if (user.type === "platform") {
@@ -397,47 +475,78 @@ export default function AccountStatementPage() {
           throw new Error("المستخدم غير مرتبط بشركة");
         }
 
+        if (
+          user.isActive === false ||
+          (user.status && user.status !== "active")
+        ) {
+          throw new Error("حساب المستخدم غير نشط");
+        }
+
         const currentCompanyId = String(user.companyId);
 
-        setCompanyId(currentCompanyId);
+        if (isCurrent()) {
+          setCompanyId(currentCompanyId);
+        }
 
         // -----------------------------------------------
-        // الحساب
+        // حسابات الشركة الحالية
         // -----------------------------------------------
 
-        const allAccounts = await getAccounts();
+        const allAccounts = await getAccounts(currentCompanyId);
 
-        const currentAccount = allAccounts.find(
-          (item) => String(item.id) === accountId,
+        if (!isCurrent()) return;
+
+        const currentAccount = allAccounts.find((item) =>
+          sameId(item.id, accountId),
         );
 
         if (!currentAccount) {
-          throw new Error("الحساب غير موجود");
+          throw new Error("الحساب غير موجود ضمن حسابات شركتك");
         }
 
-        if (String(currentAccount.companyId) !== currentCompanyId) {
+        if (!sameId(currentAccount.companyId, currentCompanyId)) {
           throw new Error("هذا الحساب لا يتبع شركتك");
         }
 
-        setAccount(currentAccount as Account);
+        if (isCurrent()) {
+          setAccount(currentAccount as Account);
+        }
 
         // -----------------------------------------------
-        // البيانات المحاسبية والمخزون
+        // جلب بيانات الشركة
         // -----------------------------------------------
 
         const [allJournals, allJournalLines, allInventoryMovements] =
           await Promise.all([
-            getJournals(),
-            getJournalLines(),
-            getInventoryMovements(),
+            getJournals(currentCompanyId),
+            getJournalLines(currentCompanyId),
+            getInventoryMovements(currentCompanyId),
           ]);
+
+        if (!isCurrent()) return;
+
+        // -----------------------------------------------
+        // تطبيع بيانات القيود
+        // -----------------------------------------------
+
+        const normalizedJournals = (
+          (allJournals || []) as unknown as Record<string, unknown>[]
+        ).map((row) => normalizeRecord<Journal>(row));
+
+        const normalizedLines = (
+          (allJournalLines || []) as unknown as Record<string, unknown>[]
+        ).map((row) => normalizeRecord<JournalLine>(row));
+
+        const normalizedMovements = (
+          (allInventoryMovements || []) as unknown as Record<string, unknown>[]
+        ).map((row) => normalizeRecord<InventoryMovement>(row));
 
         // -----------------------------------------------
         // قيود الشركة
         // -----------------------------------------------
 
-        const companyJournals = allJournals.filter(
-          (journal) => String(journal.companyId) === currentCompanyId,
+        const companyJournals = normalizedJournals.filter((journal) =>
+          sameId(journal.companyId, currentCompanyId),
         );
 
         const companyJournalIds = new Set(
@@ -448,9 +557,9 @@ export default function AccountStatementPage() {
         // تفاصيل القيود الخاصة بالحساب
         // -----------------------------------------------
 
-        const companyLines = allJournalLines.filter(
+        const companyLines = normalizedLines.filter(
           (line) =>
-            String(line.companyId) === currentCompanyId &&
+            sameId(line.companyId, currentCompanyId) &&
             sameId(line.accountId, accountId) &&
             companyJournalIds.has(String(line.journalId)),
         );
@@ -458,49 +567,80 @@ export default function AccountStatementPage() {
         // -----------------------------------------------
         // الأرصدة الافتتاحية
         // -----------------------------------------------
-        // مؤقتًا فارغة حتى إنشاء ملف:
-        // lib/api/openingEntries.ts
 
-        const companyOpeningEntries: OpeningEntry[] = [];
+        const { data: openingData, error: openingError } = await supabase
+          .from("openingEntries")
+          .select("*")
+          .eq("companyId", currentCompanyId);
+
+        if (!isCurrent()) return;
+
+        if (openingError) {
+          throw new Error(
+            `تعذر تحميل الأرصدة الافتتاحية: ${openingError.message}`,
+          );
+        }
+
+        const normalizedOpeningEntries = (
+          (openingData || []) as unknown as Record<string, unknown>[]
+        ).map((row) => normalizeRecord<OpeningEntry>(row));
+
+        const companyOpeningEntries = normalizedOpeningEntries.filter(
+          (entry) =>
+            sameId(entry.companyId, currentCompanyId) &&
+            sameId(entry.accountId, accountId),
+        );
 
         // -----------------------------------------------
-        // حركات المخزون
+        // حركات المخزون التابعة للشركة
         // -----------------------------------------------
 
-        const companyMovements = allInventoryMovements.filter(
-          (movement) => String(movement.companyId) === currentCompanyId,
+        const companyMovements = normalizedMovements.filter((movement) =>
+          sameId(movement.companyId, currentCompanyId),
         );
 
         // -----------------------------------------------
         // تحديث الحالات
         // -----------------------------------------------
 
-        setJournals(companyJournals as Journal[]);
+        if (!isCurrent()) return;
 
-        setJournalLines(companyLines as JournalLine[]);
-
+        setJournals(companyJournals);
+        setJournalLines(companyLines);
         setOpeningEntries(companyOpeningEntries);
-
-        setInventoryMovements(companyMovements as InventoryMovement[]);
+        setInventoryMovements(companyMovements);
       } catch (err) {
         console.error("Account statement error:", err);
 
         const message =
           err instanceof Error ? err.message : "تعذر تحميل كشف الحساب";
 
-        setError(message);
-
-        toast.error(message);
+        if (isCurrent()) {
+          setError(message);
+          toast.error(message);
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (isCurrent()) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [accountId],
   );
 
+  // ===================================================
+  // EFFECT
+  // ===================================================
+
   useEffect(() => {
-    loadData();
+    let ignore = false;
+
+    void loadData(false, () => !ignore);
+
+    return () => {
+      ignore = true;
+    };
   }, [loadData]);
 
   // ===================================================
@@ -520,7 +660,7 @@ export default function AccountStatementPage() {
 
     const postedJournals = journals.filter(
       (journal) =>
-        journal.status === "posted" && String(journal.companyId) === companyId,
+        isPosted(journal.status) && sameId(journal.companyId, companyId),
     );
 
     const journalMap = new Map(
@@ -553,8 +693,8 @@ export default function AccountStatementPage() {
         documentNumber: `OPEN-${entry.id}`,
         description: entry.description || "رصيد افتتاحي",
         reference: entry.reference || "-",
-        debit: Number(entry.debit) || 0,
-        credit: Number(entry.credit) || 0,
+        debit: toNumber(entry.debit),
+        credit: toNumber(entry.credit),
         source: "opening",
       });
     });
@@ -568,18 +708,19 @@ export default function AccountStatementPage() {
 
       if (!journal) return;
 
-      const date = normalizeDate(journal.date);
+      const date = normalizeDate(journal.date || line.date);
 
       if (!date) return;
 
       events.push({
         id: `journal-${line.id}`,
         date,
-        documentNumber: journal.journalNumber || String(journal.id),
-        description: journal.description || "قيد يومية",
-        reference: journal.reference || "-",
-        debit: Number(line.debit) || 0,
-        credit: Number(line.credit) || 0,
+        documentNumber:
+          journal.journalNumber || journal.entryNumber || String(journal.id),
+        description: line.description || journal.description || "قيد يومية",
+        reference: journal.reference || journal.referenceNumber || "-",
+        debit: toNumber(line.debit),
+        credit: toNumber(line.credit),
         source: "journal",
       });
     });
@@ -626,12 +767,10 @@ export default function AccountStatementPage() {
     let runningBalance = openingBalance;
 
     let totalDebit = 0;
-
     let totalCredit = 0;
 
     const rows: StatementRow[] = periodEvents.map((event) => {
       totalDebit += event.debit;
-
       totalCredit += event.credit;
 
       runningBalance = getBalance(
@@ -688,7 +827,6 @@ export default function AccountStatementPage() {
         return;
       }
 
-      // تجاهل الحركات الملغاة
       if (movement.status === "cancelled" || movement.status === "void") {
         return;
       }
@@ -699,39 +837,32 @@ export default function AccountStatementPage() {
         movement.type ||
         "";
 
-      const quantity = Number(movement.quantity || 0);
+      const quantity = toNumber(movement.quantity);
 
-      const unitCost = Number(movement.unitCost ?? movement.purchasePrice ?? 0);
+      const unitCost = toNumber(movement.unitCost ?? movement.purchasePrice);
 
       const totalCost = getMovementAmount(movement);
 
       rows.push({
         id: String(movement.id),
-
         date,
-
         documentNumber:
-          movement.documentNumber || movement.reference || String(movement.id),
-
+          movement.documentNumber ||
+          movement.referenceNumber ||
+          movement.reference ||
+          String(movement.id),
         description:
           movement.description ||
           movement.notes ||
-          getMovementTypeName(movementType),
-
+          getMovementTypeName(String(movementType)),
         productName: movement.productName || String(movement.productId || "-"),
-
         warehouseName:
           movement.warehouseName || String(movement.warehouseId || "-"),
-
-        movementType: getMovementTypeName(movementType),
-
+        movementType: getMovementTypeName(String(movementType)),
         quantity,
-
         unitCost,
-
         totalCost,
-
-        reference: movement.reference || "-",
+        reference: movement.reference || movement.referenceNumber || "-",
       });
     });
 
@@ -739,12 +870,10 @@ export default function AccountStatementPage() {
 
     return {
       rows,
-
       totalQuantity: rows.reduce(
         (total, row) => total + Math.abs(row.quantity),
         0,
       ),
-
       totalCost: rows.reduce(
         (total, row) => total + Math.abs(row.totalCost),
         0,
@@ -777,19 +906,16 @@ export default function AccountStatementPage() {
   function validateDates() {
     if (!startDate || !endDate) {
       toast.error("يرجى تحديد تاريخ البداية والنهاية");
-
       return false;
     }
 
     if (startDate > endDate) {
       toast.error("تاريخ البداية يجب أن يكون قبل تاريخ النهاية");
-
       return false;
     }
 
     if (endDate > getToday()) {
       toast.error("لا يمكن اختيار تاريخ مستقبلي");
-
       return false;
     }
 
@@ -804,7 +930,6 @@ export default function AccountStatementPage() {
 
   function resetDates() {
     setStartDate(getStartOfYear());
-
     setEndDate(getToday());
   }
 
@@ -846,11 +971,9 @@ export default function AccountStatementPage() {
     });
 
     const url = URL.createObjectURL(blob);
-
     const link = document.createElement("a");
 
     link.href = url;
-
     link.download = `account-${account.code}-statement.csv`;
 
     link.click();
@@ -898,11 +1021,9 @@ export default function AccountStatementPage() {
     });
 
     const url = URL.createObjectURL(blob);
-
     const link = document.createElement("a");
 
     link.href = url;
-
     link.download = "inventory-movements.csv";
 
     link.click();
@@ -953,7 +1074,8 @@ export default function AccountStatementPage() {
 
         <button
           onClick={() => loadData()}
-          className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm text-white"
+          disabled={refreshing}
+          className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm text-white disabled:opacity-50"
         >
           إعادة المحاولة
         </button>
@@ -967,21 +1089,15 @@ export default function AccountStatementPage() {
 
   return (
     <div dir="rtl" className="space-y-6 p-4 md:p-6 print:p-0">
-      {/* ============================================= */}
       {/* HEADER */}
-      {/* ============================================= */}
 
       <div className="flex flex-wrap items-center justify-between gap-4 print:hidden">
         <div>
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <span>المحاسبة</span>
-
             <span>/</span>
-
             <span>دليل الحسابات</span>
-
             <span>/</span>
-
             <span className="text-blue-600">كشف الحساب</span>
           </div>
 
@@ -1020,9 +1136,7 @@ export default function AccountStatementPage() {
         </div>
       </div>
 
-      {/* ============================================= */}
       {/* ACCOUNT INFORMATION */}
-      {/* ============================================= */}
 
       <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1041,10 +1155,16 @@ export default function AccountStatementPage() {
               <span>التصنيف: {getAccountTypeName(account.type)}</span>
 
               <span>
-                الطبيعة: {account.nature === "debit" ? "مدين" : "دائن"}
+                الطبيعة:
+                {account.nature === "debit" ? " مدين" : " دائن"}
               </span>
 
-              <span>الحالة: {account.isActive ? "نشط" : "غير نشط"}</span>
+              <span>
+                الحالة:
+                {account.isActive === false || account.status === "inactive"
+                  ? " غير نشط"
+                  : " نشط"}
+              </span>
 
               <span>الشركة: {companyId}</span>
             </div>
@@ -1060,9 +1180,7 @@ export default function AccountStatementPage() {
         </div>
       </section>
 
-      {/* ============================================= */}
       {/* DATE FILTER */}
-      {/* ============================================= */}
 
       <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm print:hidden">
         <div className="mb-5 flex items-center gap-2">
@@ -1121,9 +1239,7 @@ export default function AccountStatementPage() {
         </div>
       </section>
 
-      {/* ============================================= */}
       {/* FINANCIAL SUMMARY */}
-      {/* ============================================= */}
 
       <div>
         <div className="mb-3 flex items-center gap-2">
@@ -1167,9 +1283,7 @@ export default function AccountStatementPage() {
         </div>
       </div>
 
-      {/* ============================================= */}
       {/* FINANCIAL STATEMENT */}
-      {/* ============================================= */}
 
       <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-5">
@@ -1206,15 +1320,12 @@ export default function AccountStatementPage() {
             </thead>
 
             <tbody className="divide-y divide-gray-100 text-sm">
-              {/* الرصيد الافتتاحي */}
-
               <tr className="bg-blue-50/60">
                 <td colSpan={4} className="px-4 py-4 font-bold text-blue-800">
                   الرصيد الافتتاحي للفترة
                 </td>
 
                 <td className="px-4 py-4">-</td>
-
                 <td className="px-4 py-4">-</td>
 
                 <td className="px-4 py-4 font-bold text-blue-800">
@@ -1225,8 +1336,6 @@ export default function AccountStatementPage() {
                   {getBalanceSide(statement.openingBalance)}
                 </td>
               </tr>
-
-              {/* الحركات */}
 
               {statement.rows.map((row) => (
                 <tr key={row.id} className="transition hover:bg-gray-50">
@@ -1284,8 +1393,6 @@ export default function AccountStatementPage() {
                 </tr>
               )}
 
-              {/* الإجمالي */}
-
               <tr className="bg-gray-50 font-bold">
                 <td colSpan={4} className="px-4 py-4 text-gray-800">
                   إجمالي الحركات
@@ -1341,10 +1448,7 @@ export default function AccountStatementPage() {
         </div>
       </section>
 
-      {/* ============================================= */}
       {/* INVENTORY STATEMENT */}
-      {/* يظهر فقط لحساب المخزون 1104 */}
-      {/* ============================================= */}
 
       {account.code === "1104" && (
         <section className="overflow-hidden rounded-xl border border-indigo-200 bg-white shadow-sm">
@@ -1370,8 +1474,6 @@ export default function AccountStatementPage() {
             </button>
           </div>
 
-          {/* Inventory Summary */}
-
           <div className="grid grid-cols-1 gap-3 border-b border-gray-100 p-5 sm:grid-cols-3">
             <SmallStat
               title="عدد الحركات"
@@ -1388,8 +1490,6 @@ export default function AccountStatementPage() {
               value={formatNumber(inventoryStatement.totalCost)}
             />
           </div>
-
-          {/* Inventory Table */}
 
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1050px] text-right">
@@ -1460,8 +1560,6 @@ export default function AccountStatementPage() {
             </table>
           </div>
 
-          {/* Inventory Note */}
-
           <div className="flex items-start gap-3 border-t border-amber-100 bg-amber-50 p-4">
             <FiInfo className="mt-0.5 shrink-0 text-amber-600" size={18} />
 
@@ -1475,9 +1573,7 @@ export default function AccountStatementPage() {
         </section>
       )}
 
-      {/* ============================================= */}
       {/* FOOTER */}
-      {/* ============================================= */}
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-4 text-xs text-gray-500">
         <div className="flex items-center gap-2">
@@ -1527,7 +1623,9 @@ function SummaryCard({
         </div>
 
         <div
-          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${colors[color]}`}
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${
+            colors[color] || colors.blue
+          }`}
         >
           {icon}
         </div>

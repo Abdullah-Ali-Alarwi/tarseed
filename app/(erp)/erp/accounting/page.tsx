@@ -280,10 +280,7 @@ export default function AccountingPage() {
       setLoading(true);
       setError("");
 
-      /* -----------------------------------------------
-         1. GET AUTH USER
-      ----------------------------------------------- */
-
+      // 1. المستخدم المسجل
       const authUser = localStorage.getItem("authUser");
 
       if (!authUser) {
@@ -302,83 +299,74 @@ export default function AccountingPage() {
       }
 
       if (!parsedUser.username) {
-        throw new Error("بيانات المستخدم غير مكتملة.");
+        throw new Error("اسم المستخدم غير موجود.");
       }
 
-      /* -----------------------------------------------
-         2. GET USER FROM DATABASE
-      ----------------------------------------------- */
-
-      const dbUser = await getUserByUsername(parsedUser.username);
+      // 2. جلب المستخدم من Supabase
+      const dbUser = await getUserByUsername(parsedUser.username.trim());
 
       if (!dbUser) {
-        throw new Error("تعذر العثور على المستخدم في قاعدة البيانات.");
+        throw new Error("لم يتم العثور على المستخدم في جدول users.");
       }
 
       if (dbUser.type === "platform") {
-        throw new Error("لا يمكن لحساب المنصة الدخول إلى محاسبة الشركات.");
+        throw new Error("حساب المنصة لا يمكنه الدخول إلى محاسبة الشركات.");
       }
 
-      /* -----------------------------------------------
-         3. GET COMPANY ID
-      ----------------------------------------------- */
-
-      const currentCompanyId = String(dbUser.companyId || "");
+      // 3. معرف الشركة
+      const currentCompanyId = String(dbUser.companyId || "").trim();
 
       if (!currentCompanyId) {
-        throw new Error("المستخدم غير مرتبط بشركة.");
+        throw new Error(
+          `المستخدم ${dbUser.username} غير مرتبط بأي شركة في Supabase.`,
+        );
       }
 
-      /* -----------------------------------------------
-         4. GET COMPANY DATA
-      ----------------------------------------------- */
+      console.log("Accounting Dashboard - User:", dbUser);
+      console.log("Accounting Dashboard - Company ID:", currentCompanyId);
 
-      const results = await Promise.allSettled([
+      // 4. جلب جميع البيانات
+      // نستخدم Promise.all حتى يظهر الخطأ الحقيقي بدل إخفائه.
+      const [
+        accounts,
+        warehouseStocks,
+        inventoryMovements,
+        journals,
+        activityLogs,
+      ] = await Promise.all([
         getAccounts(currentCompanyId),
+
         getCompanyWarehouseStocks(currentCompanyId),
+
         getInventoryMovements(currentCompanyId),
+
         getJournals(currentCompanyId),
+
         getActivityLogs(currentCompanyId),
       ]);
 
-      /* -----------------------------------------------
-         5. HANDLE RESULTS
-      ----------------------------------------------- */
+      // 5. التأكد من أن النتائج مصفوفات
+      if (
+        !Array.isArray(accounts) ||
+        !Array.isArray(warehouseStocks) ||
+        !Array.isArray(inventoryMovements) ||
+        !Array.isArray(journals) ||
+        !Array.isArray(activityLogs)
+      ) {
+        throw new Error("أحد استعلامات Supabase لم يُرجع مصفوفة بيانات صحيحة.");
+      }
 
-      const getRecords = <T extends { companyId?: string | number }>(
-        index: number,
-      ): T[] => {
-        const result = results[index];
+      // 6. تسجيل عدد النتائج للتشخيص
+      console.table({
+        accounts: accounts.length,
+        warehouseStocks: warehouseStocks.length,
+        inventoryMovements: inventoryMovements.length,
+        journals: journals.length,
+        activityLogs: activityLogs.length,
+      });
 
-        if (!result || result.status !== "fulfilled") {
-          if (result?.status === "rejected") {
-            console.error(
-              `تعذر تحميل مصدر البيانات رقم ${index + 1}:`,
-              result.reason,
-            );
-          }
-
-          return [];
-        }
-
-        const records: unknown = result.value;
-
-        if (!Array.isArray(records)) {
-          return [];
-        }
-
-        return (records as T[]).filter(
-          (record) => String(record.companyId) === currentCompanyId,
-        );
-      };
-
-      /* -----------------------------------------------
-         6. ACTIVITY LOGS
-      ----------------------------------------------- */
-
-      const activityLogs = getRecords<ActivityLog>(4);
-
-      const latestActivityLogs = activityLogs
+      // 7. ترتيب النشاطات
+      const latestActivityLogs = [...activityLogs]
         .sort((a, b) => {
           const dateA = new Date(a.createdAt || 0).getTime();
           const dateB = new Date(b.createdAt || 0).getTime();
@@ -387,34 +375,23 @@ export default function AccountingPage() {
         })
         .slice(0, 8);
 
-      /* -----------------------------------------------
-         7. UPDATE DASHBOARD DATA
-      ----------------------------------------------- */
-
+      // 8. تحديث الصفحة
       setData({
-        accounts: getRecords(0),
-        warehouseStocks: getRecords(1),
-        inventoryMovements: getRecords(2),
-        journals: getRecords(3),
+        accounts,
+        warehouseStocks,
+        inventoryMovements,
+        journals,
         activityLogs: latestActivityLogs,
       });
     } catch (err: unknown) {
-      console.error("Accounting dashboard error:", err);
+      console.error("Accounting Dashboard Supabase Error:", err);
 
-      const error = err as {
-        message?: string;
-        response?: {
-          data?: {
-            message?: string;
-          };
-        };
-      };
+      const message =
+        err instanceof Error
+          ? err.message
+          : "حدث خطأ غير معروف أثناء تحميل البيانات.";
 
-      setError(
-        error.response?.data?.message ||
-          error.message ||
-          "حدث خطأ أثناء تحميل بيانات لوحة المحاسبة.",
-      );
+      setError(message);
     } finally {
       setLoading(false);
     }

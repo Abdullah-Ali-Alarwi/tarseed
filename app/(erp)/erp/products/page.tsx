@@ -1,407 +1,629 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  FiPackage,
-  FiPlus,
-  FiSearch,
-  FiEdit,
-  FiTrash2,
-  FiRefreshCw,
-  FiAlertCircle,
-  FiArrowLeft,
-} from "react-icons/fi";
-import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
 
-const API = axios.create({
-  baseURL: "http://localhost:3001",
-});
-
-interface Product {
+type Product = {
   id: string;
   companyId: string;
   name: string;
-  sku: string;
-  barcode?: string;
-  categoryId?: string;
-  categoryName?: string;
-  unitId?: string;
-  unitName?: string;
-  warehouseId?: string;
-  purchasePrice?: number;
-  sellingPrice?: number;
-  currentStock?: number;
-  minStock?: number;
-  description?: string;
-  status: "active" | "inactive";
-}
-
-interface Category {
-  id: string;
-  companyId: string;
-  name: string;
-  code?: string;
-  status: string;
-}
-
-const getCookie = (name: string) => {
-  const cookie = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith(`${name}=`));
-
-  return cookie ? decodeURIComponent(cookie.substring(name.length + 1)) : "";
+  sku: string | null;
+  barcode: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  unitId: string | null;
+  unitName: string | null;
+  warehouseId: string | null;
+  purchasePrice: number | string | null;
+  sellingPrice: number | string | null;
+  currentStock: number | string | null;
+  minStock: number | string | null;
+  description: string | null;
+  status: string | null;
+  createdAt: string | null;
+  trackInventory: boolean | null;
+  itemId: string | null;
+  extra: Record<string, unknown> | null;
+  updatedAt: string | null;
 };
 
-export default function ProductsPage() {
-  const [companyId, setCompanyId] = useState("");
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+type StockFilter = "all" | "available" | "low" | "out";
+type StatusFilter = "all" | "active" | "inactive";
 
+const numberValue = (value: number | string | null | undefined) => {
+  const result = Number(value ?? 0);
+  return Number.isFinite(result) ? result : 0;
+};
+
+const formatNumber = (value: number | string | null | undefined) =>
+  new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(numberValue(value));
+
+const formatCurrency = (value: number | string | null | undefined) =>
+  `${formatNumber(value)} ر.ي`;
+
+export default function ProductsPage() {
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [stockFilter, setStockFilter] = useState<StockFilter>("all");
 
+  const [companyId, setCompanyId] = useState("");
+
+  // الحصول على الشركة الحالية
   useEffect(() => {
-    initialize();
+    try {
+      const storedUser = localStorage.getItem("authUser");
+
+      if (!storedUser) {
+        setError("لم يتم العثور على بيانات المستخدم. يرجى تسجيل الدخول.");
+        setLoading(false);
+        return;
+      }
+
+      const user = JSON.parse(storedUser);
+
+      if (!user.companyId) {
+        setError("لم يتم العثور على الشركة المرتبطة بهذا المستخدم.");
+        setLoading(false);
+        return;
+      }
+
+      setCompanyId(user.companyId);
+    } catch {
+      setError("تعذر قراءة بيانات المستخدم.");
+      setLoading(false);
+    }
   }, []);
 
-  const initialize = async () => {
+  // جلب الأصناف من Supabase
+  const fetchProducts = useCallback(async () => {
+    if (!companyId) return;
+
+    setLoading(true);
+    setError("");
+
     try {
-      const type = getCookie("type");
+      const { data, error: fetchError } = await supabase
+        .from("products")
+        .select("*")
+        .eq("companyId", companyId)
+        .order("createdAt", { ascending: false });
 
-      if (!type || type === "platform") {
-        toast.error("هذه الصفحة مخصصة لمستخدمي الشركات");
-        return;
+      if (fetchError) {
+        throw fetchError;
       }
 
-      const currentCompanyId = getCookie("companyId");
-
-      if (!currentCompanyId) {
-        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
-        return;
-      }
-
-      setCompanyId(currentCompanyId);
-      await loadData(currentCompanyId);
-    } catch (error) {
-      console.error(error);
-      toast.error("حدث خطأ أثناء تحميل الصفحة");
+      setProducts((data ?? []) as Product[]);
+    } catch (err) {
+      console.error("Products fetch error:", err);
+      setError("حدث خطأ أثناء تحميل الأصناف. يرجى المحاولة مرة أخرى.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [companyId]);
 
-  const loadData = async (currentCompanyId: string) => {
-    try {
-      const [productsRes, categoriesRes] = await Promise.all([
-        API.get("/products", {
-          params: { companyId: currentCompanyId },
-        }),
-        API.get("/categories", {
-          params: { companyId: currentCompanyId },
-        }),
-      ]);
-
-      setProducts(productsRes.data);
-      setCategories(categoriesRes.data);
-    } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحميل المنتجات");
+  useEffect(() => {
+    if (companyId) {
+      fetchProducts();
     }
-  };
+  }, [companyId, fetchProducts]);
 
-  const handleDelete = async (product: Product) => {
-    const confirmed = window.confirm(`هل تريد حذف المنتج ${product.name}؟`);
+  // التصنيفات الموجودة في الأصناف
+  const categories = useMemo(() => {
+    const uniqueCategories = new Map<string, string>();
 
-    if (!confirmed) return;
+    products.forEach((product) => {
+      if (product.categoryId) {
+        uniqueCategories.set(
+          product.categoryId,
+          product.categoryName || "بدون اسم",
+        );
+      }
+    });
 
-    try {
-      await API.delete(`/products/${product.id}`);
+    return Array.from(uniqueCategories.entries()).map(([id, name]) => ({
+      id,
+      name,
+    }));
+  }, [products]);
 
-      setProducts((prev) => prev.filter((item) => item.id !== product.id));
+  // الإحصائيات
+  const stats = useMemo(() => {
+    const activeProducts = products.filter(
+      (product) => product.status === "active",
+    );
 
-      toast.success("تم حذف المنتج بنجاح");
-    } catch (error) {
-      console.error(error);
-      toast.error("تعذر حذف المنتج");
-    }
-  };
+    const inactiveProducts = products.filter(
+      (product) => product.status !== "active",
+    );
 
+    const inventoryProducts = products.filter(
+      (product) => product.trackInventory !== false,
+    );
+
+    const lowStockProducts = inventoryProducts.filter((product) => {
+      const stock = numberValue(product.currentStock);
+      const minStock = numberValue(product.minStock);
+
+      return stock > 0 && stock <= minStock;
+    });
+
+    const outOfStockProducts = inventoryProducts.filter(
+      (product) => numberValue(product.currentStock) <= 0,
+    );
+
+    return {
+      total: products.length,
+      active: activeProducts.length,
+      inactive: inactiveProducts.length,
+      lowStock: lowStockProducts.length,
+      outOfStock: outOfStockProducts.length,
+    };
+  }, [products]);
+
+  // البحث والتصفية
   const filteredProducts = useMemo(() => {
-    const value = search.trim().toLowerCase();
-
     return products.filter((product) => {
+      const searchValue = search.trim().toLowerCase();
+
       const matchesSearch =
-        !value ||
-        product.name?.toLowerCase().includes(value) ||
-        product.sku?.toLowerCase().includes(value) ||
-        product.barcode?.toLowerCase().includes(value) ||
-        product.categoryName?.toLowerCase().includes(value);
+        !searchValue ||
+        product.name?.toLowerCase().includes(searchValue) ||
+        product.sku?.toLowerCase().includes(searchValue) ||
+        product.barcode?.toLowerCase().includes(searchValue);
 
       const matchesCategory =
-        categoryFilter === "all" ||
-        String(product.categoryId) === categoryFilter;
+        categoryFilter === "all" || product.categoryId === categoryFilter;
 
-      return matchesSearch && matchesCategory;
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "active"
+          ? product.status === "active"
+          : product.status !== "active");
+
+      const stock = numberValue(product.currentStock);
+      const minStock = numberValue(product.minStock);
+      const tracksInventory = product.trackInventory !== false;
+
+      let matchesStock = true;
+
+      if (stockFilter === "available") {
+        matchesStock = !tracksInventory || stock > minStock;
+      } else if (stockFilter === "low") {
+        matchesStock = tracksInventory && stock > 0 && stock <= minStock;
+      } else if (stockFilter === "out") {
+        matchesStock = tracksInventory && stock <= 0;
+      }
+
+      return matchesSearch && matchesCategory && matchesStatus && matchesStock;
     });
-  }, [products, search, categoryFilter]);
+  }, [products, search, categoryFilter, statusFilter, stockFilter]);
 
-  const activeProducts = products.filter(
-    (item) => item.status === "active",
-  ).length;
+  const getStockStatus = (product: Product) => {
+    if (product.trackInventory === false) {
+      return {
+        label: "غير متتبع",
+        className: "bg-slate-100 text-slate-600",
+      };
+    }
 
-  const inactiveProducts = products.filter(
-    (item) => item.status === "inactive",
-  ).length;
+    const stock = numberValue(product.currentStock);
+    const minStock = numberValue(product.minStock);
 
-  const lowStockProducts = products.filter(
-    (item) => Number(item.currentStock || 0) <= Number(item.minStock || 0),
-  ).length;
+    if (stock <= 0) {
+      return {
+        label: "نفد المخزون",
+        className: "bg-red-50 text-red-600",
+      };
+    }
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <FiRefreshCw className="animate-spin text-3xl text-blue-600" />
-      </div>
-    );
-  }
+    if (stock <= minStock) {
+      return {
+        label: "مخزون منخفض",
+        className: "bg-amber-50 text-amber-700",
+      };
+    }
 
-  if (!companyId) {
-    return (
-      <div
-        dir="rtl"
-        className="m-6 rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700"
-      >
-        تعذر تحديد الشركة المرتبطة بالمستخدم.
-      </div>
-    );
-  }
+    return {
+      label: "متوفر",
+      className: "bg-emerald-50 text-emerald-700",
+    };
+  };
+
+  const getProductStatus = (status: string | null) => {
+    if (status === "active") {
+      return {
+        label: "نشط",
+        className: "bg-emerald-50 text-emerald-700",
+      };
+    }
+
+    return {
+      label: "غير نشط",
+      className: "bg-slate-100 text-slate-600",
+    };
+  };
 
   return (
-    <div dir="rtl" className="space-y-5 p-4 md:p-6">
-      {/* HEADER */}
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
+      {/* العنوان */}
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">الأصناف</h1>
 
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-blue-100 p-3 text-blue-700">
-            <FiPackage size={25} />
-          </div>
-
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">المنتجات</h1>
-
-            <p className="mt-1 text-sm text-gray-500">
-              إدارة المنتجات المسجلة في الشركة
-            </p>
-          </div>
+          <p className="mt-1 text-sm text-slate-500">
+            إدارة الأصناف والمنتجات والأسعار والمخزون
+          </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => loadData(companyId)}
-            className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600 hover:bg-gray-50"
+            onClick={fetchProducts}
+            disabled={loading || !companyId}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            <FiRefreshCw />
-            تحديث
+            ↻ تحديث
           </button>
 
           <Link
             href="/erp/products/new"
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700"
+            className="rounded-lg bg-[#0E1F33] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
           >
-            <FiPlus size={18} />
-            إضافة منتج جديد
+            + إضافة صنف
           </Link>
         </div>
       </div>
 
-      {/* STATISTICS */}
+      {/* رسالة الخطأ */}
+      {error && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <span>{error}</span>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard title="إجمالي المنتجات" value={products.length} />
+          <button onClick={fetchProducts} className="font-semibold underline">
+            إعادة المحاولة
+          </button>
+        </div>
+      )}
 
-        <StatCard title="المنتجات النشطة" value={activeProducts} />
+      {/* الإحصائيات */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard
+          title="إجمالي الأصناف"
+          value={stats.total}
+          icon="▦"
+          color="blue"
+        />
 
-        <StatCard title="المنتجات غير النشطة" value={inactiveProducts} />
+        <StatCard
+          title="الأصناف النشطة"
+          value={stats.active}
+          icon="✓"
+          color="green"
+        />
 
-        <StatCard title="مخزون منخفض" value={lowStockProducts} />
+        <StatCard
+          title="الأصناف غير النشطة"
+          value={stats.inactive}
+          icon="○"
+          color="gray"
+        />
+
+        <StatCard
+          title="مخزون منخفض"
+          value={stats.lowStock}
+          icon="!"
+          color="amber"
+        />
+
+        <StatCard
+          title="نفد المخزون"
+          value={stats.outOfStock}
+          icon="↓"
+          color="red"
+        />
       </div>
 
-      {/* SEARCH AND FILTER */}
+      {/* البحث والتصفية */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="relative">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ابحث بالاسم أو الكود أو الباركود..."
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:bg-white"
+            />
+          </div>
 
-      <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 md:flex-row">
-        <div className="relative flex-1">
-          <FiSearch className="absolute right-3 top-3.5 text-gray-400" />
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none focus:border-slate-400"
+          >
+            <option value="all">جميع التصنيفات</option>
 
-          <input
-            type="text"
-            placeholder="ابحث باسم المنتج أو رقم الصنف أو الباركود..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 py-3 pr-10 pl-4 text-sm outline-none focus:border-blue-500"
-          />
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none focus:border-slate-400"
+          >
+            <option value="all">جميع الحالات</option>
+            <option value="active">نشط</option>
+            <option value="inactive">غير نشط</option>
+          </select>
+
+          <select
+            value={stockFilter}
+            onChange={(e) => setStockFilter(e.target.value as StockFilter)}
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none focus:border-slate-400"
+          >
+            <option value="all">جميع حالات المخزون</option>
+            <option value="available">متوفر</option>
+            <option value="low">مخزون منخفض</option>
+            <option value="out">نفد المخزون</option>
+          </select>
         </div>
 
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-500"
-        >
-          <option value="all">جميع المجموعات</option>
+        <div className="mt-3 flex items-center justify-between">
+          <p className="text-xs text-slate-500">
+            عدد النتائج:{" "}
+            <span className="font-bold text-slate-700">
+              {filteredProducts.length}
+            </span>
+          </p>
 
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
+          <button
+            onClick={() => {
+              setSearch("");
+              setCategoryFilter("all");
+              setStatusFilter("all");
+              setStockFilter("all");
+            }}
+            className="text-xs font-medium text-slate-500 hover:text-slate-800"
+          >
+            إعادة ضبط الفلاتر
+          </button>
+        </div>
       </div>
 
-      {/* PRODUCTS TABLE */}
+      {/* جدول الأصناف */}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <h2 className="font-bold text-slate-800">قائمة الأصناف</h2>
 
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <div className="flex items-center justify-between border-b border-gray-200 p-4">
-          <div>
-            <h2 className="font-bold text-gray-800">قائمة المنتجات</h2>
-
-            <p className="mt-1 text-xs text-gray-500">
-              عدد النتائج: {filteredProducts.length}
-            </p>
-          </div>
+          <span className="text-xs text-slate-400">
+            {filteredProducts.length} صنف
+          </span>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-right text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+          <table className="w-full min-w-[1100px] text-right text-sm">
+            <thead className="bg-slate-50 text-xs text-slate-500">
               <tr>
-                <th className="px-4 py-4">رقم الصنف</th>
-                <th className="px-4 py-4">اسم المنتج</th>
-                <th className="px-4 py-4">المجموعة</th>
-                <th className="px-4 py-4">الوحدة</th>
-                <th className="px-4 py-4">سعر الشراء</th>
-                <th className="px-4 py-4">سعر البيع</th>
-                <th className="px-4 py-4">المخزون</th>
-                <th className="px-4 py-4">الحالة</th>
-                <th className="px-4 py-4">الإجراءات</th>
+                <th className="px-5 py-4 font-semibold">الصنف</th>
+                <th className="px-4 py-4 font-semibold">الكود</th>
+                <th className="px-4 py-4 font-semibold">التصنيف</th>
+                <th className="px-4 py-4 font-semibold">الوحدة</th>
+                <th className="px-4 py-4 font-semibold">سعر الشراء</th>
+                <th className="px-4 py-4 font-semibold">سعر البيع</th>
+                <th className="px-4 py-4 font-semibold">الرصيد الحالي</th>
+                <th className="px-4 py-4 font-semibold">حالة المخزون</th>
+                <th className="px-4 py-4 font-semibold">الحالة</th>
+                <th className="px-5 py-4 text-center font-semibold">
+                  الإجراءات
+                </th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-gray-100">
-              {filteredProducts.map((product) => (
-                <tr key={product.id} className="transition hover:bg-gray-50">
-                  <td className="px-4 py-4 font-mono font-semibold text-blue-700">
-                    {product.sku}
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <div className="font-semibold text-gray-800">
-                      {product.name}
-                    </div>
-
-                    {product.barcode && (
-                      <div className="mt-1 text-xs text-gray-400">
-                        {product.barcode}
-                      </div>
-                    )}
-                  </td>
-
-                  <td className="px-4 py-4 text-gray-600">
-                    {product.categoryName || "—"}
-                  </td>
-
-                  <td className="px-4 py-4 text-gray-600">
-                    {product.unitName || "—"}
-                  </td>
-
-                  <td className="px-4 py-4">
-                    {Number(product.purchasePrice || 0).toLocaleString()}
-                  </td>
-
-                  <td className="px-4 py-4 font-semibold">
-                    {Number(product.sellingPrice || 0).toLocaleString()}
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <span
-                      className={
-                        Number(product.currentStock || 0) <=
-                        Number(product.minStock || 0)
-                          ? "font-semibold text-red-600"
-                          : "font-semibold text-green-600"
-                      }
-                    >
-                      {product.currentStock ?? 0}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs ${
-                        product.status === "active"
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {product.status === "active" ? "نشط" : "غير نشط"}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/erp/products/new?id=${product.id}`}
-                        title="تعديل المنتج"
-                        className="rounded-lg bg-blue-50 p-2 text-blue-600 hover:bg-blue-100"
-                      >
-                        <FiEdit size={17} />
-                      </Link>
-
-                      <button
-                        onClick={() => handleDelete(product)}
-                        title="حذف المنتج"
-                        className="rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100"
-                      >
-                        <FiTrash2 size={17} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-
-              {filteredProducts.length === 0 && (
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-14 text-center text-gray-400">
-                    <FiAlertCircle className="mx-auto mb-3 text-3xl" />
-
-                    {search
-                      ? "لا توجد نتائج مطابقة للبحث"
-                      : "لا توجد منتجات حتى الآن"}
+                  <td
+                    colSpan={10}
+                    className="px-5 py-16 text-center text-slate-500"
+                  >
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
+                      جاري تحميل الأصناف...
+                    </div>
                   </td>
                 </tr>
+              ) : filteredProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-5 py-16 text-center">
+                    <div className="text-3xl text-slate-300">▦</div>
+
+                    <p className="mt-3 font-medium text-slate-700">
+                      لا توجد أصناف
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-400">
+                      لم يتم العثور على أصناف تطابق البحث أو الفلاتر المحددة.
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                filteredProducts.map((product) => {
+                  const stockStatus = getStockStatus(product);
+                  const productStatus = getProductStatus(product.status);
+
+                  return (
+                    <tr
+                      key={product.id}
+                      className="transition hover:bg-slate-50/80"
+                    >
+                      {/* اسم الصنف */}
+                      <td className="px-5 py-4">
+                        <div>
+                          <p className="font-semibold text-slate-800">
+                            {product.name}
+                          </p>
+
+                          {product.barcode && (
+                            <p className="mt-1 text-xs text-slate-400">
+                              باركود: {product.barcode}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* الكود */}
+                      <td className="px-4 py-4 font-medium text-slate-600">
+                        {product.sku || "—"}
+                      </td>
+
+                      {/* التصنيف */}
+                      <td className="px-4 py-4 text-slate-600">
+                        {product.categoryName || "بدون تصنيف"}
+                      </td>
+
+                      {/* الوحدة */}
+                      <td className="px-4 py-4 text-slate-600">
+                        {product.unitName || "—"}
+                      </td>
+
+                      {/* سعر الشراء */}
+                      <td className="px-4 py-4 text-slate-600">
+                        {formatCurrency(product.purchasePrice)}
+                      </td>
+
+                      {/* سعر البيع */}
+                      <td className="px-4 py-4 font-semibold text-slate-800">
+                        {formatCurrency(product.sellingPrice)}
+                      </td>
+
+                      {/* المخزون */}
+                      <td className="px-4 py-4">
+                        {product.trackInventory === false ? (
+                          <span className="text-slate-400">—</span>
+                        ) : (
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              {formatNumber(product.currentStock)}
+                            </span>
+
+                            <span className="mr-1 text-xs text-slate-400">
+                              {product.unitName || ""}
+                            </span>
+
+                            <p className="mt-1 text-xs text-slate-400">
+                              الحد الأدنى: {formatNumber(product.minStock)}
+                            </p>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* حالة المخزون */}
+                      <td className="px-4 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${stockStatus.className}`}
+                        >
+                          {stockStatus.label}
+                        </span>
+                      </td>
+
+                      {/* الحالة */}
+                      <td className="px-4 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${productStatus.className}`}
+                        >
+                          {productStatus.label}
+                        </span>
+                      </td>
+
+                      {/* الإجراءات */}
+                      <td className="px-5 py-4">
+                        <div className="flex items-center justify-center gap-2">
+                          <Link
+                            href={`/erp/products/${product.id}`}
+                            title="التفاصيل"
+                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+                          >
+                            التفاصيل
+                          </Link>
+
+                          <Link
+                            href={`/erp/products/${product.id}/edit`}
+                            title="تعديل"
+                            className="rounded-lg border border-blue-100 px-3 py-1.5 text-xs font-medium text-blue-600 transition hover:bg-blue-50"
+                          >
+                            تعديل
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
-      </div>
 
-      <div className="flex items-center gap-2 text-xs text-gray-400">
-        <FiArrowLeft />
-        تتم إضافة المنتجات من خلال صفحة إضافة منتج جديد.
+        {/* أسفل الجدول */}
+        {!loading && products.length > 0 && (
+          <div className="flex flex-col justify-between gap-2 border-t border-slate-100 px-5 py-4 text-xs text-slate-500 sm:flex-row">
+            <span>
+              عرض {filteredProducts.length} من أصل {products.length} صنف
+            </span>
+
+            <span>البيانات معروضة حسب الشركة الحالية</span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function StatCard({ title, value }: { title: string; value: number }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <p className="text-sm text-gray-500">{title}</p>
+// بطاقة الإحصائيات
+function StatCard({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: number;
+  icon: string;
+  color: "blue" | "green" | "gray" | "amber" | "red";
+}) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600",
+    green: "bg-emerald-50 text-emerald-600",
+    gray: "bg-slate-100 text-slate-600",
+    amber: "bg-amber-50 text-amber-600",
+    red: "bg-red-50 text-red-600",
+  };
 
-      <h3 className="mt-3 text-2xl font-bold text-gray-800">
-        {value.toLocaleString()}
-      </h3>
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-500">{title}</p>
+
+        <div
+          className={`flex h-10 w-10 items-center justify-center rounded-xl text-lg font-bold ${colors[color]}`}
+        >
+          {icon}
+        </div>
+      </div>
+
+      <p className="mt-4 text-2xl font-bold text-slate-800">
+        {formatNumber(value)}
+      </p>
     </div>
   );
 }

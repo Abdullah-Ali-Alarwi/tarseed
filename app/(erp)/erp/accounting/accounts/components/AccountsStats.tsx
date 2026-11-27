@@ -11,7 +11,8 @@ import {
   FiPackage,
 } from "react-icons/fi";
 
-import { Account } from "../types";
+import type { Account } from "../types";
+
 import { formatMoney } from "../utils";
 
 interface Props {
@@ -21,22 +22,21 @@ interface Props {
 
 export default function AccountsStats({ accounts, inventoryValue = 0 }: Props) {
   const stats = useMemo(() => {
-    const activeAccounts = accounts.filter((account) => account.isActive);
+    const activeAccounts = accounts.filter(
+      (account) => account.isActive !== false,
+    );
 
-    // الحسابات النهائية فقط
     const postingAccounts = activeAccounts.filter(
       (account) => !account.isGroup && account.allowPosting,
     );
 
-    // حسابات الأصول النهائية باستثناء حساب المخزون
     const otherAssetBalances = postingAccounts
       .filter(
         (account) =>
           account.type === "asset" && String(account.code) !== "1104",
       )
-      .reduce((total, account) => total + Number(account.balance || 0), 0);
+      .reduce((total, account) => total + Number(account.balance ?? 0), 0);
 
-    // إجمالي الأصول مع إضافة قيمة المخزون مرة واحدة
     const totalAssets = otherAssetBalances + Number(inventoryValue || 0);
 
     const liabilityCount = activeAccounts.filter(

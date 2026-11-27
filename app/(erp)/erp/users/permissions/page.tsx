@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import axios from "axios";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
 import {
   FiShield,
@@ -22,7 +25,9 @@ import {
   FiSettings,
 } from "react-icons/fi";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+// ======================================
+// Types
+// ======================================
 
 type Permission = {
   view: boolean;
@@ -39,12 +44,32 @@ type Company = {
   rolePermissions?: RolePermissions;
 };
 
+type CurrentUser = {
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+  type: string;
+  companyId: string;
+  companyname?: string;
+  status?: string;
+  isActive?: boolean;
+};
+
+// ======================================
+// Roles
+// ======================================
+
 const roles = [
   { value: "accountant", label: "محاسب" },
   { value: "cashier", label: "كاشير" },
   { value: "manager", label: "مدير" },
   { value: "employee", label: "موظف" },
 ];
+
+// ======================================
+// Modules
+// ======================================
 
 const modules = [
   {
@@ -115,12 +140,20 @@ const modules = [
   },
 ];
 
+// ======================================
+// Labels
+// ======================================
+
 const actionLabels: Record<string, string> = {
   view: "عرض",
   create: "إضافة",
   update: "تعديل",
   delete: "حذف",
 };
+
+// ======================================
+// Default Permissions
+// ======================================
 
 function createDefaultPermissions(): RolePermissions {
   const result: RolePermissions = {};
@@ -136,7 +169,7 @@ function createDefaultPermissions(): RolePermissions {
         delete: false,
       };
 
-      // صلاحيات افتراضية للمحاسب
+      // المحاسب
       if (role.value === "accountant") {
         permission.view = true;
 
@@ -152,13 +185,9 @@ function createDefaultPermissions(): RolePermissions {
           permission.create = true;
           permission.update = true;
         }
-
-        if (module.key === "reports") {
-          permission.view = true;
-        }
       }
 
-      // صلاحيات افتراضية للكاشير
+      // الكاشير
       if (role.value === "cashier") {
         permission.view = [
           "dashboard",
@@ -173,7 +202,7 @@ function createDefaultPermissions(): RolePermissions {
         }
       }
 
-      // صلاحيات افتراضية للمدير
+      // المدير
       if (role.value === "manager") {
         permission.view = true;
         permission.create = true;
@@ -184,7 +213,7 @@ function createDefaultPermissions(): RolePermissions {
         }
       }
 
-      // صلاحيات افتراضية للموظف
+      // الموظف
       if (role.value === "employee") {
         permission.view = ["dashboard", "products", "inventory"].includes(
           module.key,
@@ -198,10 +227,16 @@ function createDefaultPermissions(): RolePermissions {
   return result;
 }
 
-function normalizePermissions(saved?: RolePermissions): RolePermissions {
+// ======================================
+// Normalize Permissions
+// ======================================
+
+function normalizePermissions(saved?: RolePermissions | null): RolePermissions {
   const defaults = createDefaultPermissions();
 
-  if (!saved) return defaults;
+  if (!saved || typeof saved !== "object") {
+    return defaults;
+  }
 
   roles.forEach((role) => {
     modules.forEach((module) => {
@@ -219,10 +254,47 @@ function normalizePermissions(saved?: RolePermissions): RolePermissions {
   return defaults;
 }
 
+// ======================================
+// Cookie Helper
+// ======================================
+
+function getCookie(name: string): string {
+  if (typeof document === "undefined") return "";
+
+  const cookie = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`));
+
+  if (!cookie) return "";
+
+  return decodeURIComponent(cookie.substring(name.length + 1));
+}
+
+// ======================================
+// Active User
+// ======================================
+
+function isActiveUser(user: CurrentUser): boolean {
+  return (
+    user.isActive !== false &&
+    user.status !== "inactive" &&
+    user.status !== "غير نشط"
+  );
+}
+
+// ======================================
+// Main Page
+// ======================================
+
 export default function PermissionsPage() {
+  const router = useRouter();
+
   const [company, setCompany] = useState<Company | null>(null);
 
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+
   const [companyId, setCompanyId] = useState("");
+
   const [selectedRole, setSelectedRole] = useState("accountant");
 
   const [permissions, setPermissions] = useState<RolePermissions>(
@@ -232,64 +304,140 @@ export default function PermissionsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // ======================================
+  // Load Permissions
+  // ======================================
+
   const fetchPermissions = useCallback(async () => {
+    setLoading(true);
+
     try {
-      const storedUser = localStorage.getItem("authUser");
+      // قراءة اسم المستخدم من Cookie
+      const username = getCookie("username");
 
-      if (!storedUser) {
+      if (!username) {
         toast.error("يرجى تسجيل الدخول أولاً");
+        router.replace("/login");
         return;
       }
 
-      const user = JSON.parse(storedUser);
+      // جلب المستخدم الحالي
+      const userData = await getUserByUsername(username);
 
-      const id = String(user.companyId || user.company?.id || "");
-
-      if (!id) {
-        toast.error("لم يتم تحديد الشركة الحالية");
+      if (!userData) {
+        toast.error("تعذر العثور على المستخدم الحالي");
+        router.replace("/login");
         return;
       }
 
-      setCompanyId(id);
+      const user = userData as CurrentUser;
 
-      const response = await axios.get(`${API_URL}/companies/${id}`);
+      // منع مستخدمي منصة Wezzan
+      if (user.type === "platform") {
+        toast.error("هذه الصفحة مخصصة لمستخدمي الشركات");
+        router.replace("/erp/dashboard");
+        return;
+      }
 
-      const companyData: Company = response.data;
+      // التحقق من نشاط المستخدم
+      if (!isActiveUser(user)) {
+        toast.error("حسابك غير نشط");
+        router.replace("/login");
+        return;
+      }
 
-      setCompany(companyData);
+      // التحقق من الصلاحية الإدارية
+      const role = user.role?.toLowerCase();
 
-      setPermissions(normalizePermissions(companyData.rolePermissions));
+      if (!["owner", "manager"].includes(role)) {
+        toast.error("ليس لديك صلاحية إدارة إعدادات المستخدمين");
+        router.replace("/erp/dashboard");
+        return;
+      }
+
+      // التحقق من الشركة
+      if (!user.companyId) {
+        toast.error("المستخدم غير مرتبط بشركة");
+        router.replace("/erp/dashboard");
+        return;
+      }
+
+      setCurrentUser(user);
+      setCompanyId(user.companyId);
+
+      // جلب الشركة من Supabase
+      const { data: companyData, error } = await supabase
+        .from("companies")
+        .select('id, name, "rolePermissions"')
+        .eq("id", user.companyId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Load company permissions error:", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        });
+
+        toast.error("تعذر تحميل إعدادات الشركة");
+        return;
+      }
+
+      if (!companyData) {
+        toast.error("لم يتم العثور على الشركة");
+        return;
+      }
+
+      const loadedCompany: Company = {
+        id: companyData.id,
+        name: companyData.name,
+        rolePermissions: companyData.rolePermissions,
+      };
+
+      setCompany(loadedCompany);
+
+      setPermissions(normalizePermissions(loadedCompany.rolePermissions));
     } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحميل إعدادات الصلاحيات");
+      console.error("Fetch permissions error:", error);
+
+      toast.error("حدث خطأ أثناء تحميل الصلاحيات");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [router]);
+
+  // ======================================
+  // Initial Load
+  // ======================================
 
   useEffect(() => {
     fetchPermissions();
   }, [fetchPermissions]);
 
-  // تغيير صلاحية واحدة
+  // ======================================
+  // Toggle Single Permission
+  // ======================================
+
   const togglePermission = (moduleKey: string, action: string) => {
     setPermissions((prev) => {
       const updated = structuredClone(prev);
 
       const current = updated[selectedRole][moduleKey];
 
-      current[action as keyof Permission] =
-        !current[action as keyof Permission];
+      const key = action as keyof Permission;
 
-      // لا يمكن منح إضافة أو تعديل أو حذف دون عرض
+      current[key] = !current[key];
+
+      // لا يمكن تنفيذ العمليات دون صلاحية العرض
       if (action === "view" && !current.view) {
         current.create = false;
         current.update = false;
         current.delete = false;
       }
 
-      // منح العمليات يتطلب منح العرض
-      if (action !== "view" && current[action as keyof Permission]) {
+      // العمليات تتطلب العرض
+      if (action !== "view" && current[key]) {
         current.view = true;
       }
 
@@ -297,7 +445,10 @@ export default function PermissionsPage() {
     });
   };
 
-  // تحديد كل صلاحيات القسم
+  // ======================================
+  // Toggle All Module
+  // ======================================
+
   const toggleAllModule = (moduleKey: string) => {
     const module = modules.find((item) => item.key === moduleKey);
 
@@ -320,7 +471,10 @@ export default function PermissionsPage() {
     });
   };
 
-  // تحديد جميع صلاحيات الدور
+  // ======================================
+  // Toggle All Role Permissions
+  // ======================================
+
   const toggleAllPermissions = (enabled: boolean) => {
     setPermissions((prev) => {
       const updated = structuredClone(prev);
@@ -336,32 +490,93 @@ export default function PermissionsPage() {
     });
   };
 
-  // حفظ الصلاحيات داخل سجل الشركة
+  // ======================================
+  // Save Permissions
+  // ======================================
+
   const handleSave = async () => {
-    if (!companyId || !company) {
+    if (!companyId || !company || !currentUser) {
       toast.error("بيانات الشركة غير مكتملة");
+      return;
+    }
+
+    if (!["owner", "manager"].includes(currentUser.role?.toLowerCase())) {
+      toast.error("ليس لديك صلاحية حفظ إعدادات الصلاحيات");
       return;
     }
 
     setSaving(true);
 
     try {
-      await axios.patch(`${API_URL}/companies/${companyId}`, {
-        rolePermissions: permissions,
-      });
+      // حفظ الصلاحيات داخل سجل الشركة
+      const { data, error } = await supabase
+        .from("companies")
+        .update({
+          rolePermissions: permissions,
+        })
+        .eq("id", companyId)
+        .select('id, name, "rolePermissions"')
+        .maybeSingle();
+
+      if (error) {
+        console.error("Save permissions error:", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        });
+
+        toast.error(error.message || "حدث خطأ أثناء حفظ الصلاحيات");
+
+        return;
+      }
+
+      if (!data) {
+        console.error("Permissions update returned no rows:", {
+          companyId,
+          currentUserId: currentUser.id,
+          role: currentUser.role,
+        });
+
+        toast.error(
+          "لم يتم تحديث الصلاحيات. تحقق من سياسات RLS لجدول companies.",
+        );
+
+        return;
+      }
+
+      // تحديث الحالة المحلية
+      const updatedCompany: Company = {
+        id: data.id,
+        name: data.name,
+        rolePermissions: data.rolePermissions,
+      };
+
+      setCompany(updatedCompany);
+
+      setPermissions(normalizePermissions(data.rolePermissions));
 
       toast.success("تم حفظ الصلاحيات بنجاح");
     } catch (error) {
-      console.error(error);
-      toast.error("حدث خطأ أثناء حفظ الصلاحيات");
+      console.error("Unexpected save permissions error:", error);
+
+      toast.error("حدث خطأ غير متوقع أثناء حفظ الصلاحيات");
     } finally {
       setSaving(false);
     }
   };
 
+  // ======================================
+  // Selected Role
+  // ======================================
+
   const selectedRoleLabel = roles.find(
     (role) => role.value === selectedRole,
   )?.label;
+
+  // ======================================
+  // Loading
+  // ======================================
 
   if (loading) {
     return (
@@ -371,9 +586,14 @@ export default function PermissionsPage() {
     );
   }
 
+  // ======================================
+  // Page
+  // ======================================
+
   return (
-    <div dir="rtl" className="mx-auto max-w-7xl space-y-6 pb-10 ">
+    <div dir="rtl" className="mx-auto max-w-7xl space-y-6 pb-10">
       {/* Header */}
+
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="mb-2 text-sm text-slate-500">
@@ -388,8 +608,10 @@ export default function PermissionsPage() {
         </div>
 
         <button
+          type="button"
           onClick={fetchPermissions}
-          className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          disabled={loading || saving}
+          className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
         >
           <FiRefreshCw />
           تحديث
@@ -397,6 +619,7 @@ export default function PermissionsPage() {
       </div>
 
       {/* Company */}
+
       <div className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
           <FiShield size={22} />
@@ -406,12 +629,13 @@ export default function PermissionsPage() {
           <p className="text-xs text-slate-500">إعدادات صلاحيات الشركة</p>
 
           <p className="font-bold text-[#0E1F33]">
-            {company?.name || "الشركة الحالية"}
+            {company?.name || currentUser?.companyname || "الشركة الحالية"}
           </p>
         </div>
       </div>
 
-      {/* Role selection */}
+      {/* Role Selection */}
+
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="mb-4">
           <h2 className="font-bold text-[#0E1F33]">اختر الدور الوظيفي</h2>
@@ -425,6 +649,7 @@ export default function PermissionsPage() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {roles.map((role) => (
             <button
+              type="button"
               key={role.value}
               onClick={() => setSelectedRole(role.value)}
               className={`rounded-xl border p-4 text-center transition ${
@@ -441,7 +666,8 @@ export default function PermissionsPage() {
         </div>
       </div>
 
-      {/* Permission controls */}
+      {/* Permission Controls */}
+
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
         <div>
           <h3 className="font-bold text-[#0E1F33]">
@@ -455,6 +681,7 @@ export default function PermissionsPage() {
 
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={() => toggleAllPermissions(true)}
             className="rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-100"
           >
@@ -462,6 +689,7 @@ export default function PermissionsPage() {
           </button>
 
           <button
+            type="button"
             onClick={() => toggleAllPermissions(false)}
             className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100"
           >
@@ -470,7 +698,8 @@ export default function PermissionsPage() {
         </div>
       </div>
 
-      {/* Permissions table */}
+      {/* Permissions Table */}
+
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[650px] text-right">
@@ -578,6 +807,7 @@ export default function PermissionsPage() {
       </div>
 
       {/* Footer */}
+
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5">
         <div>
           <p className="text-sm font-bold text-[#0E1F33]">
@@ -590,8 +820,9 @@ export default function PermissionsPage() {
         </div>
 
         <button
+          type="button"
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || !company}
           className="flex items-center gap-2 rounded-lg bg-[#0E1F33] px-7 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
         >
           <FiSave size={17} />

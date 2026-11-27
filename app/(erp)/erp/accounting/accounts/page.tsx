@@ -2,44 +2,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-
 import { FiPlus, FiSearch, FiRefreshCw } from "react-icons/fi";
-
 import { toast } from "sonner";
-
-// ==========================================
-// Components
-// ==========================================
 
 import AccountsStats from "./components/AccountsStats";
 import AccountsTable from "./components/AccountsTable";
 import AccountModal from "./components/AccountModal";
 
-// ==========================================
-// Hooks
-// ==========================================
-
 import { useAccounts } from "./hooks/useAccounts";
 
-// ==========================================
-// Types
-// ==========================================
-
-import { Account, AccountFilters, AccountFormData } from "./types";
+import type {
+  Account,
+  AccountId,
+  AccountFilters,
+  AccountFormData,
+} from "./types";
 
 import type { User } from "@/lib/api/users";
-
-// ==========================================
-// API
-// ==========================================
-
 import { getUserByUsername } from "@/lib/api/users";
 
 // ==========================================
 // Helpers
 // ==========================================
 
-// قراءة Cookie
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
 
@@ -52,23 +37,17 @@ function getCookie(name: string): string | null {
   return decodeURIComponent(cookie.substring(name.length + 1));
 }
 
-// الحصول على اسم المستخدم الحالي
 function getCurrentUsername(): string | null {
-  // أولاً: Cookie
   const cookieUsername = getCookie("username");
 
-  if (cookieUsername) {
-    return cookieUsername;
-  }
+  if (cookieUsername) return cookieUsername;
 
-  // ثانياً: localStorage
   if (typeof window !== "undefined") {
     try {
       const authUser = localStorage.getItem("authUser");
 
       if (authUser) {
         const user = JSON.parse(authUser);
-
         return user.username || null;
       }
     } catch (error) {
@@ -86,33 +65,17 @@ function getCurrentUsername(): string | null {
 export default function AccountsPage() {
   const router = useRouter();
 
-  // ========================================
-  // User Data
-  // ========================================
-
+  // User
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-
-  // الشركة الحالية
   const [companyId, setCompanyId] = useState("");
-
-  // تحميل المستخدم
   const [userLoading, setUserLoading] = useState(true);
-
-  // خطأ المستخدم
   const [userError, setUserError] = useState("");
 
-  // ========================================
   // Modal
-  // ========================================
-
   const [isModalOpen, setIsModalOpen] = useState(false);
-
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
 
-  // ========================================
   // Filters
-  // ========================================
-
   const [filters, setFilters] = useState<AccountFilters>({
     search: "",
     type: "all",
@@ -120,7 +83,7 @@ export default function AccountsPage() {
   });
 
   // ========================================
-  // Get Current User
+  // Load Current User
   // ========================================
 
   useEffect(() => {
@@ -131,33 +94,28 @@ export default function AccountsPage() {
         setUserLoading(true);
         setUserError("");
 
-        // قراءة اسم المستخدم
         const username = getCurrentUsername();
 
         if (!username) {
           throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
         }
 
-        // جلب المستخدم من API
         const user = await getUserByUsername(username);
 
         if (!user) {
           throw new Error("المستخدم غير موجود في قاعدة البيانات");
         }
 
-        // منع مستخدمي المنصة
         if (user.type === "platform") {
           throw new Error(
             "لا يمكن لمستخدم المنصة الوصول إلى دليل حسابات الشركة",
           );
         }
 
-        // التأكد من وجود شركة
         if (!user.companyId) {
           throw new Error("هذا المستخدم غير مرتبط بأي شركة");
         }
 
-        // التحقق من حالة المستخدم
         if (user.isActive === false || user.status === "inactive") {
           throw new Error("حساب المستخدم غير نشط");
         }
@@ -169,13 +127,12 @@ export default function AccountsPage() {
       } catch (error) {
         console.error("Get Current User Error:", error);
 
-        const message =
-          error instanceof Error
-            ? error.message
-            : "حدث خطأ أثناء تحميل بيانات المستخدم";
-
         if (isMounted) {
-          setUserError(message);
+          setUserError(
+            error instanceof Error
+              ? error.message
+              : "حدث خطأ أثناء تحميل بيانات المستخدم",
+          );
         }
       } finally {
         if (isMounted) {
@@ -200,7 +157,6 @@ export default function AccountsPage() {
     loading,
     error,
     inventoryValue,
-
     fetchAccounts,
     updateAccount,
     deleteAccount,
@@ -215,7 +171,7 @@ export default function AccountsPage() {
     if (!companyId) return [];
 
     return accounts.filter(
-      (account) => String(account.companyId) === String(companyId),
+      (account) => String(account.companyId) === companyId,
     );
   }, [accounts, companyId]);
 
@@ -227,17 +183,14 @@ export default function AccountsPage() {
     return companyAccounts.filter((account) => {
       const search = filters.search.trim().toLowerCase();
 
-      // البحث
       const searchMatch =
         !search ||
-        account.name.toLowerCase().includes(search) ||
+        (account.name || "").toLowerCase().includes(search) ||
         String(account.code).toLowerCase().includes(search) ||
         (account.nameEn || "").toLowerCase().includes(search);
 
-      // نوع الحساب
       const typeMatch = filters.type === "all" || account.type === filters.type;
 
-      // حالة الحساب
       const isActive =
         account.isActive !== false && account.status !== "inactive";
 
@@ -262,9 +215,8 @@ export default function AccountsPage() {
   // ========================================
 
   const handleEdit = (account: Account) => {
-    if (String(account.companyId) !== String(companyId)) {
+    if (String(account.companyId) !== companyId) {
       toast.error("لا يمكنك تعديل حساب تابع لشركة أخرى");
-
       return;
     }
 
@@ -281,17 +233,17 @@ export default function AccountsPage() {
 
     if (!selectedAccount.id) {
       toast.error("لا يمكن تعديل حساب لا يحتوي على معرّف");
-
       return;
     }
 
     try {
-      // التأكد من ملكية الحساب
-      if (String(selectedAccount.companyId) !== String(companyId)) {
+      if (String(selectedAccount.companyId) !== companyId) {
         throw new Error("الحساب لا يتبع الشركة الحالية");
       }
 
       await updateAccount(selectedAccount.id, data);
+
+      await fetchAccounts();
 
       toast.success("تم تعديل الحساب بنجاح");
 
@@ -308,20 +260,18 @@ export default function AccountsPage() {
   // Delete Account
   // ========================================
 
-  const handleDelete = (id: string | number) => {
+  const handleDelete = (id: AccountId) => {
     const account = companyAccounts.find(
       (item) => String(item.id) === String(id),
     );
 
     if (!account) {
       toast.error("الحساب غير موجود ضمن الشركة الحالية");
-
       return;
     }
 
     if (!account.id) {
       toast.error("لا يمكن حذف حساب لا يحتوي على معرّف");
-
       return;
     }
 
@@ -333,7 +283,9 @@ export default function AccountsPage() {
 
         onClick: async () => {
           try {
-            await deleteAccount(account.id!);
+            await deleteAccount(account.id as AccountId);
+
+            await fetchAccounts();
 
             toast.success("تم حذف الحساب بنجاح");
           } catch (error) {
@@ -357,25 +309,25 @@ export default function AccountsPage() {
   // Toggle Account Status
   // ========================================
 
-  const handleToggleStatus = async (id: string | number) => {
+  const handleToggleStatus = async (id: AccountId) => {
     const account = companyAccounts.find(
       (item) => String(item.id) === String(id),
     );
 
     if (!account) {
       toast.error("الحساب غير موجود ضمن الشركة الحالية");
-
       return;
     }
 
     if (!account.id) {
       toast.error("لا يمكن تحديث حساب لا يحتوي على معرّف");
-
       return;
     }
 
     try {
-      await toggleAccountStatus(account.id);
+      await toggleAccountStatus(account.id as AccountId);
+
+      await fetchAccounts();
 
       toast.success("تم تحديث حالة الحساب بنجاح");
     } catch (error) {
@@ -478,7 +430,6 @@ export default function AccountsPage() {
       {/* Search & Filters */}
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {/* Search */}
           <div className="relative">
             <FiSearch
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
@@ -498,7 +449,6 @@ export default function AccountsPage() {
             />
           </div>
 
-          {/* Account Type */}
           <select
             value={filters.type}
             onChange={(e) =>
@@ -510,25 +460,23 @@ export default function AccountsPage() {
             className="rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
             <option value="all">جميع أنواع الحسابات</option>
-
             {["asset", "liability", "equity", "revenue", "expense"].map(
               (type) => (
                 <option key={type} value={type}>
-                  {type === "asset"
-                    ? "الأصول"
-                    : type === "liability"
-                      ? "الالتزامات"
-                      : type === "equity"
-                        ? "حقوق الملكية"
-                        : type === "revenue"
-                          ? "الإيرادات"
-                          : "المصروفات"}
+                  {
+                    {
+                      asset: "الأصول",
+                      liability: "الالتزامات",
+                      equity: "حقوق الملكية",
+                      revenue: "الإيرادات",
+                      expense: "المصروفات",
+                    }[type]
+                  }
                 </option>
               ),
             )}
           </select>
 
-          {/* Account Status */}
           <select
             value={filters.status}
             onChange={(e) =>
@@ -540,9 +488,7 @@ export default function AccountsPage() {
             className="rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
             <option value="all">جميع الحالات</option>
-
             <option value="active">نشط</option>
-
             <option value="inactive">موقوف</option>
           </select>
         </div>

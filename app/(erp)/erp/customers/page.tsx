@@ -1,7 +1,8 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import type { ReactNode, FormEvent } from "react";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -21,44 +22,44 @@ import {
   FiPhone,
   FiMapPin,
   FiFileText,
-  FiAlertCircle,
   FiCheckCircle,
   FiUser,
 } from "react-icons/fi";
 
-const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-});
+import {
+  getCustomers,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+  type Customer,
+} from "@/lib/api/customers";
 
-type Customer = {
-  id: string;
-  companyId: string;
-  code?: string;
-  name: string;
-  phone?: string;
-  address?: string;
-  balance?: number;
-  notes?: string;
-  accountCode?: string;
-  accountName?: string;
-  isActive?: boolean;
-  status?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  createdBy?: string;
-  createdById?: string;
-  updatedBy?: string;
-};
+import { getAccounts } from "@/lib/api/accounts";
+
+import {
+  getOpeningEntries,
+  createOpeningEntry,
+  type OpeningEntry,
+} from "@/lib/api/openingEntries";
+
+import { supabase } from "@/lib/supabase";
+
+/* =====================================================
+   TYPES
+===================================================== */
 
 type Sale = {
   id: string;
-  companyId: string;
+  companyId: string | number;
   customerId?: string;
+
   total?: number;
   totalAmount?: number;
   grandTotal?: number;
+
   paidAmount?: number;
   remainingAmount?: number;
+
   status?: string;
 };
 
@@ -66,9 +67,15 @@ type Actor = {
   id: string;
   username: string;
   companyId: string;
+
   name?: string;
   fullName?: string;
-  type?: string;
+
+  type: "platform" | "erp" | "owner";
+
+  is_active?: boolean;
+  isActive?: boolean;
+  status?: string;
 };
 
 type CustomerForm = {
@@ -77,9 +84,25 @@ type CustomerForm = {
   address: string;
   balance: string;
   notes: string;
-  accountCode: string;
-  accountName: string;
 };
+
+type Account = {
+  id: string;
+  companyId: string;
+  code: string;
+  name: string;
+  type?: string;
+  nature?: string;
+  parentId?: string | null;
+  entityType?: string;
+  entityId?: string;
+  isActive?: boolean;
+  isGroup?: boolean;
+};
+
+/* =====================================================
+   CONSTANTS
+===================================================== */
 
 const emptyForm: CustomerForm = {
   name: "",
@@ -87,9 +110,11 @@ const emptyForm: CustomerForm = {
   address: "",
   balance: "0",
   notes: "",
-  accountCode: "1201",
-  accountName: "العملاء",
 };
+
+/* =====================================================
+   HELPERS
+===================================================== */
 
 const money = (value: number) =>
   new Intl.NumberFormat("ar-YE", {
@@ -106,16 +131,10 @@ const getSaleRemaining = (sale: Sale) =>
     sale.remainingAmount ?? Math.max(getSaleTotal(sale) - getSalePaid(sale), 0),
   );
 
-const getUsername = () => {
-  if (typeof document === "undefined") return "";
-
-  return (
-    document.cookie
-      .split("; ")
-      .find((item) => item.startsWith("username="))
-      ?.split("=")[1] || ""
+const getSaleIsCancelled = (sale: Sale) =>
+  ["cancelled", "canceled", "ملغي", "ملغاة"].includes(
+    String(sale.status || "").toLowerCase(),
   );
-};
 
 const generateCustomerCode = (customers: Customer[]) => {
   const numbers = customers
@@ -130,10 +149,93 @@ const generateCustomerCode = (customers: Customer[]) => {
   return `CUS-${String(nextNumber).padStart(4, "0")}`;
 };
 
-const getSaleIsCancelled = (sale: Sale) =>
-  ["cancelled", "canceled", "ملغي", "ملغاة"].includes(
-    String(sale.status || "").toLowerCase(),
-  );
+const logError = (title: string, error: any) => {
+  console.error(title);
+
+  if (error instanceof Error) {
+    console.error("Message:", error.message);
+    console.error("Stack:", error.stack);
+    console.error("Cause:", error.cause);
+  }
+
+  if (error && typeof error === "object") {
+    console.error("Error details:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+      status: error.status,
+      name: error.name,
+    });
+  }
+
+  console.error("Raw error:", error);
+
+  try {
+    console.error(
+      "Serialized error:",
+      JSON.stringify(error, Object.getOwnPropertyNames(error)),
+    );
+  } catch {
+    console.error("Could not serialize error.");
+  }
+};
+
+/* =====================================================
+   AUTH
+===================================================== */
+
+const getStoredUser = (): Actor | null => {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const stored = localStorage.getItem("authUser");
+
+    if (!stored) return null;
+
+    const user = JSON.parse(stored);
+
+    if (
+      !user ||
+      typeof user !== "object" ||
+      Array.isArray(user) ||
+      !user.id ||
+      !user.companyId ||
+      !["erp", "owner"].includes(user.type)
+    ) {
+      return null;
+    }
+
+    if (
+      user.is_active === false ||
+      user.isActive === false ||
+      (user.status && user.status !== "active")
+    ) {
+      return null;
+    }
+
+    return {
+      id: String(user.id),
+      username: String(user.username || ""),
+      companyId: String(user.companyId),
+
+      name: user.name,
+      fullName: user.fullName,
+
+      type: user.type,
+
+      is_active: user.is_active,
+      isActive: user.isActive,
+      status: user.status,
+    };
+  } catch {
+    return null;
+  }
+};
+
+/* =====================================================
+   PAGE
+===================================================== */
 
 export default function CustomersPage() {
   const router = useRouter();
@@ -141,123 +243,160 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
 
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [openingEntries, setOpeningEntries] = useState<OpeningEntry[]>([]);
+
   const [actor, setActor] = useState<Actor | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [search, setSearch] = useState("");
 
   const [showModal, setShowModal] = useState(false);
+
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
 
   const [form, setForm] = useState<CustomerForm>(emptyForm);
 
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
+  /* =====================================================
+     CUSTOMER ACCOUNT
+  ===================================================== */
 
-      const username = getUsername();
+  const getCustomerAccount = useCallback(
+    (customerId: string) => {
+      return (
+        accounts.find(
+          (account) =>
+            account.entityType === "customer" &&
+            String(account.entityId) === String(customerId),
+        ) || null
+      );
+    },
+    [accounts],
+  );
 
-      if (!username) {
-        toast.error("لم يتم العثور على المستخدم المسجل.");
-        router.push("/login");
-        return;
+  /* =====================================================
+     CUSTOMER OPENING BALANCE
+  ===================================================== */
+
+  const getCustomerOpeningBalance = useCallback(
+    (customerId: string) => {
+      const account = getCustomerAccount(customerId);
+
+      if (!account) return 0;
+
+      return openingEntries
+        .filter(
+          (entry) => String(entry.extra?.accountId) === String(account.id),
+        )
+        .reduce(
+          (sum, entry) =>
+            sum +
+            Number(entry.extra?.debit || 0) -
+            Number(entry.extra?.credit || 0),
+          0,
+        );
+    },
+    [openingEntries, getCustomerAccount],
+  );
+
+  const hasCustomerOpeningEntry = useCallback(
+    (customerId: string) => {
+      const account = getCustomerAccount(customerId);
+
+      if (!account) return false;
+
+      return openingEntries.some(
+        (entry) => String(entry.extra?.accountId) === String(account.id),
+      );
+    },
+    [openingEntries, getCustomerAccount],
+  );
+
+  /* =====================================================
+     LOAD DATA
+  ===================================================== */
+
+  const loadData = useCallback(
+    async (showRefresh = false) => {
+      if (showRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
       }
 
-      const userResponse = await api.get("/users", {
-        params: {
-          username: decodeURIComponent(username),
-        },
-      });
+      try {
+        const currentUser = getStoredUser();
 
-      const currentUser: Actor | undefined = userResponse.data?.[0];
-
-      if (
-        !currentUser ||
-        currentUser.type === "platform" ||
-        !currentUser.companyId
-      ) {
-        toast.error("ليس لديك صلاحية الوصول إلى بيانات العملاء.");
-        setCustomers([]);
-        setSales([]);
-        return;
-      }
-
-      setActor(currentUser);
-
-      const [customersResponse, salesResponse] = await Promise.all([
-        api.get("/customers", {
-          params: { companyId: currentUser.companyId },
-        }),
-        api.get("/sales", {
-          params: { companyId: currentUser.companyId },
-        }),
-      ]);
-
-      const companyCustomers: Customer[] = (
-        customersResponse.data || []
-      ).filter(
-        (customer: Customer) =>
-          String(customer.companyId) === String(currentUser.companyId),
-      );
-
-      const companySales: Sale[] = (salesResponse.data || []).filter(
-        (sale: Sale) =>
-          String(sale.companyId) === String(currentUser.companyId),
-      );
-
-      // إضافة كود للعملاء القدامى الذين لا يملكون كوداً.
-      const customersWithoutCode = companyCustomers.filter(
-        (customer) => !customer.code,
-      );
-
-      let updatedCustomers = [...companyCustomers];
-
-      if (customersWithoutCode.length > 0) {
-        let currentCustomers = [...companyCustomers];
-
-        for (const customer of customersWithoutCode) {
-          const code = generateCustomerCode(currentCustomers);
-
-          try {
-            await api.patch(`/customers/${customer.id}`, {
-              code,
-            });
-
-            const updated = {
-              ...customer,
-              code,
-            };
-
-            currentCustomers = currentCustomers.map((item) =>
-              item.id === customer.id ? updated : item,
-            );
-          } catch (error) {
-            console.error("Customer code update error:", error);
-          }
+        if (!currentUser) {
+          toast.error("تعذر التحقق من المستخدم أو الشركة.");
+          router.push("/login");
+          return;
         }
 
-        updatedCustomers = currentCustomers;
+        setActor(currentUser);
+
+        const companyId = String(currentUser.companyId);
+
+        // تحميل العملاء
+        const companyCustomers = await getCustomers(companyId);
+
+        companyCustomers.sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || ""), "ar"),
+        );
+
+        setCustomers(companyCustomers);
+
+        // تحميل الحسابات
+        const companyAccounts = await getAccounts(companyId);
+
+        setAccounts(companyAccounts as Account[]);
+
+        // تحميل الأرصدة الافتتاحية
+        const entries = await getOpeningEntries(companyId);
+
+        setOpeningEntries(entries);
+
+        // تحميل المبيعات
+        const { data: salesData, error: salesError } = await supabase
+          .from("sales")
+          .select("*")
+          .eq("companyId", companyId);
+
+        if (salesError) {
+          logError("Sales query error:", salesError);
+
+          setSales([]);
+
+          toast.error("تم تحميل العملاء، لكن تعذر تحميل المبيعات.");
+        } else {
+          setSales(
+            (salesData || []).filter(
+              (sale: Sale) => String(sale.companyId) === companyId,
+            ),
+          );
+        }
+      } catch (error: any) {
+        logError("Customers load error:", error);
+
+        toast.error(error?.message || "حدث خطأ أثناء تحميل بيانات العملاء.");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-
-      updatedCustomers.sort((a, b) =>
-        String(a.name).localeCompare(String(b.name), "ar"),
-      );
-
-      setCustomers(updatedCustomers);
-      setSales(companySales);
-    } catch (error) {
-      console.error(error);
-      toast.error("حدث خطأ أثناء تحميل بيانات العملاء.");
-    } finally {
-      setLoading(false);
-    }
-  }, [router]);
+    },
+    [router],
+  );
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  /* =====================================================
+     SEARCH
+  ===================================================== */
 
   const filteredCustomers = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -274,26 +413,43 @@ export default function CustomersPage() {
     );
   }, [customers, search]);
 
-  const getCustomerSales = (customerId: string) =>
-    sales.filter(
-      (sale) =>
-        String(sale.customerId) === String(customerId) &&
-        !getSaleIsCancelled(sale),
-    );
+  /* =====================================================
+     CUSTOMER SALES
+  ===================================================== */
 
-  const getCustomerStatistics = (customerId: string) => {
-    const customerSales = getCustomerSales(customerId);
-
-    return {
-      count: customerSales.length,
-      total: customerSales.reduce((sum, sale) => sum + getSaleTotal(sale), 0),
-      paid: customerSales.reduce((sum, sale) => sum + getSalePaid(sale), 0),
-      remaining: customerSales.reduce(
-        (sum, sale) => sum + getSaleRemaining(sale),
-        0,
+  const getCustomerSales = useCallback(
+    (customerId: string) =>
+      sales.filter(
+        (sale) =>
+          String(sale.customerId) === String(customerId) &&
+          !getSaleIsCancelled(sale),
       ),
-    };
-  };
+    [sales],
+  );
+
+  const getCustomerStatistics = useCallback(
+    (customerId: string) => {
+      const customerSales = getCustomerSales(customerId);
+
+      return {
+        count: customerSales.length,
+
+        total: customerSales.reduce((sum, sale) => sum + getSaleTotal(sale), 0),
+
+        paid: customerSales.reduce((sum, sale) => sum + getSalePaid(sale), 0),
+
+        remaining: customerSales.reduce(
+          (sum, sale) => sum + getSaleRemaining(sale),
+          0,
+        ),
+      };
+    },
+    [getCustomerSales],
+  );
+
+  /* =====================================================
+     STATISTICS
+  ===================================================== */
 
   const statistics = useMemo(() => {
     const activeCustomers = customers.filter(
@@ -302,12 +458,13 @@ export default function CustomersPage() {
     );
 
     const totalSales = customers.reduce(
-      (sum, customer) => sum + getCustomerStatistics(customer.id).total,
+      (sum, customer) => sum + getCustomerStatistics(customer.id!).total,
       0,
     );
 
     const totalBalance = customers.reduce(
-      (sum, customer) => sum + Number(customer.balance || 0),
+      (sum, customer) =>
+        sum + Math.max(getCustomerOpeningBalance(customer.id || ""), 0),
       0,
     );
 
@@ -317,8 +474,11 @@ export default function CustomersPage() {
       sales: totalSales,
       balance: totalBalance,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customers, sales]);
+  }, [customers, getCustomerStatistics, getCustomerOpeningBalance]);
+
+  /* =====================================================
+     MODAL
+  ===================================================== */
 
   const openCreateModal = () => {
     setEditingCustomer(null);
@@ -333,10 +493,8 @@ export default function CustomersPage() {
       name: customer.name || "",
       phone: customer.phone || "",
       address: customer.address || "",
-      balance: String(customer.balance || 0),
+      balance: "0",
       notes: customer.notes || "",
-      accountCode: customer.accountCode || "1201",
-      accountName: customer.accountName || "العملاء",
     });
 
     setShowModal(true);
@@ -350,7 +508,11 @@ export default function CustomersPage() {
     setForm(emptyForm);
   };
 
-  const handleSave = async (event: React.FormEvent) => {
+  /* =====================================================
+     SAVE CUSTOMER
+  ===================================================== */
+
+  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!actor?.companyId) {
@@ -363,89 +525,187 @@ export default function CustomersPage() {
       return;
     }
 
+    const openingBalance = Number(form.balance);
+
+    if (!Number.isFinite(openingBalance) || openingBalance < 0) {
+      toast.error("يرجى إدخال رصيد صحيح.");
+      return;
+    }
+
     try {
       setSaving(true);
 
       const now = new Date().toISOString();
 
-      if (editingCustomer) {
-        const payload = {
-          name: form.name.trim(),
-          phone: form.phone.trim(),
-          address: form.address.trim(),
-          balance: Number(form.balance || 0),
-          notes: form.notes.trim(),
-          accountCode: form.accountCode,
-          accountName: form.accountName,
-          updatedAt: now,
-          updatedBy: actor.fullName || actor.name || actor.username,
-        };
+      const actorName = actor.fullName || actor.name || actor.username;
 
-        await api.patch(`/customers/${editingCustomer.id}`, payload);
+      const companyId = String(actor.companyId);
+
+      /* =========================
+         UPDATE CUSTOMER
+      ========================= */
+
+      if (editingCustomer?.id) {
+        await updateCustomer(editingCustomer.id, companyId, {
+          name: form.name.trim(),
+          phone: form.phone.trim() || null,
+          address: form.address.trim() || null,
+          notes: form.notes.trim() || null,
+          updatedAt: now,
+          updatedBy: actorName,
+        });
 
         toast.success("تم تحديث بيانات العميل بنجاح.");
       } else {
-        // جلب أحدث قائمة قبل إنشاء الكود لتجنب تكراره قدر الإمكان.
-        const response = await api.get("/customers", {
-          params: {
-            companyId: actor.companyId,
-          },
-        });
+        /* =========================
+           CREATE CUSTOMER
+        ========================= */
 
-        const latestCustomers: Customer[] = (response.data || []).filter(
-          (customer: Customer) =>
-            String(customer.companyId) === String(actor.companyId),
-        );
+        const code = generateCustomerCode(customers);
 
-        const code = generateCustomerCode(latestCustomers);
+        const createdCustomer = await createCustomer({
+          name: form.name.trim(),
 
-        const payload = {
-          id: `customer-${Date.now()}-${Math.random()
-            .toString(36)
-            .slice(2, 8)}`,
+          phone: form.phone.trim() || null,
 
-          companyId: actor.companyId,
+          address: form.address.trim() || null,
+
+          // لا نخزن الرصيد المحاسبي في جدول customers
+          balance: 0,
+
+          notes: form.notes.trim() || null,
+
+          companyId,
+
           code,
 
-          name: form.name.trim(),
-          phone: form.phone.trim(),
-          address: form.address.trim(),
-          balance: Number(form.balance || 0),
-          notes: form.notes.trim(),
-
-          accountCode: form.accountCode,
-          accountName: form.accountName,
-
           isActive: true,
+
           status: "active",
 
           createdAt: now,
+
           updatedAt: now,
 
-          createdBy: actor.fullName || actor.name || actor.username,
+          createdBy: actorName,
+
           createdById: actor.id,
-        };
 
-        await api.post("/customers", payload);
+          updatedBy: actorName,
+        } as Customer);
 
-        toast.success("تم إضافة العميل بنجاح.");
+        /* =========================
+           CREATE OPENING BALANCE
+        ========================= */
+
+        if (openingBalance > 0) {
+          try {
+            // إعادة تحميل الحسابات للتأكد من حساب العميل
+            const refreshedAccounts = await getAccounts(companyId);
+
+            const customerAccount = refreshedAccounts.find(
+              (account: any) =>
+                account.entityType === "customer" &&
+                String(account.entityId) === String(createdCustomer.id),
+            );
+
+            if (!customerAccount) {
+              throw new Error(
+                "تم إنشاء العميل، لكن لم يتم العثور على حسابه المحاسبي تحت حساب العملاء 1103.",
+              );
+            }
+
+            // التحقق من أن الحساب تابع للأصول والعملاء
+            if (
+              String(customerAccount.type) !== "asset" ||
+              String(customerAccount.code).startsWith("2101")
+            ) {
+              throw new Error(
+                "الحساب المرتبط بالعميل ليس حساب عملاء صحيحًا ضمن الأصول المتداولة.",
+              );
+            }
+
+            await createOpeningEntry({
+              companyId,
+
+              accountId: String(customerAccount.id),
+
+              amount: openingBalance,
+
+              // العملاء أرصدتهم الافتتاحية مدينة
+              side: "debit",
+
+              date: new Date().toISOString().slice(0, 10),
+
+              description: `الرصيد الافتتاحي للعميل ${form.name.trim()}`,
+            });
+          } catch (openingError) {
+            logError("Customer opening balance error:", openingError);
+
+            /*
+             * محاولة التراجع عن إضافة العميل.
+             */
+
+            try {
+              if (createdCustomer.id) {
+                await deleteCustomer(String(createdCustomer.id), companyId);
+              }
+            } catch (rollbackError) {
+              logError("Customer rollback error:", rollbackError);
+
+              throw new Error(
+                "فشل تسجيل الرصيد الافتتاحي، وتعذر التراجع عن إنشاء العميل. يرجى مراجعة العميل وحسابه المحاسبي.",
+              );
+            }
+
+            throw new Error(
+              openingError instanceof Error
+                ? `تعذر تسجيل الرصيد الافتتاحي: ${openingError.message} تم التراجع عن إضافة العميل.`
+                : "تعذر تسجيل الرصيد الافتتاحي وتم التراجع عن إضافة العميل.",
+            );
+          }
+        }
+
+        toast.success("تم إضافة العميل وحسابه المحاسبي بنجاح.");
       }
 
-      closeModal();
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      toast.error("حدث خطأ أثناء حفظ بيانات العميل.");
+      setShowModal(false);
+      setEditingCustomer(null);
+      setForm(emptyForm);
+
+      await loadData(true);
+    } catch (error: any) {
+      logError("Customer save error:", error);
+
+      toast.error(
+        error?.message ||
+          error?.details ||
+          error?.hint ||
+          "حدث خطأ أثناء حفظ بيانات العميل. راجع Console لمعرفة التفاصيل.",
+      );
     } finally {
       setSaving(false);
     }
   };
 
+  /* =====================================================
+     DELETE CUSTOMER
+  ===================================================== */
+
   const handleDelete = async (customer: Customer) => {
+    if (!customer.id) return;
+
     const customerSales = getCustomerSales(customer.id);
 
     if (customerSales.length > 0) {
       toast.error("لا يمكن حذف العميل لوجود فواتير مبيعات مرتبطة به.");
+      return;
+    }
+
+    if (hasCustomerOpeningEntry(customer.id)) {
+      toast.error(
+        "لا يمكن حذف العميل لوجود رصيد افتتاحي مرتبط بحسابه. يجب معالجة الرصيد الافتتاحي أولًا.",
+      );
       return;
     }
 
@@ -456,29 +716,44 @@ export default function CustomersPage() {
     if (!confirmed) return;
 
     try {
-      await api.delete(`/customers/${customer.id}`);
+      if (!actor?.companyId) {
+        toast.error("تعذر تحديد الشركة.");
+        return;
+      }
+
+      await deleteCustomer(customer.id, String(actor.companyId));
 
       setCustomers((prev) => prev.filter((item) => item.id !== customer.id));
 
       toast.success("تم حذف العميل بنجاح.");
-    } catch (error) {
-      console.error(error);
-      toast.error("تعذر حذف العميل.");
+    } catch (error: any) {
+      logError("Customer delete error:", error);
+
+      toast.error(error?.message || "تعذر حذف العميل.");
     }
   };
 
+  /* =====================================================
+     TOGGLE STATUS
+  ===================================================== */
+
   const toggleStatus = async (customer: Customer) => {
+    if (!customer.id || !actor?.companyId) {
+      toast.error("تعذر تحديد العميل أو الشركة.");
+      return;
+    }
+
     try {
       const isActive =
         customer.isActive === false || customer.status === "inactive";
 
       const newStatus = !isActive;
 
-      await api.patch(`/customers/${customer.id}`, {
+      await updateCustomer(customer.id, String(actor.companyId), {
         isActive: newStatus,
         status: newStatus ? "active" : "inactive",
         updatedAt: new Date().toISOString(),
-        updatedBy: actor?.fullName || actor?.username,
+        updatedBy: actor.fullName || actor.name || actor.username,
       });
 
       setCustomers((prev) =>
@@ -494,22 +769,30 @@ export default function CustomersPage() {
       );
 
       toast.success(newStatus ? "تم تفعيل العميل." : "تم إيقاف العميل.");
-    } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحديث حالة العميل.");
+    } catch (error: any) {
+      logError("Customer status error:", error);
+
+      toast.error(error?.message || "تعذر تحديث حالة العميل.");
     }
   };
+
+  /* =====================================================
+     RENDER
+  ===================================================== */
 
   return (
     <div dir="rtl" className="space-y-6 p-4 md:p-6">
       {/* Header */}
+
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
           <div className="mb-2 flex items-center gap-2 text-sm text-slate-500">
             <Link href="/erp/dashboard" className="hover:text-blue-600">
               الرئيسية
             </Link>
+
             <span>/</span>
+
             <span className="text-slate-700">العملاء</span>
           </div>
 
@@ -522,11 +805,11 @@ export default function CustomersPage() {
 
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={loadData}
-            disabled={loading}
+            onClick={() => loadData(true)}
+            disabled={loading || refreshing}
             className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            <FiRefreshCw className={loading ? "animate-spin" : ""} />
+            <FiRefreshCw className={refreshing ? "animate-spin" : ""} />
             تحديث
           </button>
 
@@ -541,6 +824,7 @@ export default function CustomersPage() {
       </div>
 
       {/* Statistics */}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           title="إجمالي العملاء"
@@ -564,7 +848,7 @@ export default function CustomersPage() {
         />
 
         <StatCard
-          title="أرصدة العملاء"
+          title="أرصدة العملاء الافتتاحية"
           value={money(statistics.balance)}
           icon={<FiDollarSign />}
           color="orange"
@@ -572,6 +856,7 @@ export default function CustomersPage() {
       </div>
 
       {/* Search */}
+
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="relative">
           <FiSearch className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -587,6 +872,7 @@ export default function CustomersPage() {
       </div>
 
       {/* Customers Table */}
+
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
           <div>
@@ -630,7 +916,7 @@ export default function CustomersPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1000px] text-right text-sm">
+            <table className="w-full min-w-[1100px] text-right text-sm">
               <thead className="bg-slate-50 text-xs text-slate-500">
                 <tr>
                   <th className="px-5 py-4">كود العميل</th>
@@ -640,6 +926,7 @@ export default function CustomersPage() {
                   <th className="px-5 py-4">إجمالي المبيعات</th>
                   <th className="px-5 py-4">المدفوع</th>
                   <th className="px-5 py-4">المتبقي</th>
+                  <th className="px-5 py-4">الرصيد الافتتاحي</th>
                   <th className="px-5 py-4">الحالة</th>
                   <th className="px-5 py-4">الإجراءات</th>
                 </tr>
@@ -647,7 +934,11 @@ export default function CustomersPage() {
 
               <tbody className="divide-y divide-slate-100">
                 {filteredCustomers.map((customer) => {
-                  const stats = getCustomerStatistics(customer.id);
+                  const stats = getCustomerStatistics(customer.id || "");
+
+                  const openingBalance = getCustomerOpeningBalance(
+                    customer.id || "",
+                  );
 
                   const isActive =
                     customer.isActive !== false &&
@@ -697,6 +988,10 @@ export default function CustomersPage() {
 
                       <td className="px-5 py-4 font-medium text-orange-600">
                         {money(stats.remaining)}
+                      </td>
+
+                      <td className="px-5 py-4 font-medium text-blue-600">
+                        {money(getCustomerOpeningBalance(customer.id || ""))}
                       </td>
 
                       <td className="px-5 py-4">
@@ -749,10 +1044,10 @@ export default function CustomersPage() {
       </div>
 
       {/* Create / Edit Modal */}
+
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/50 p-4">
           <div className="my-6 w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
-            {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-100 p-5">
               <div>
                 <h2 className="text-lg font-bold text-slate-800">
@@ -766,20 +1061,25 @@ export default function CustomersPage() {
 
               <button
                 onClick={closeModal}
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                disabled={saving}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
               >
                 <FiX className="text-xl" />
               </button>
             </div>
 
-            {/* Modal Form */}
             <form onSubmit={handleSave}>
               <div className="grid gap-4 p-5 sm:grid-cols-2">
                 <FormField label="اسم العميل" required icon={<FiUser />}>
                   <input
                     required
                     value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        name: e.target.value,
+                      })
+                    }
                     placeholder="أدخل اسم العميل"
                     className="form-input"
                   />
@@ -789,7 +1089,10 @@ export default function CustomersPage() {
                   <input
                     value={form.phone}
                     onChange={(e) =>
-                      setForm({ ...form, phone: e.target.value })
+                      setForm({
+                        ...form,
+                        phone: e.target.value,
+                      })
                     }
                     placeholder="رقم الهاتف"
                     className="form-input"
@@ -800,50 +1103,61 @@ export default function CustomersPage() {
                   <input
                     value={form.address}
                     onChange={(e) =>
-                      setForm({ ...form, address: e.target.value })
+                      setForm({
+                        ...form,
+                        address: e.target.value,
+                      })
                     }
                     placeholder="عنوان العميل"
                     className="form-input"
                   />
                 </FormField>
 
-                <FormField label="الرصيد الافتتاحي" icon={<FiDollarSign />}>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={form.balance}
-                    onChange={(e) =>
-                      setForm({ ...form, balance: e.target.value })
-                    }
-                    className="form-input"
-                  />
-                </FormField>
+                <div>
+                  <FormField label="الرصيد الافتتاحي" icon={<FiDollarSign />}>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={
+                        editingCustomer
+                          ? Math.abs(
+                              getCustomerOpeningBalance(
+                                editingCustomer.id || "",
+                              ),
+                            ).toString()
+                          : form.balance
+                      }
+                      disabled={!!editingCustomer}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          balance: e.target.value,
+                        })
+                      }
+                      className={`form-input ${
+                        editingCustomer ? "cursor-not-allowed bg-slate-100" : ""
+                      }`}
+                    />
+                  </FormField>
 
-                <FormField label="كود الحساب المحاسبي" icon={<FiFileText />}>
-                  <input
-                    value={form.accountCode}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        accountCode: e.target.value,
-                      })
-                    }
-                    className="form-input"
-                  />
-                </FormField>
+                  {editingCustomer ? (
+                    <p className="mt-2 text-xs leading-5 text-amber-600">
+                      تعديل الرصيد الافتتاحي يتم من شاشة الأرصدة الافتتاحية،
+                      وليس من بيانات العميل.
+                    </p>
+                  ) : (
+                    <div className="mt-3 rounded-lg bg-blue-50 p-3">
+                      <p className="text-xs font-medium text-blue-700">
+                        طبيعة الرصيد: مدين
+                      </p>
 
-                <FormField label="اسم الحساب المحاسبي" icon={<FiFileText />}>
-                  <input
-                    value={form.accountName}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        accountName: e.target.value,
-                      })
-                    }
-                    className="form-input"
-                  />
-                </FormField>
+                      <p className="mt-1 text-xs text-blue-600">
+                        سيتم تسجيل الرصيد على حساب العميل ضمن الأصول المتداولة.
+                      </p>
+                    </div>
+                  )}
+                </div>
 
                 <div className="sm:col-span-2">
                   <FormField label="ملاحظات" icon={<FiFileText />}>
@@ -851,7 +1165,10 @@ export default function CustomersPage() {
                       rows={3}
                       value={form.notes}
                       onChange={(e) =>
-                        setForm({ ...form, notes: e.target.value })
+                        setForm({
+                          ...form,
+                          notes: e.target.value,
+                        })
                       }
                       placeholder="ملاحظات إضافية عن العميل..."
                       className="form-input resize-none"
@@ -860,7 +1177,6 @@ export default function CustomersPage() {
                 </div>
               </div>
 
-              {/* Modal Footer */}
               <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 p-5">
                 <button
                   type="button"
@@ -894,6 +1210,8 @@ export default function CustomersPage() {
         </div>
       )}
 
+      {/* Styles */}
+
       <style jsx>{`
         .form-input {
           width: 100%;
@@ -915,12 +1233,19 @@ export default function CustomersPage() {
         .form-input::placeholder {
           color: #94a3b8;
         }
+
+        .form-input:disabled {
+          color: #64748b;
+          background: #f1f5f9;
+        }
       `}</style>
     </div>
   );
 }
 
-/* Statistics Card */
+/* =====================================================
+   STATISTICS CARD
+===================================================== */
 
 function StatCard({
   title,
@@ -930,7 +1255,7 @@ function StatCard({
 }: {
   title: string;
   value: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   color: "blue" | "green" | "purple" | "orange";
 }) {
   const colors = {
@@ -953,7 +1278,9 @@ function StatCard({
   );
 }
 
-/* Form Field */
+/* =====================================================
+   FORM FIELD
+===================================================== */
 
 function FormField({
   label,
@@ -962,15 +1289,17 @@ function FormField({
   required,
 }: {
   label: string;
-  children: React.ReactNode;
-  icon?: React.ReactNode;
+  children: ReactNode;
+  icon?: ReactNode;
   required?: boolean;
 }) {
   return (
     <div>
       <label className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
         {icon && <span className="text-slate-400">{icon}</span>}
+
         {label}
+
         {required && <span className="text-red-500">*</span>}
       </label>
 

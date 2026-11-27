@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useParams, useRouter } from "next/navigation";
-import axios from "axios";
 
 import {
   FiArrowRight,
@@ -23,20 +22,14 @@ import {
 
 import { toast } from "sonner";
 
+import { supabase } from "@/lib/supabase";
+
+import { getUserByUsername } from "@/lib/api/users";
+import { getJournals } from "@/lib/api/journals";
+import { getJournalLines } from "@/lib/api/journalLines";
+import { getAccounts } from "@/lib/api/accounts";
+
 import { logUpdate, saveActivityLog } from "@/app/(erp)/erp/lib/activity";
-
-// ============================================
-// API
-// ============================================
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
 
 // ============================================
 // Types
@@ -52,19 +45,25 @@ interface CurrentUser {
   role: string;
   companyId?: string;
   companyname?: string;
+  isActive?: boolean;
+  status?: string;
 }
 
 interface Journal {
   id: number | string;
-  journalNumber: string;
+  journalNumber?: string;
+  entryNumber?: string;
   date: string;
   description: string;
   reference?: string;
+  referenceNumber?: string;
 
   status: JournalStatus;
 
-  totalDebit: number;
-  totalCredit: number;
+  totalDebit?: number;
+  totalCredit?: number;
+  debitTotal?: number;
+  creditTotal?: number;
 
   companyId: string;
 
@@ -97,6 +96,7 @@ interface JournalLine {
   companyId: string;
 
   createdByName?: string;
+  status?: string;
 }
 
 interface Account {
@@ -111,6 +111,9 @@ interface Account {
 
   type?: string;
   nature?: string;
+
+  isActive?: boolean;
+  status?: string;
 }
 
 // ============================================
@@ -126,7 +129,26 @@ function getCookie(name: string): string | null {
 
   if (!cookie) return null;
 
-  return decodeURIComponent(cookie.substring(name.length + 1));
+  const value = cookie.substring(name.length + 1);
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return fallback;
 }
 
 function formatCurrency(value: number) {
@@ -178,6 +200,18 @@ function getAccountName(account?: Account) {
   return account.name || account.accountName || "حساب بدون اسم";
 }
 
+function getJournalNumber(journal: Journal) {
+  return journal.journalNumber || journal.entryNumber || String(journal.id);
+}
+
+function getJournalTotalDebit(journal: Journal) {
+  return Number(journal.totalDebit ?? journal.debitTotal ?? 0);
+}
+
+function getJournalTotalCredit(journal: Journal) {
+  return Number(journal.totalCredit ?? journal.creditTotal ?? 0);
+}
+
 // ============================================
 // Status
 // ============================================
@@ -215,7 +249,10 @@ export default function JournalDetailsPage() {
 
   const journalId = String(params.id);
 
+  // ============================================
   // User
+  // ============================================
+
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
 
   const [companyId, setCompanyId] = useState("");
@@ -224,21 +261,25 @@ export default function JournalDetailsPage() {
 
   const [userError, setUserError] = useState("");
 
+  // ============================================
   // Journal
+  // ============================================
+
   const [journal, setJournal] = useState<Journal | null>(null);
 
   const [lines, setLines] = useState<JournalLine[]>([]);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
 
+  // ============================================
   // Loading
+  // ============================================
+
   const [loading, setLoading] = useState(false);
 
   const [error, setError] = useState("");
 
   const [posting, setPosting] = useState(false);
-
-  const [activityLogged, setActivityLogged] = useState(false);
 
   const activityRef = useRef(false);
 
@@ -260,11 +301,7 @@ export default function JournalDetailsPage() {
           throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
         }
 
-        const response = await api.get<CurrentUser[]>("/users", {
-          params: { username },
-        });
-
-        const user = response.data.find((item) => item.username === username);
+        const user = await getUserByUsername(username);
 
         if (!user) {
           throw new Error("المستخدم غير موجود");
@@ -278,20 +315,26 @@ export default function JournalDetailsPage() {
           throw new Error("المستخدم غير مرتبط بأي شركة");
         }
 
+        if (
+          user.isActive === false ||
+          user.status === "inactive" ||
+          user.status === "disabled"
+        ) {
+          throw new Error("حساب المستخدم غير نشط");
+        }
+
         if (!mounted) return;
 
-        setCurrentUser(user);
+        setCurrentUser(user as CurrentUser);
         setCompanyId(String(user.companyId));
       } catch (err) {
-        const message = axios.isAxiosError(err)
-          ? err.response?.data?.message || "تعذر الاتصال بالخادم"
-          : err instanceof Error
-            ? err.message
-            : "حدث خطأ غير متوقع";
+        if (!mounted) return;
 
-        if (mounted) setUserError(message);
+        setUserError(getErrorMessage(err, "تعذر تحميل بيانات المستخدم"));
       } finally {
-        if (mounted) setUserLoading(false);
+        if (mounted) {
+          setUserLoading(false);
+        }
       }
     }
 
@@ -306,68 +349,82 @@ export default function JournalDetailsPage() {
   // Load Journal Details
   // ============================================
 
-  const fetchJournal = useCallback(async () => {
-    if (!companyId || !journalId) return;
+  const fetchJournal = useCallback(
+    async (isCurrent: () => boolean = () => true) => {
+      if (!companyId || !journalId) return;
 
-    try {
-      setLoading(true);
-      setError("");
+      try {
+        if (isCurrent()) {
+          setLoading(true);
+          setError("");
+        }
 
-      const [journalResponse, linesResponse, accountsResponse] =
-        await Promise.all([
-          api.get<Journal>(`/journals/${encodeURIComponent(journalId)}`),
-
-          api.get<JournalLine[]>("/journalLines", {
-            params: {
-              companyId,
-              journalId,
-            },
-          }),
-
-          api.get<Account[]>("/accounts", {
-            params: { companyId },
-          }),
+        const [allJournals, allLines, allAccounts] = await Promise.all([
+          getJournals(companyId),
+          getJournalLines(companyId),
+          getAccounts(companyId),
         ]);
 
-      const journalData = journalResponse.data;
+        if (!isCurrent()) return;
 
-      // التحقق من ملكية القيد للشركة
-      if (String(journalData.companyId) !== companyId) {
-        throw new Error("هذا القيد لا يتبع الشركة الحالية");
+        // تأكيد أن البيانات تابعة للشركة الحالية
+        const companyJournals = allJournals.filter(
+          (item) => String(item.companyId) === companyId,
+        );
+
+        const companyLines = allLines.filter(
+          (item) => String(item.companyId) === companyId,
+        );
+
+        const companyAccounts = allAccounts.filter(
+          (item) => String(item.companyId) === companyId,
+        );
+
+        // البحث عن القيد داخل قيود الشركة فقط
+        const journalData = companyJournals.find(
+          (item) => String(item.id) === journalId,
+        ) as Journal | undefined;
+
+        if (!journalData) {
+          throw new Error(
+            "لم يتم العثور على القيد أو أنه لا يتبع الشركة الحالية",
+          );
+        }
+
+        const journalLines = companyLines.filter(
+          (line) => String(line.journalId) === journalId,
+        ) as JournalLine[];
+
+        if (!isCurrent()) return;
+
+        setJournal(journalData);
+        setLines(journalLines);
+        setAccounts(companyAccounts as Account[]);
+      } catch (err) {
+        if (!isCurrent()) return;
+
+        console.error("Fetch Journal Error:", err);
+
+        setError(getErrorMessage(err, "تعذر تحميل بيانات القيد"));
+      } finally {
+        if (isCurrent()) {
+          setLoading(false);
+        }
       }
-
-      const companyLines = linesResponse.data.filter(
-        (line) =>
-          String(line.companyId) === companyId &&
-          String(line.journalId) === journalId,
-      );
-
-      const companyAccounts = accountsResponse.data.filter(
-        (account) => String(account.companyId) === companyId,
-      );
-
-      setJournal(journalData);
-      setLines(companyLines);
-      setAccounts(companyAccounts);
-    } catch (err) {
-      console.error("Fetch Journal Error:", err);
-
-      setError(
-        axios.isAxiosError(err)
-          ? err.response?.data?.message || "تعذر تحميل بيانات القيد"
-          : err instanceof Error
-            ? err.message
-            : "حدث خطأ أثناء تحميل القيد",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [companyId, journalId]);
+    },
+    [companyId, journalId],
+  );
 
   useEffect(() => {
+    let ignore = false;
+
     if (companyId) {
-      void fetchJournal();
+      void fetchJournal(() => !ignore);
     }
+
+    return () => {
+      ignore = true;
+    };
   }, [companyId, fetchJournal]);
 
   // ============================================
@@ -384,12 +441,10 @@ export default function JournalDetailsPage() {
     void saveActivityLog({
       action: "view",
       module: "accounting.journals",
-      description: `عرض تفاصيل القيد ${journal.journalNumber}`,
+      description: `عرض تفاصيل القيد ${getJournalNumber(journal)}`,
       recordId: journal.id,
-      recordName: journal.journalNumber,
+      recordName: getJournalNumber(journal),
     });
-
-    setActivityLogged(true);
   }, [currentUser, journal, companyId]);
 
   // ============================================
@@ -411,12 +466,20 @@ export default function JournalDetailsPage() {
   // ============================================
 
   const totalDebit = useMemo(() => {
-    return lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
-  }, [lines]);
+    if (journal) {
+      return lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
+    }
+
+    return 0;
+  }, [lines, journal]);
 
   const totalCredit = useMemo(() => {
-    return lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
-  }, [lines]);
+    if (journal) {
+      return lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+    }
+
+    return 0;
+  }, [lines, journal]);
 
   const difference = totalDebit - totalCredit;
 
@@ -484,48 +547,61 @@ export default function JournalDetailsPage() {
 
       const now = new Date().toISOString();
 
+      const actorName = currentUser.name || currentUser.username;
+
       const updateData = {
-        status: "posted" as const,
+        status: "posted",
 
         totalDebit,
         totalCredit,
 
         postedBy: String(currentUser.id),
         postedById: String(currentUser.id),
-
-        postedByName: currentUser.name || currentUser.username,
-
+        postedByName: actorName,
         postedAt: now,
 
         updatedBy: String(currentUser.id),
         updatedById: String(currentUser.id),
-
-        updatedByName: currentUser.name || currentUser.username,
-
+        updatedByName: actorName,
         updatedAt: now,
       };
 
-      const response = await api.patch<Journal>(
-        `/journals/${encodeURIComponent(String(journal.id))}`,
-        updateData,
-      );
+      // تحديث القيد في Supabase مع التحقق من الشركة والحالة
+      const { data, error: updateError } = await supabase
+        .from("journals")
+        .update(updateData)
+        .eq("id", journal.id)
+        .eq("companyId", companyId)
+        .eq("status", "draft")
+        .select("*")
+        .maybeSingle();
 
-      const updatedJournal = response.data;
+      if (updateError) {
+        throw new Error(updateError.message);
+      }
+
+      if (!data) {
+        throw new Error(
+          "لم يتم تحديث القيد. ربما تم ترحيله مسبقًا أو لا يتبع الشركة الحالية.",
+        );
+      }
+
+      const updatedJournal = data as Journal;
 
       setJournal(updatedJournal);
 
       await logUpdate(
         "accounting.journals",
-        `ترحيل القيد رقم ${journal.journalNumber}`,
+        `ترحيل القيد رقم ${getJournalNumber(journal)}`,
         journal.id,
-        journal.journalNumber,
+        getJournalNumber(journal),
         {
           status: journal.status,
         },
         {
           status: "posted",
           postedBy: String(currentUser.id),
-          postedByName: currentUser.name || currentUser.username,
+          postedByName: actorName,
           postedAt: now,
         },
       );
@@ -534,11 +610,7 @@ export default function JournalDetailsPage() {
     } catch (err) {
       console.error("Post Journal Error:", err);
 
-      toast.error(
-        axios.isAxiosError(err)
-          ? err.response?.data?.message || "تعذر ترحيل القيد"
-          : "حدث خطأ أثناء ترحيل القيد",
-      );
+      toast.error(getErrorMessage(err, "حدث خطأ أثناء ترحيل القيد"));
     } finally {
       setPosting(false);
     }
@@ -555,9 +627,9 @@ export default function JournalDetailsPage() {
       void saveActivityLog({
         action: "view",
         module: "accounting.journals",
-        description: `طباعة القيد رقم ${journal.journalNumber}`,
+        description: `طباعة القيد رقم ${getJournalNumber(journal)}`,
         recordId: journal.id,
-        recordName: journal.journalNumber,
+        recordName: getJournalNumber(journal),
       });
     }
   }
@@ -566,7 +638,7 @@ export default function JournalDetailsPage() {
   // Loading
   // ============================================
 
-  if (userLoading || loading) {
+  if (userLoading || (companyId && loading)) {
     return (
       <div
         dir="rtl"
@@ -612,6 +684,8 @@ export default function JournalDetailsPage() {
   }
 
   const status = getStatusInfo(journal.status);
+
+  const journalNumber = getJournalNumber(journal);
 
   // ============================================
   // UI
@@ -663,9 +737,10 @@ export default function JournalDetailsPage() {
 
           <button
             onClick={() => void fetchJournal()}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            <FiRefreshCw />
+            <FiRefreshCw className={loading ? "animate-spin" : ""} />
             تحديث
           </button>
 
@@ -703,7 +778,7 @@ export default function JournalDetailsPage() {
           <div>
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="text-xl font-bold text-slate-900">
-                {journal.journalNumber}
+                {journalNumber}
               </h2>
 
               <span
@@ -740,9 +815,7 @@ export default function JournalDetailsPage() {
             <div>
               <p className="text-xs text-slate-500">رقم القيد</p>
 
-              <p className="mt-1 font-bold text-slate-800">
-                {journal.journalNumber}
-              </p>
+              <p className="mt-1 font-bold text-slate-800">{journalNumber}</p>
             </div>
           </div>
         </div>
@@ -798,12 +871,12 @@ export default function JournalDetailsPage() {
 
       {/* Reference */}
 
-      {journal.reference && (
+      {(journal.reference || journal.referenceNumber) && (
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-sm text-slate-500">المرجع</p>
 
           <p className="mt-2 font-semibold text-slate-800">
-            {journal.reference}
+            {journal.reference || journal.referenceNumber}
           </p>
         </div>
       )}
@@ -843,6 +916,22 @@ export default function JournalDetailsPage() {
 
               <p className="mt-1 text-sm text-amber-700">
                 لن يدخل هذا القيد في القوائم المالية حتى يتم ترحيله.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {journal.status === "cancelled" && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5">
+          <div className="flex items-center gap-3">
+            <FiAlertCircle size={24} className="text-red-600" />
+
+            <div>
+              <h3 className="font-bold text-red-800">هذا القيد ملغي</h3>
+
+              <p className="mt-1 text-sm text-red-700">
+                لن يتم احتساب هذا القيد ضمن الحركات المحاسبية المعتمدة.
               </p>
             </div>
           </div>

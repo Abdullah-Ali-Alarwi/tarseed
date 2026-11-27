@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
 import {
   FiPlus,
   FiSearch,
@@ -17,24 +16,7 @@ import {
 import { toast } from "sonner";
 import { IoHourglassOutline } from "react-icons/io5";
 
-import {
-  getCurrentActor,
-  getCreateActivity,
-  logCreate,
-} from "../../lib/activity";
-
-/* =====================================================
-   API
-===================================================== */
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+import { supabase } from "@/lib/supabase";
 
 /* =====================================================
    CONSTANTS
@@ -48,25 +30,25 @@ const CAPITAL_ACCOUNT_CODE = "3101";
 ===================================================== */
 
 interface CurrentUser {
-  id: string | number;
+  id: string;
   username: string;
   name?: string;
   fullName?: string;
   role?: string;
   type: string;
-  companyId?: string | number;
+  companyId: string;
+  status?: string;
+  isActive?: boolean;
+  auth_user_id?: string;
 }
 
 interface Account {
-  id: string | number;
-  companyId: string | number;
+  id: string;
+  companyId: string;
   code: string;
   name: string;
-  type: string;
-  nature?: string;
-  isGroup?: boolean;
+  isGroup: boolean;
   isActive?: boolean;
-  allowPosting?: boolean;
 }
 
 interface Product {
@@ -74,10 +56,7 @@ interface Product {
   companyId: string;
   name: string;
   sku?: string;
-  barcode?: string;
-  unitId?: string;
   unitName?: string;
-  categoryName?: string;
   status: string;
   trackInventory?: boolean;
 }
@@ -86,8 +65,6 @@ interface Warehouse {
   id: string;
   companyId: string;
   name: string;
-  code?: string;
-  status: string;
 }
 
 interface WarehouseStock {
@@ -96,15 +73,13 @@ interface WarehouseStock {
   productId: string;
   warehouseId: string;
   quantity: number;
-  updatedAt?: string;
-  createdBy?: string;
-  createdByName?: string;
-  updatedBy?: string;
-  updatedByName?: string;
+  averageCost?: number;
+  unitCost?: number;
+  inventoryValue?: number;
 }
 
 interface InventoryMovement {
-  id: string | number;
+  id: string;
   companyId: string;
   productId: string;
   productName: string;
@@ -113,17 +88,22 @@ interface InventoryMovement {
   warehouseName: string;
   type: string;
   quantity: number;
-  unitName?: string;
-  unitCost?: number;
-  totalCost?: number;
   referenceType?: string;
   referenceId?: string;
   referenceNumber?: string;
   date: string;
   notes?: string;
-  createdBy?: string;
-  createdByName?: string;
   createdAt: string;
+  extra?: {
+    unitName?: string;
+    unitCost?: number;
+    totalCost?: number;
+    createdBy?: string;
+    createdByName?: string;
+    createdByUsername?: string;
+    createdByRole?: string;
+    [key: string]: unknown;
+  } | null;
 }
 
 interface OpeningLine {
@@ -131,38 +111,6 @@ interface OpeningLine {
   warehouseId: string;
   quantity: string;
   unitCost: string;
-}
-
-interface Journal {
-  id: string | number;
-  companyId: string;
-  entryNumber: string;
-  date: string;
-  description: string;
-  referenceType: string;
-  referenceId?: string;
-  status: string;
-  totalDebit: number;
-  totalCredit: number;
-  createdBy: string;
-  createdByName: string;
-  createdAt: string;
-}
-
-interface JournalLine {
-  id?: string | number;
-  journalId: string | number;
-  companyId: string;
-  accountId: string | number;
-  accountCode: string;
-  accountName: string;
-  date: string;
-  debit: number;
-  credit: number;
-  description: string;
-  createdBy: string;
-  createdByName: string;
-  createdAt: string;
 }
 
 /* =====================================================
@@ -190,18 +138,6 @@ const today = () => {
    HELPERS
 ===================================================== */
 
-function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
-
-  const cookie = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith(`${name}=`));
-
-  if (!cookie) return null;
-
-  return decodeURIComponent(cookie.substring(name.length + 1));
-}
-
 function money(value: number) {
   return Number(value || 0).toLocaleString("en-US", {
     minimumFractionDigits: 2,
@@ -215,20 +151,16 @@ function number(value: unknown) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    return (
-      error.response?.data?.message ||
-      error.response?.data?.error ||
-      error.message ||
-      fallback
-    );
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message || fallback;
   }
 
-  return error instanceof Error ? error.message : fallback;
-}
-
-function createEntryNumber() {
-  return `JRN-${Date.now()}`;
+  return fallback;
 }
 
 function createReferenceNumber() {
@@ -264,6 +196,54 @@ export default function InventoryOpeningEntriesPage() {
   const [lines, setLines] = useState<OpeningLine[]>([{ ...emptyLine }]);
 
   /* =====================================================
+     GET CURRENT AUTH USER
+  ===================================================== */
+
+  const getAuthenticatedUser = useCallback(async () => {
+    const {
+      data: { user: authUser },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !authUser) {
+      throw new Error("انتهت جلسة تسجيل الدخول. يرجى تسجيل الدخول مجدداً.");
+    }
+
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("auth_user_id", authUser.id)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!user) {
+      throw new Error("تعذر العثور على بيانات المستخدم المرتبطة بحساب Auth");
+    }
+
+    if (!user.isActive || user.status !== "active") {
+      throw new Error("حساب المستخدم غير نشط");
+    }
+
+    if (user.type === "platform") {
+      throw new Error("هذه الصفحة مخصصة لمستخدمي الشركات");
+    }
+
+    if (!user.companyId) {
+      throw new Error("المستخدم غير مرتبط بأي شركة");
+    }
+
+    return {
+      ...user,
+      id: String(user.id),
+      companyId: String(user.companyId),
+      username: String(user.username),
+    } as CurrentUser;
+  }, []);
+
+  /* =====================================================
      LOAD DATA
   ===================================================== */
 
@@ -271,34 +251,12 @@ export default function InventoryOpeningEntriesPage() {
     try {
       setLoading(true);
 
-      const username = getCookie("username");
+      const user = await getAuthenticatedUser();
 
-      if (!username) {
-        throw new Error("يرجى تسجيل الدخول أولاً");
-      }
+      const currentCompanyId = user.companyId;
 
-      const userResponse = await api.get<CurrentUser[]>("/users", {
-        params: { username },
-      });
-
-      const user = userResponse.data.find((item) => item.username === username);
-
-      if (!user) {
-        throw new Error("تعذر العثور على المستخدم");
-      }
-
-      if (user.type === "platform") {
-        throw new Error("هذه الصفحة مخصصة لمستخدمي الشركات");
-      }
-
-      if (!user.companyId) {
-        throw new Error("المستخدم غير مرتبط بأي شركة");
-      }
-
-      const currentCompanyId = String(user.companyId);
-
-      setCompanyId(currentCompanyId);
       setCurrentUser(user);
+      setCompanyId(currentCompanyId);
 
       const [
         productsResponse,
@@ -307,64 +265,73 @@ export default function InventoryOpeningEntriesPage() {
         movementsResponse,
         accountsResponse,
       ] = await Promise.all([
-        api.get<Product[]>("/products", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("products")
+          .select("id, companyId, name, sku, unitName, status, trackInventory")
+          .eq("companyId", currentCompanyId)
+          .eq("status", "active"),
 
-        api.get<Warehouse[]>("/warehouses", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("warehouses")
+          .select("id, companyId, name")
+          .eq("companyId", currentCompanyId),
 
-        api.get<WarehouseStock[]>("/warehouseStocks", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("warehouseStocks")
+          .select(
+            "id, companyId, productId, warehouseId, quantity, averageCost, unitCost, inventoryValue",
+          )
+          .eq("companyId", currentCompanyId),
 
-        api.get<InventoryMovement[]>("/inventoryMovements", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("inventoryMovements")
+          .select("*")
+          .eq("companyId", currentCompanyId)
+          .eq("type", "opening_balance")
+          .order("createdAt", { ascending: false }),
 
-        api.get<Account[]>("/accounts", {
-          params: { companyId: currentCompanyId },
-        }),
+        supabase
+          .from("accounts")
+          .select("id, companyId, code, name, isGroup, isActive")
+          .eq("companyId", currentCompanyId),
       ]);
 
+      if (productsResponse.error) {
+        throw productsResponse.error;
+      }
+
+      if (warehousesResponse.error) {
+        throw warehousesResponse.error;
+      }
+
+      if (stocksResponse.error) {
+        throw stocksResponse.error;
+      }
+
+      if (movementsResponse.error) {
+        throw movementsResponse.error;
+      }
+
+      if (accountsResponse.error) {
+        throw accountsResponse.error;
+      }
+
       setProducts(
-        productsResponse.data.filter(
-          (item) =>
-            String(item.companyId) === currentCompanyId &&
-            item.status === "active" &&
-            item.trackInventory !== false,
-        ),
+        (productsResponse.data || []).filter(
+          (item) => item.trackInventory !== false,
+        ) as Product[],
       );
 
-      setWarehouses(
-        warehousesResponse.data.filter(
-          (item) =>
-            String(item.companyId) === currentCompanyId &&
-            item.status === "active",
-        ),
-      );
+      setWarehouses((warehousesResponse.data || []) as Warehouse[]);
 
-      setStocks(
-        stocksResponse.data.filter(
-          (item) => String(item.companyId) === currentCompanyId,
-        ),
-      );
+      setStocks((stocksResponse.data || []) as WarehouseStock[]);
 
-      setMovements(
-        movementsResponse.data.filter(
-          (item) =>
-            String(item.companyId) === currentCompanyId &&
-            item.type === "opening_balance",
-        ),
-      );
+      setMovements((movementsResponse.data || []) as InventoryMovement[]);
 
       setAccounts(
-        accountsResponse.data.filter(
-          (item) =>
-            String(item.companyId) === currentCompanyId &&
-            item.isActive !== false,
-        ),
+        (accountsResponse.data || []).filter(
+          (item) => item.isActive !== false,
+        ) as Account[],
       );
     } catch (error) {
       console.error("Opening balances load error:", error);
@@ -373,10 +340,16 @@ export default function InventoryOpeningEntriesPage() {
 
       setCompanyId("");
       setCurrentUser(null);
+
+      setProducts([]);
+      setWarehouses([]);
+      setStocks([]);
+      setMovements([]);
+      setAccounts([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAuthenticatedUser]);
 
   useEffect(() => {
     loadData();
@@ -464,116 +437,6 @@ export default function InventoryOpeningEntriesPage() {
   }
 
   /* =====================================================
-     ACTOR VALIDATION
-  ===================================================== */
-
-  function validateCurrentActor(user: CurrentUser) {
-    const actor = getCurrentActor();
-
-    if (!actor) {
-      throw new Error(
-        "تعذر تحديد هوية المستخدم من جلسة النظام. أعد تسجيل الدخول.",
-      );
-    }
-
-    if (
-      String(actor.userId) !== String(user.id) ||
-      String(actor.companyId) !== String(user.companyId)
-    ) {
-      throw new Error(
-        "بيانات المستخدم في الجلسة لا تتطابق مع بيانات الشركة. أعد تسجيل الدخول.",
-      );
-    }
-
-    return actor;
-  }
-
-  /* =====================================================
-     ROLLBACK
-  ===================================================== */
-
-  async function rollbackChanges(data: {
-    movementIds: (string | number)[];
-    journalId: string | number | null;
-    journalLineIds: (string | number)[];
-    stockChanges: {
-      id: string | null;
-      created: boolean;
-      quantityBefore: number;
-      productId: string;
-      warehouseId: string;
-    }[];
-  }) {
-    const { movementIds, journalId, journalLineIds, stockChanges } = data;
-
-    const rollbackTasks: Promise<unknown>[] = [];
-
-    // حذف تفاصيل القيد أولاً
-    journalLineIds.forEach((id) => {
-      rollbackTasks.push(api.delete(`/journalLines/${id}`));
-    });
-
-    // حذف رأس القيد
-    if (journalId !== null) {
-      rollbackTasks.push(api.delete(`/journals/${journalId}`));
-    }
-
-    // حذف الحركات المخزنية
-    movementIds.forEach((id) => {
-      rollbackTasks.push(api.delete(`/inventoryMovements/${id}`));
-    });
-
-    // إعادة أرصدة المستودعات
-    stockChanges.forEach((change) => {
-      if (change.created) {
-        rollbackTasks.push(
-          (async () => {
-            const response = await api.get<WarehouseStock[]>(
-              "/warehouseStocks",
-              {
-                params: {
-                  companyId,
-                  productId: change.productId,
-                  warehouseId: change.warehouseId,
-                },
-              },
-            );
-
-            const createdStock = response.data.find(
-              (item) =>
-                String(item.companyId) === companyId &&
-                String(item.productId) === change.productId &&
-                String(item.warehouseId) === change.warehouseId,
-            );
-
-            if (createdStock) {
-              await api.delete(`/warehouseStocks/${createdStock.id}`);
-            }
-          })(),
-        );
-      } else if (change.id) {
-        rollbackTasks.push(
-          api.patch(`/warehouseStocks/${change.id}`, {
-            quantity: change.quantityBefore,
-            updatedAt: new Date().toISOString(),
-          }),
-        );
-      }
-    });
-
-    const results = await Promise.allSettled(rollbackTasks);
-
-    const failed = results.filter((result) => result.status === "rejected");
-
-    if (failed.length) {
-      console.error("Some rollback operations failed:", failed);
-      throw new Error(
-        "حدث خطأ أثناء التراجع عن بعض العمليات. راجع البيانات قبل إعادة المحاولة.",
-      );
-    }
-  }
-
-  /* =====================================================
      SAVE
   ===================================================== */
 
@@ -597,20 +460,19 @@ export default function InventoryOpeningEntriesPage() {
       return;
     }
 
-    // التأكد من وجود الحسابات المحاسبية
     if (!inventoryAccount) {
-      toast.error(
-        "حساب المخزون 1104 غير موجود أو غير قابل للترحيل في دليل حسابات الشركة",
-      );
+      toast.error("حساب المخزون 1104 غير موجود أو غير قابل للترحيل");
       return;
     }
 
     if (!capitalAccount) {
-      toast.error(
-        "حساب رأس المال 3101 غير موجود أو غير قابل للترحيل في دليل حسابات الشركة",
-      );
+      toast.error("حساب رأس المال 3101 غير موجود أو غير قابل للترحيل");
       return;
     }
+
+    /* ================================================
+       VALIDATE LINES
+    ================================================ */
 
     const selectedKeys = lines.map(
       (line) => `${line.productId}_${line.warehouseId}`,
@@ -626,7 +488,6 @@ export default function InventoryOpeningEntriesPage() {
       return;
     }
 
-    // التحقق من جميع الأسطر قبل بدء الحفظ
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
@@ -670,345 +531,93 @@ export default function InventoryOpeningEntriesPage() {
       }
     }
 
-    const username = getCookie("username");
+    const documentTotal = lines.reduce(
+      (sum, line) => sum + number(line.quantity) * number(line.unitCost),
+      0,
+    );
 
-    if (!username) {
-      toast.error("تعذر تحديد المستخدم الحالي");
+    if (!Number.isFinite(documentTotal) || documentTotal <= 0) {
+      toast.error("إجمالي تكلفة الأرصدة غير صحيح");
       return;
     }
 
     setSaving(true);
 
-    const createdMovementIds: (string | number)[] = [];
-    const createdJournalLineIds: (string | number)[] = [];
-
-    let createdJournalId: string | number | null = null;
-
-    const stockChanges: {
-      id: string | null;
-      created: boolean;
-      quantityBefore: number;
-      productId: string;
-      warehouseId: string;
-    }[] = [];
-
     try {
-      // إعادة التحقق من المستخدم قبل الحفظ
-      const userResponse = await api.get<CurrentUser[]>("/users", {
-        params: { username },
-      });
+      /* ================================================
+         1. REVALIDATE AUTH USER
+      ================================================ */
 
-      const user = userResponse.data.find((item) => item.username === username);
+      const user = await getAuthenticatedUser();
 
       if (
-        !user ||
-        String(user.companyId) !== companyId ||
-        user.type === "platform"
+        String(user.id) !== String(currentUser.id) ||
+        String(user.companyId) !== String(companyId)
       ) {
-        throw new Error("تعذر التحقق من المستخدم أو الشركة");
+        throw new Error("تغيرت بيانات المستخدم أو الشركة. يرجى تحديث الصفحة.");
       }
 
-      // التحقق من هوية المستخدم المستخدمة في سجل النشاط
-      validateCurrentActor(user);
+      /* ================================================
+         2. PREPARE ACTOR
+      ================================================ */
 
       const actorName = user.fullName || user.name || user.username;
 
-      const actorId = String(user.id);
-      const actorRole = user.role || user.type;
+      const actor = {
+        userId: String(user.id),
+        userName: actorName,
+        username: user.username,
+        userRole: user.role || user.type,
+      };
+
+      /* ================================================
+         3. PREPARE REFERENCE
+      ================================================ */
 
       const referenceNumber = reference.trim() || createReferenceNumber();
 
-      const createdAt = new Date().toISOString();
+      /* ================================================
+         4. PREPARE LINES
+      ================================================ */
 
-      // تجميع إجمالي قيمة المستند
-      const documentTotal = lines.reduce(
-        (sum, line) => sum + number(line.quantity) * number(line.unitCost),
-        0,
+      const rpcLines = lines.map((line) => ({
+        productId: line.productId,
+        warehouseId: line.warehouseId,
+        quantity: number(line.quantity),
+        unitCost: number(line.unitCost),
+      }));
+
+      /* ================================================
+         5. CALL SUPABASE RPC
+      ================================================ */
+
+      const { data, error } = await supabase.rpc(
+        "create_inventory_opening_entry",
+        {
+          p_company_id: companyId,
+          p_date: date,
+          p_reference_number: referenceNumber,
+          p_notes: notes.trim(),
+          p_actor: actor,
+          p_lines: rpcLines,
+        },
       );
 
-      if (!Number.isFinite(documentTotal) || documentTotal <= 0) {
-        throw new Error("إجمالي تكلفة الأرصدة غير صحيح");
+      if (error) {
+        throw error;
+      }
+
+      if (!data || data.success !== true) {
+        throw new Error(data?.message || "لم يتم تأكيد حفظ الأرصدة الافتتاحية");
       }
 
       /* ================================================
-         1. إنشاء الحركات المخزنية وتحديث الأرصدة
+         6. SUCCESS
       ================================================ */
 
-      for (const line of lines) {
-        const product = products.find(
-          (item) => String(item.id) === line.productId,
-        );
-
-        const warehouse = warehouses.find(
-          (item) => String(item.id) === line.warehouseId,
-        );
-
-        if (!product || !warehouse) {
-          throw new Error("تعذر العثور على الصنف أو المستودع");
-        }
-
-        const quantity = number(line.quantity);
-        const unitCost = number(line.unitCost);
-        const totalLineCost = quantity * unitCost;
-
-        const currentStock = stocks.find(
-          (item) =>
-            String(item.productId) === line.productId &&
-            String(item.warehouseId) === line.warehouseId,
-        );
-
-        // بيانات حركة المخزون
-        const movementPayload = {
-          ...getCreateActivity(),
-
-          companyId,
-
-          productId: String(product.id),
-          productName: product.name,
-          productSKU: product.sku || "",
-
-          warehouseId: String(warehouse.id),
-          warehouseName: warehouse.name,
-
-          type: "opening_balance",
-
-          quantity,
-          unitName: product.unitName || "",
-
-          unitCost,
-          totalCost: totalLineCost,
-
-          referenceType: "opening_balance",
-          referenceNumber,
-          referenceId: referenceNumber,
-
-          date,
-          notes: notes.trim(),
-
-          createdBy: actorId,
-          createdByName: actorName,
-          createdByUsername: username,
-          createdByRole: actorRole,
-          createdAt,
-        };
-
-        // تسجيل الحركة المخزنية
-        const movementResponse = await api.post(
-          "/inventoryMovements",
-          movementPayload,
-        );
-
-        createdMovementIds.push(movementResponse.data.id);
-
-        // تحديث رصيد المستودع
-        const quantityBefore = currentStock ? number(currentStock.quantity) : 0;
-
-        const newQuantity = quantityBefore + quantity;
-
-        if (currentStock) {
-          await api.patch(`/warehouseStocks/${currentStock.id}`, {
-            quantity: newQuantity,
-
-            updatedBy: actorId,
-            updatedByName: actorName,
-            updatedByUsername: username,
-            updatedByRole: actorRole,
-
-            updatedAt: new Date().toISOString(),
-          });
-
-          stockChanges.push({
-            id: String(currentStock.id),
-            created: false,
-            quantityBefore,
-            productId: String(product.id),
-            warehouseId: String(warehouse.id),
-          });
-        } else {
-          const stockResponse = await api.post("/warehouseStocks", {
-            ...getCreateActivity(),
-
-            companyId,
-            productId: String(product.id),
-            warehouseId: String(warehouse.id),
-
-            quantity: newQuantity,
-
-            createdBy: actorId,
-            createdByName: actorName,
-            createdAt,
-
-            updatedBy: actorId,
-            updatedByName: actorName,
-            updatedAt: createdAt,
-          });
-
-          stockChanges.push({
-            id: String(stockResponse.data.id),
-            created: true,
-            quantityBefore: 0,
-            productId: String(product.id),
-            warehouseId: String(warehouse.id),
-          });
-        }
-      }
-
-      /* ================================================
-         2. إنشاء رأس القيد المحاسبي
-      ================================================ */
-
-      const entryNumber = createEntryNumber();
-
-      const journalPayload: Omit<Journal, "id"> = {
-        ...getCreateActivity(),
-
-        companyId,
-
-        entryNumber,
-
-        date,
-
-        description: `إثبات الأرصدة الافتتاحية للمخزون - ${referenceNumber}`,
-
-        referenceType: "opening_balance",
-        referenceId: referenceNumber,
-
-        status: "posted",
-
-        totalDebit: documentTotal,
-        totalCredit: documentTotal,
-
-        createdBy: actorId,
-        createdByName: actorName,
-        createdAt,
-      };
-
-      const journalResponse = await api.post("/journals", journalPayload);
-
-      createdJournalId = journalResponse.data.id;
-
-      /* ================================================
-         3. إنشاء تفاصيل القيد المحاسبي
-      ================================================ */
-
-      const journalLines: Omit<JournalLine, "id">[] = [
-        {
-          ...getCreateActivity(),
-
-          journalId: createdJournalId,
-          companyId,
-
-          accountId: inventoryAccount.id,
-          accountCode: inventoryAccount.code,
-          accountName: inventoryAccount.name,
-
-          date,
-
-          debit: documentTotal,
-          credit: 0,
-
-          description: `إثبات قيمة المخزون الافتتاحي - ${referenceNumber}`,
-
-          createdBy: actorId,
-          createdByName: actorName,
-          createdAt,
-        },
-
-        {
-          ...getCreateActivity(),
-
-          journalId: createdJournalId,
-          companyId,
-
-          accountId: capitalAccount.id,
-          accountCode: capitalAccount.code,
-          accountName: capitalAccount.name,
-
-          date,
-
-          debit: 0,
-          credit: documentTotal,
-
-          description: `مقابل الأرصدة الافتتاحية للمخزون - ${referenceNumber}`,
-
-          createdBy: actorId,
-          createdByName: actorName,
-          createdAt,
-        },
-      ];
-
-      for (const journalLine of journalLines) {
-        const response = await api.post("/journalLines", journalLine);
-
-        createdJournalLineIds.push(response.data.id);
-      }
-
-      /* ================================================
-         4. تسجيل النشاط
-      ================================================ */
-
-      const activityData = {
-        referenceNumber,
-        date,
-        totalQuantity,
-        totalCost: documentTotal,
-        lines: lines.map((line) => {
-          const product = products.find(
-            (item) => String(item.id) === line.productId,
-          );
-
-          const warehouse = warehouses.find(
-            (item) => String(item.id) === line.warehouseId,
-          );
-
-          return {
-            productId: line.productId,
-            productName: product?.name || "",
-            warehouseId: line.warehouseId,
-            warehouseName: warehouse?.name || "",
-            quantity: number(line.quantity),
-            unitCost: number(line.unitCost),
-            totalCost: number(line.quantity) * number(line.unitCost),
-          };
-        }),
-      };
-
-      // لا نلغي العملية المحاسبية إذا تعذر تسجيل النشاط.
-      const activityResults = await Promise.allSettled([
-        logCreate(
-          "الأرصدة الافتتاحية",
-          `إضافة أرصدة افتتاحية للمخزون بالمرجع ${referenceNumber}`,
-          String(createdJournalId),
-          referenceNumber,
-          activityData,
-        ),
-
-        logCreate(
-          "القيود المحاسبية",
-          `إنشاء قيد افتتاحي للمخزون رقم ${entryNumber}`,
-          String(createdJournalId),
-          entryNumber,
-          {
-            referenceNumber,
-            totalDebit: documentTotal,
-            totalCredit: documentTotal,
-            journalId: createdJournalId,
-            journalLineIds: createdJournalLineIds,
-          },
-        ),
-      ]);
-
-      activityResults.forEach((result) => {
-        if (result.status === "rejected") {
-          console.error("Activity log error:", result.reason);
-        }
-      });
-
-      /* ================================================
-         5. SUCCESS
-      ================================================ */
-
-      toast.success("تم تسجيل الأرصدة الافتتاحية وترحيل القيد المحاسبي بنجاح");
+      toast.success(
+        `تم تسجيل الأرصدة الافتتاحية وترحيل القيد ${data.journalNumber || ""} بنجاح`,
+      );
 
       setShowForm(false);
 
@@ -1022,30 +631,11 @@ export default function InventoryOpeningEntriesPage() {
     } catch (error) {
       console.error("Opening balance save error:", error);
 
-      // التراجع عن العمليات إذا فشلت أي خطوة من خطوات الحفظ
-      try {
-        await rollbackChanges({
-          movementIds: createdMovementIds,
-          journalId: createdJournalId,
-          journalLineIds: createdJournalLineIds,
-          stockChanges,
-        });
-      } catch (rollbackError) {
-        console.error("Rollback error:", rollbackError);
-
-        toast.error(
-          "فشلت العملية، كما تعذر التراجع الكامل. راجع الحركات والقيود قبل المحاولة مجدداً.",
-          {
-            duration: 8000,
-          },
-        );
-
-        setSaving(false);
-        return;
-      }
-
       toast.error(
         getErrorMessage(error, "حدث خطأ أثناء حفظ الأرصدة الافتتاحية"),
+        {
+          duration: 7000,
+        },
       );
     } finally {
       setSaving(false);
@@ -1077,7 +667,7 @@ export default function InventoryOpeningEntriesPage() {
   );
 
   const totalOpeningCost = movements.reduce(
-    (sum, item) => sum + number(item.totalCost),
+    (sum, item) => sum + number(item.extra?.totalCost),
     0,
   );
 
@@ -1119,6 +709,14 @@ export default function InventoryOpeningEntriesPage() {
         <p className="mt-2 text-sm">
           تحقق من تسجيل الدخول وربط المستخدم بالشركة.
         </p>
+
+        <button
+          type="button"
+          onClick={loadData}
+          className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white"
+        >
+          إعادة المحاولة
+        </button>
       </div>
     );
   }
@@ -1319,17 +917,18 @@ export default function InventoryOpeningEntriesPage() {
 
                   <td className="px-5 py-4 font-semibold text-slate-800">
                     {money(movement.quantity)}
+
                     <span className="mr-1 text-xs text-slate-400">
-                      {movement.unitName}
+                      {movement.extra?.unitName || ""}
                     </span>
                   </td>
 
                   <td className="px-5 py-4 text-slate-600">
-                    {money(number(movement.unitCost))}
+                    {money(number(movement.extra?.unitCost))}
                   </td>
 
                   <td className="px-5 py-4 font-semibold text-green-700">
-                    {money(number(movement.totalCost))}
+                    {money(number(movement.extra?.totalCost))}
                   </td>
 
                   <td className="px-5 py-4 text-slate-600">{movement.date}</td>
@@ -1384,7 +983,8 @@ export default function InventoryOpeningEntriesPage() {
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
-                className="rounded-xl bg-slate-100 p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                disabled={saving}
+                className="rounded-xl bg-slate-100 p-2 text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
               >
                 <FiX size={20} />
               </button>
@@ -1625,7 +1225,9 @@ export default function InventoryOpeningEntriesPage() {
                       <thead className="bg-slate-50 text-slate-500">
                         <tr>
                           <th className="px-4 py-3 text-right">الحساب</th>
+
                           <th className="px-4 py-3 text-left">مدين</th>
+
                           <th className="px-4 py-3 text-left">دائن</th>
                         </tr>
                       </thead>

@@ -1,193 +1,109 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import { supabase } from "@/lib/supabase";
+import { toast } from "sonner";
 import {
   FiPlus,
+  FiRefreshCw,
   FiSearch,
+  FiEye,
   FiEdit,
   FiTrash2,
+  FiCheck,
   FiX,
-  FiSave,
-  FiArrowLeftCircle,
-  FiCheckCircle,
-  FiClock,
-  FiXCircle,
   FiPackage,
-  FiRefreshCw,
+  FiClock,
+  FiCheckCircle,
+  FiXCircle,
   FiFilter,
-  FiEye,
-  FiAlertCircle,
+  FiCalendar,
+  FiMapPin,
 } from "react-icons/fi";
-import { toast } from "sonner";
-import { FaWarehouse } from "react-icons/fa";
+import { IoFileTrayFull } from "react-icons/io5";
+import { BiArrowToLeft } from "react-icons/bi";
 
-import {
-  getCreateActivity,
-  getUpdateActivity,
-  logCreate,
-  logUpdate,
-  logDelete,
-  getCurrentActor,
-} from "../../lib/activity";
-
-/* =========================================================
-   API
-========================================================= */
-
-const API = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-/* =========================================================
-   TYPES
-========================================================= */
+/* =========================
+   Types
+========================= */
 
 type TransferStatus = "pending" | "completed" | "cancelled";
 
-type MovementType = "transfer_in" | "transfer_out";
-
-interface Warehouse {
+type Warehouse = {
   id: string;
   companyId: string;
   name: string;
   code?: string;
-  status?: "active" | "inactive";
-}
+  status?: string;
+};
 
-interface Product {
+type Product = {
   id: string;
   companyId: string;
   name: string;
-  sku: string;
+  sku?: string;
   unitName?: string;
   warehouseId?: string;
   currentStock?: number;
   purchasePrice?: number;
   sellingPrice?: number;
   trackInventory?: boolean;
-  status?: "active" | "inactive";
-}
+  status?: string;
+};
 
-interface WarehouseStock {
+type WarehouseStock = {
   id: string;
   companyId: string;
   productId: string;
   warehouseId: string;
   quantity: number;
   updatedAt?: string;
+  extra?: Record<string, any>;
+};
 
-  createdBy?: string;
-  createdByName?: string;
-  updatedBy?: string;
-  updatedByName?: string;
-}
-
-interface InventoryMovement {
-  id: string;
-  companyId: string;
-  productId: string;
-  productName: string;
-  productSKU: string;
-  warehouseId: string;
-  warehouseName: string;
-  type: MovementType;
-  quantity: number;
-  referenceType: "transfer";
-  referenceId: string;
-  referenceNumber: string;
-  date: string;
-  notes?: string;
-  createdAt: string;
-
-  createdBy?: string;
-  createdByName?: string;
-  createdByUsername?: string;
-  createdByRole?: string;
-}
-
-interface Transfer {
+type Transfer = {
   id: string;
   companyId: string;
   transferNumber: string;
-
   fromWarehouseId: string;
   fromWarehouseName: string;
-
   toWarehouseId: string;
   toWarehouseName: string;
-
   productId: string;
   productName: string;
-  productSKU: string;
-
+  productSKU?: string;
   quantity: number;
-  unitName: string;
-
+  unitName?: string;
   date: string;
-  notes: string;
+  notes?: string;
   status: TransferStatus;
-
   createdAt: string;
-  createdBy?: string;
-  createdByName?: string;
-  createdByUsername?: string;
-  createdByRole?: string;
-
   updatedAt?: string;
-  updatedBy?: string;
-  updatedByName?: string;
+  extra?: Record<string, any>;
+};
 
-  completedAt?: string;
-  completedBy?: string;
-  completedByName?: string;
-
-  cancelledAt?: string;
-  cancelledBy?: string;
-  cancelledByName?: string;
-}
-
-interface TransferForm {
+type TransferForm = {
   fromWarehouseId: string;
   toWarehouseId: string;
   productId: string;
   quantity: string;
   date: string;
   notes: string;
-}
-
-interface StockChange {
-  action: "updated" | "created";
-  id: string;
-  oldQuantity: number;
-  oldData?: WarehouseStock;
-}
-
-/* =========================================================
-   HELPERS
-========================================================= */
-
-const today = () => {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
 };
 
-const number = (value: unknown) => {
-  const result = Number(value);
-  return Number.isFinite(result) ? result : 0;
+type Actor = {
+  userId: string;
+  userName: string;
+  username: string;
+  userRole: string;
+  companyId: string;
 };
 
-const formatNumber = (value: number) =>
-  new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 3,
-  }).format(value);
+/* =========================
+   Helpers
+========================= */
+
+const today = () => new Date().toISOString().slice(0, 10);
 
 const emptyForm: TransferForm = {
   fromWarehouseId: "",
@@ -198,124 +114,59 @@ const emptyForm: TransferForm = {
   notes: "",
 };
 
-const getCookie = (name: string) => {
-  if (typeof document === "undefined") return "";
+const formatNumber = (value: number) =>
+  new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 3,
+  }).format(value || 0);
 
-  const cookie = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith(`${name}=`));
+const formatDate = (value?: string) => {
+  if (!value) return "—";
 
-  return cookie ? decodeURIComponent(cookie.split("=").slice(1).join("=")) : "";
+  return new Date(value).toLocaleDateString("ar-YE", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 };
 
-/* =========================================================
-   ACTIVITY HELPERS
-========================================================= */
+const getActor = (): Actor | null => {
+  if (typeof window === "undefined") return null;
 
-const getActorData = (companyId: string) => {
-  const actor = getCurrentActor();
-
-  if (!actor) {
-    throw new Error("تعذر تحديد المستخدم الحالي. يرجى تسجيل الدخول مجددًا.");
-  }
-
-  if (String(actor.companyId) !== String(companyId)) {
-    throw new Error("المستخدم الحالي لا ينتمي إلى الشركة المحددة.");
-  }
-
-  return {
-    userId: String(actor.userId),
-    userName: actor.userName,
-    username: actor.username,
-    userRole: actor.userRole,
-  };
-};
-
-const getCreateMetadata = (companyId: string) => {
-  const actor = getActorData(companyId);
-
-  return {
-    ...getCreateActivity(),
-    companyId,
-    createdBy: actor.userId,
-    createdByName: actor.userName,
-    createdByUsername: actor.username,
-    createdByRole: actor.userRole,
-    createdAt: new Date().toISOString(),
-  };
-};
-
-const getUpdateMetadata = (companyId: string) => {
-  const actor = getActorData(companyId);
-
-  return {
-    ...getUpdateActivity(),
-    updatedBy: actor.userId,
-    updatedByName: actor.userName,
-    updatedAt: new Date().toISOString(),
-  };
-};
-
-const recordCreateActivity = async (
-  module: string,
-  description: string,
-  recordId: string,
-  recordName: string,
-  newData?: unknown,
-) => {
   try {
-    await logCreate(module, description, recordId, recordName, newData);
-  } catch (error) {
-    console.error("Create activity error:", error);
+    const stored = localStorage.getItem("authUser");
+
+    if (!stored) return null;
+
+    const user = JSON.parse(stored);
+
+    if (!user?.companyId) return null;
+
+    return {
+      userId: String(user.id || user.userId || ""),
+      userName: user.name || user.fullName || user.username || "",
+      username: user.username || "",
+      userRole: user.role || "",
+      companyId: String(user.companyId),
+    };
+  } catch {
+    return null;
   }
 };
 
-const recordUpdateActivity = async (
-  module: string,
-  description: string,
-  recordId: string,
-  recordName: string,
-  oldData?: unknown,
-  newData?: unknown,
-) => {
-  try {
-    await logUpdate(
-      module,
-      description,
-      recordId,
-      recordName,
-      oldData,
-      newData,
-    );
-  } catch (error) {
-    console.error("Update activity error:", error);
-  }
+const isActive = (status?: string) => {
+  if (!status) return true;
+
+  return !["inactive", "disabled", "موقوف", "غير نشط"].includes(
+    status.toLowerCase(),
+  );
 };
 
-const recordDeleteActivity = async (
-  module: string,
-  description: string,
-  recordId: string,
-  recordName: string,
-  oldData?: unknown,
-) => {
-  try {
-    await logDelete(module, description, recordId, recordName, oldData);
-  } catch (error) {
-    console.error("Delete activity error:", error);
-  }
-};
-
-/* =========================================================
-   COMPONENT
-========================================================= */
+/* =========================
+   Component
+========================= */
 
 export default function TransfersPage() {
-  /* =========================
-     STATE
-  ========================= */
-
-  const [companyId, setCompanyId] = useState("");
+  const [actor, setActor] = useState<Actor | null>(null);
 
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -329,251 +180,280 @@ export default function TransfersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [warehouseFilter, setWarehouseFilter] = useState("all");
 
-  const [showModal, setShowModal] = useState(false);
-  const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   const [selectedTransfer, setSelectedTransfer] = useState<Transfer | null>(
     null,
   );
 
+  const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
+
   const [form, setForm] = useState<TransferForm>(emptyForm);
 
-  const [availableStock, setAvailableStock] = useState(0);
-  const [checkingStock, setCheckingStock] = useState(false);
+  /* =========================
+     Initial actor
+  ========================= */
 
-  /* =========================================================
-     LOAD DATA
-  ========================================================= */
+  useEffect(() => {
+    const currentActor = getActor();
 
-  const loadData = useCallback(async (currentCompanyId: string) => {
-    if (!currentCompanyId) return;
+    if (!currentActor) {
+      toast.error("تعذر تحديد المستخدم أو الشركة");
+      setLoading(false);
+      return;
+    }
 
-    setLoading(true);
+    setActor(currentActor);
+  }, []);
+
+  /* =========================
+     Load data
+  ========================= */
+
+  const loadData = useCallback(async () => {
+    if (!actor?.companyId) return;
 
     try {
-      const requests = [
-        { name: "transfers", url: "/transfers" },
-        { name: "warehouses", url: "/warehouses" },
-        { name: "products", url: "/products" },
-        { name: "warehouseStocks", url: "/warehouseStocks" },
-      ];
+      setLoading(true);
 
-      const results = await Promise.all(
-        requests.map(async (request) => {
-          try {
-            const response = await API.get(request.url, {
-              params: { companyId: currentCompanyId },
-            });
+      const [transfersResult, warehousesResult, productsResult, stocksResult] =
+        await Promise.all([
+          supabase
+            .from("transfers")
+            .select("*")
+            .eq("companyId", actor.companyId)
+            .order("createdAt", { ascending: false }),
 
-            return {
-              name: request.name,
-              data: response.data,
-              error: null,
-            };
-          } catch (error) {
-            console.error(`Failed loading ${request.name}:`, error);
+          supabase
+            .from("warehouses")
+            .select("*")
+            .eq("companyId", actor.companyId),
 
-            return {
-              name: request.name,
-              data: [],
-              error,
-            };
-          }
-        }),
-      );
+          supabase
+            .from("products")
+            .select("*")
+            .eq("companyId", actor.companyId),
 
-      const failed = results.filter((item) => item.error);
+          supabase
+            .from("warehouseStocks")
+            .select("*")
+            .eq("companyId", actor.companyId),
+        ]);
 
-      if (failed.length) {
-        toast.error(
-          `تعذر تحميل بعض البيانات: ${failed
-            .map((item) => item.name)
-            .join("، ")}`,
-        );
-      }
+      if (transfersResult.error) throw transfersResult.error;
+      if (warehousesResult.error) throw warehousesResult.error;
+      if (productsResult.error) throw productsResult.error;
+      if (stocksResult.error) throw stocksResult.error;
 
-      const getData = (name: string) =>
-        results.find((item) => item.name === name)?.data || [];
-
-      setTransfers(
-        getData("transfers").filter(
-          (item: Transfer) =>
-            String(item.companyId) === String(currentCompanyId),
-        ),
-      );
+      setTransfers((transfersResult.data || []) as Transfer[]);
 
       setWarehouses(
-        getData("warehouses").filter(
-          (item: Warehouse) =>
-            String(item.companyId) === String(currentCompanyId) &&
-            item.status !== "inactive",
+        ((warehousesResult.data || []) as Warehouse[]).filter((item) =>
+          isActive(item.status),
         ),
       );
 
       setProducts(
-        getData("products").filter(
-          (item: Product) =>
-            String(item.companyId) === String(currentCompanyId) &&
-            item.status !== "inactive" &&
-            item.trackInventory !== false,
+        ((productsResult.data || []) as Product[]).filter(
+          (item) => isActive(item.status) && item.trackInventory !== false,
         ),
       );
 
-      setWarehouseStocks(
-        getData("warehouseStocks").filter(
-          (item: WarehouseStock) =>
-            String(item.companyId) === String(currentCompanyId),
-        ),
-      );
-    } catch (error) {
-      console.error(error);
-      toast.error("حدث خطأ أثناء تحميل البيانات");
+      setWarehouseStocks((stocksResult.data || []) as WarehouseStock[]);
+    } catch (error: any) {
+      console.error("Load transfers error:", error);
+      toast.error(error.message || "حدث خطأ أثناء تحميل البيانات");
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  /* =========================================================
-     INITIALIZATION
-  ========================================================= */
+  }, [actor]);
 
   useEffect(() => {
-    const initialize = async () => {
-      try {
-        const type = getCookie("type");
-        const storedCompanyId = getCookie("companyId");
+    if (actor) loadData();
+  }, [actor, loadData]);
 
-        if (!type || !["owner", "erp", "employee"].includes(type)) {
-          toast.error("ليس لديك صلاحية الوصول إلى هذه الصفحة");
-          setLoading(false);
-          return;
-        }
+  /* =========================
+     Stock helpers
+  ========================= */
 
-        if (!storedCompanyId) {
-          toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
-          setLoading(false);
-          return;
-        }
+  const getStockQuantity = (productId: string, warehouseId: string) => {
+    const stock = warehouseStocks.find(
+      (item) =>
+        item.productId === productId && item.warehouseId === warehouseId,
+    );
 
-        const actor = getCurrentActor();
+    if (stock) return Number(stock.quantity || 0);
 
-        if (!actor || String(actor.companyId) !== String(storedCompanyId)) {
-          toast.error("تعذر التحقق من المستخدم أو الشركة");
-          setLoading(false);
-          return;
-        }
+    const product = products.find((item) => item.id === productId);
 
-        setCompanyId(storedCompanyId);
+    if (product?.warehouseId === warehouseId) {
+      return Number(product.currentStock || 0);
+    }
 
-        await loadData(storedCompanyId);
-      } catch (error) {
-        console.error(error);
-        toast.error("حدث خطأ أثناء التهيئة");
-        setLoading(false);
-      }
+    return 0;
+  };
+
+  const getStockRecord = async (productId: string, warehouseId: string) => {
+    if (!actor) throw new Error("تعذر تحديد الشركة");
+
+    const { data, error } = await supabase
+      .from("warehouseStocks")
+      .select("*")
+      .eq("companyId", actor.companyId)
+      .eq("productId", productId)
+      .eq("warehouseId", warehouseId);
+
+    if (error) throw error;
+
+    if (data && data.length > 1) {
+      throw new Error(
+        "يوجد أكثر من سجل رصيد لنفس المنتج والمستودع. يرجى معالجة السجلات المكررة.",
+      );
+    }
+
+    return data?.[0] as WarehouseStock | undefined;
+  };
+
+  const updateStock = async (
+    productId: string,
+    warehouseId: string,
+    newQuantity: number,
+  ) => {
+    if (!actor) throw new Error("تعذر تحديد الشركة");
+
+    const existing = await getStockRecord(productId, warehouseId);
+
+    const now = new Date().toISOString();
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from("warehouseStocks")
+        .update({
+          quantity: newQuantity,
+          updatedAt: now,
+          extra: {
+            ...(existing.extra || {}),
+            updatedBy: actor.userId,
+            updatedByName: actor.userName,
+            updatedByUsername: actor.username,
+            updatedByRole: actor.userRole,
+          },
+        })
+        .eq("id", existing.id)
+        .eq("companyId", actor.companyId)
+        .select("*")
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error("تعذر تحديث رصيد المستودع");
+
+      return {
+        type: "updated" as const,
+        oldQuantity: Number(existing.quantity || 0),
+        newQuantity,
+        recordId: existing.id,
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("warehouseStocks")
+      .insert({
+        id: crypto.randomUUID(),
+        companyId: actor.companyId,
+        productId,
+        warehouseId,
+        quantity: newQuantity,
+        updatedAt: now,
+        extra: {
+          createdBy: actor.userId,
+          createdByName: actor.userName,
+          createdByUsername: actor.username,
+          createdByRole: actor.userRole,
+        },
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    if (!data) throw new Error("تعذر إنشاء رصيد المستودع");
+
+    return {
+      type: "created" as const,
+      oldQuantity: 0,
+      newQuantity,
+      recordId: data.id,
     };
+  };
 
-    initialize();
-  }, [loadData]);
-
-  /* =========================================================
-     WAREHOUSE STOCK
-  ========================================================= */
-
-  const getAvailableStock = useCallback(
-    (productId: string, warehouseId: string) => {
-      const stockRecord = warehouseStocks.find(
-        (item) =>
-          String(item.productId) === String(productId) &&
-          String(item.warehouseId) === String(warehouseId) &&
-          String(item.companyId) === String(companyId),
-      );
-
-      if (stockRecord) {
-        return number(stockRecord.quantity);
-      }
-
-      const product = products.find(
-        (item) => String(item.id) === String(productId),
-      );
-
-      if (product && String(product.warehouseId) === String(warehouseId)) {
-        return number(product.currentStock);
-      }
-
-      return 0;
+  const rollbackStock = async (
+    productId: string,
+    warehouseId: string,
+    operation: {
+      type: "created" | "updated";
+      oldQuantity: number;
+      recordId: string;
     },
-    [warehouseStocks, products, companyId],
-  );
+  ) => {
+    if (!actor) return;
 
-  /* =========================================================
-     STOCK CHECK
-  ========================================================= */
+    if (operation.type === "created") {
+      const { error } = await supabase
+        .from("warehouseStocks")
+        .delete()
+        .eq("id", operation.recordId)
+        .eq("companyId", actor.companyId);
 
-  useEffect(() => {
-    const check = async () => {
-      if (!form.productId || !form.fromWarehouseId) {
-        setAvailableStock(0);
-        return;
-      }
+      if (error) throw error;
+      return;
+    }
 
-      setCheckingStock(true);
+    const { error } = await supabase
+      .from("warehouseStocks")
+      .update({
+        quantity: operation.oldQuantity,
+        updatedAt: new Date().toISOString(),
+      })
+      .eq("id", operation.recordId)
+      .eq("companyId", actor.companyId);
 
-      try {
-        const quantity = getAvailableStock(
-          form.productId,
-          form.fromWarehouseId,
-        );
+    if (error) throw error;
+  };
 
-        setAvailableStock(quantity);
-      } finally {
-        setCheckingStock(false);
-      }
-    };
-
-    check();
-  }, [form.productId, form.fromWarehouseId, getAvailableStock]);
-
-  /* =========================================================
-     TRANSFER NUMBER
-  ========================================================= */
+  /* =========================
+     Transfer number
+  ========================= */
 
   const generateTransferNumber = () => {
     const numbers = transfers
       .map((item) => {
-        const match = item.transferNumber?.match(/TRF-(\d+)/);
+        const match = item.transferNumber?.match(/^TRF-(\d+)$/);
         return match ? Number(match[1]) : 0;
       })
-      .filter((item) => Number.isFinite(item));
+      .filter((number) => number > 0);
 
-    const next = Math.max(0, ...numbers) + 1;
+    const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
 
-    return `TRF-${String(next).padStart(4, "0")}`;
+    return `TRF-${String(nextNumber).padStart(4, "0")}`;
   };
 
-  /* =========================================================
-     MODAL
-  ========================================================= */
+  /* =========================
+     Form helpers
+  ========================= */
 
-  const openAddModal = () => {
+  const openCreateForm = () => {
     setEditingTransfer(null);
-
     setForm({
       ...emptyForm,
       date: today(),
+      fromWarehouseId: warehouses[0]?.id || "",
     });
-
-    setShowModal(true);
+    setShowForm(true);
   };
 
-  const openEditModal = (transfer: Transfer) => {
+  const openEditForm = (transfer: Transfer) => {
     if (transfer.status !== "pending") {
       toast.error("يمكن تعديل التحويلات المعلقة فقط");
-      return;
-    }
-
-    if (String(transfer.companyId) !== String(companyId)) {
-      toast.error("لا تملك صلاحية تعديل هذا التحويل");
       return;
     }
 
@@ -588,45 +468,59 @@ export default function TransfersPage() {
       notes: transfer.notes || "",
     });
 
-    setShowModal(true);
+    setShowForm(true);
   };
 
-  const closeModal = () => {
-    setShowModal(false);
+  const closeForm = () => {
+    setShowForm(false);
     setEditingTransfer(null);
     setForm(emptyForm);
   };
 
-  /* =========================================================
-     FORM VALIDATION
-  ========================================================= */
+  const selectedProduct = products.find((item) => item.id === form.productId);
 
-  const validateForm = () => {
+  const availableStock =
+    form.productId && form.fromWarehouseId
+      ? getStockQuantity(form.productId, form.fromWarehouseId)
+      : 0;
+
+  /* =========================
+     Save transfer
+  ========================= */
+
+  const handleSave = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!actor) {
+      toast.error("تعذر تحديد المستخدم");
+      return;
+    }
+
+    const quantity = Number(form.quantity);
+
     if (!form.fromWarehouseId || !form.toWarehouseId) {
-      toast.error("يرجى تحديد المستودع المرسل والمستقبل");
-      return false;
+      toast.error("يرجى تحديد المستودعين");
+      return;
     }
 
     if (form.fromWarehouseId === form.toWarehouseId) {
-      toast.error("لا يمكن التحويل إلى نفس المستودع");
-      return false;
+      toast.error("لا يمكن اختيار نفس المستودع كمصدر ووجهة");
+      return;
     }
 
     if (!form.productId) {
       toast.error("يرجى اختيار المنتج");
-      return false;
+      return;
     }
 
-    const quantity = number(form.quantity);
-
-    if (quantity <= 0) {
-      toast.error("يجب أن تكون الكمية أكبر من صفر");
-      return false;
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      toast.error("أدخل كمية صحيحة");
+      return;
     }
 
     if (!form.date) {
       toast.error("يرجى تحديد تاريخ التحويل");
-      return false;
+      return;
     }
 
     const fromWarehouse = warehouses.find(
@@ -640,673 +534,471 @@ export default function TransfersPage() {
     const product = products.find((item) => item.id === form.productId);
 
     if (!fromWarehouse || !toWarehouse || !product) {
-      toast.error("بيانات التحويل غير صحيحة");
-      return false;
-    }
-
-    if (quantity > getAvailableStock(product.id, fromWarehouse.id)) {
-      toast.error("الكمية المطلوبة أكبر من الرصيد المتاح");
-      return false;
-    }
-
-    return true;
-  };
-
-  /* =========================================================
-     CREATE / UPDATE TRANSFER
-  ========================================================= */
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-
-    if (!validateForm()) return;
-
-    if (!companyId) {
-      toast.error("لم يتم تحديد الشركة");
+      toast.error("بيانات المنتج أو المستودعات غير صحيحة");
       return;
     }
 
-    setSaving(true);
+    if (!editingTransfer) {
+      if (quantity > availableStock) {
+        toast.error(
+          `الكمية المتاحة في المستودع هي ${formatNumber(availableStock)}`,
+        );
+        return;
+      }
+    } else {
+      const originalStock = getStockQuantity(
+        editingTransfer.productId,
+        editingTransfer.fromWarehouseId,
+      );
+
+      const availableForEdit = originalStock + editingTransfer.quantity;
+
+      if (
+        form.productId === editingTransfer.productId &&
+        form.fromWarehouseId === editingTransfer.fromWarehouseId &&
+        quantity > availableForEdit
+      ) {
+        toast.error(`الكمية المتاحة هي ${formatNumber(availableForEdit)}`);
+        return;
+      }
+
+      if (
+        form.productId !== editingTransfer.productId ||
+        form.fromWarehouseId !== editingTransfer.fromWarehouseId
+      ) {
+        if (quantity > availableStock) {
+          toast.error(`الكمية المتاحة هي ${formatNumber(availableStock)}`);
+          return;
+        }
+      }
+    }
 
     try {
-      const actor = getActorData(companyId);
+      setSaving(true);
 
-      const product = products.find((item) => item.id === form.productId)!;
-
-      const fromWarehouse = warehouses.find(
-        (item) => item.id === form.fromWarehouseId,
-      )!;
-
-      const toWarehouse = warehouses.find(
-        (item) => item.id === form.toWarehouseId,
-      )!;
-
-      const quantity = number(form.quantity);
+      const now = new Date().toISOString();
 
       const payload = {
-        companyId,
-
-        transferNumber:
-          editingTransfer?.transferNumber || generateTransferNumber(),
-
+        companyId: actor.companyId,
         fromWarehouseId: fromWarehouse.id,
         fromWarehouseName: fromWarehouse.name,
-
         toWarehouseId: toWarehouse.id,
         toWarehouseName: toWarehouse.name,
-
         productId: product.id,
         productName: product.name,
-        productSKU: product.sku,
-
+        productSKU: product.sku || "",
         quantity,
-        unitName: product.unitName || "وحدة",
-
+        unitName: product.unitName || "",
         date: form.date,
         notes: form.notes.trim(),
-
-        status: "pending" as TransferStatus,
+        updatedAt: now,
       };
 
       if (editingTransfer) {
-        if (
-          String(editingTransfer.companyId) !== String(companyId) ||
-          editingTransfer.status !== "pending"
-        ) {
-          throw new Error("لا يمكن تعديل هذا التحويل");
-        }
+        const { data, error } = await supabase
+          .from("transfers")
+          .update(payload)
+          .eq("id", editingTransfer.id)
+          .eq("companyId", actor.companyId)
+          .eq("status", "pending")
+          .select("*")
+          .single();
 
-        const oldData = { ...editingTransfer };
-
-        const updatePayload = {
-          ...payload,
-          ...getUpdateMetadata(companyId),
-        };
-
-        const response = await API.patch(
-          `/transfers/${editingTransfer.id}`,
-          updatePayload,
-        );
-
-        await recordUpdateActivity(
-          "تحويلات المخزون",
-          `تعديل التحويل ${editingTransfer.transferNumber}`,
-          editingTransfer.id,
-          editingTransfer.transferNumber,
-          oldData,
-          response.data,
-        );
+        if (error) throw error;
+        if (!data) throw new Error("تعذر تحديث التحويل");
 
         toast.success("تم تحديث التحويل بنجاح");
       } else {
-        const createPayload = {
+        const { error } = await supabase.from("transfers").insert({
+          id: crypto.randomUUID(),
           ...payload,
-          ...getCreateMetadata(companyId),
-        };
+          transferNumber: generateTransferNumber(),
+          status: "pending",
+          createdAt: now,
+          extra: {
+            createdBy: actor.userId,
+            createdByName: actor.userName,
+            createdByUsername: actor.username,
+            createdByRole: actor.userRole,
+          },
+        });
 
-        const response = await API.post("/transfers", createPayload);
+        if (error) throw error;
 
-        await recordCreateActivity(
-          "تحويلات المخزون",
-          `إنشاء طلب تحويل ${payload.transferNumber}`,
-          String(response.data.id),
-          payload.transferNumber,
-          response.data,
-        );
-
-        toast.success("تم إنشاء طلب التحويل بنجاح");
+        toast.success("تم إنشاء التحويل بنجاح");
       }
 
-      closeModal();
-
-      await loadData(companyId);
-    } catch (error) {
-      console.error(error);
-
-      toast.error(error instanceof Error ? error.message : "تعذر حفظ التحويل");
+      closeForm();
+      await loadData();
+    } catch (error: any) {
+      console.error("Save transfer error:", error);
+      toast.error(error.message || "حدث خطأ أثناء حفظ التحويل");
     } finally {
       setSaving(false);
     }
   };
 
-  /* =========================================================
-     FIND STOCK RECORD
-  ========================================================= */
+  /* =========================
+     Create inventory movement
+  ========================= */
 
-  const findStockRecord = async (productId: string, warehouseId: string) => {
-    const response = await API.get("/warehouseStocks", {
-      params: {
-        companyId,
-        productId,
-        warehouseId,
-      },
-    });
+  const createMovement = async ({
+    product,
+    warehouse,
+    quantity,
+    type,
+    transfer,
+  }: {
+    product: Product;
+    warehouse: Warehouse;
+    quantity: number;
+    type: "transfer_in" | "transfer_out";
+    transfer: Transfer;
+  }) => {
+    if (!actor) throw new Error("تعذر تحديد المستخدم");
 
-    const records = response.data.filter(
-      (item: WarehouseStock) =>
-        String(item.companyId) === String(companyId) &&
-        String(item.productId) === String(productId) &&
-        String(item.warehouseId) === String(warehouseId),
-    );
+    const { data, error } = await supabase
+      .from("inventoryMovements")
+      .insert({
+        id: crypto.randomUUID(),
+        companyId: actor.companyId,
+        productId: product.id,
+        productName: product.name,
+        productSKU: product.sku || "",
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        type,
+        quantity,
+        referenceType: "transfer",
+        referenceId: transfer.id,
+        referenceNumber: transfer.transferNumber,
+        date: transfer.date,
+        notes: transfer.notes || "",
+        createdAt: new Date().toISOString(),
+        extra: {
+          createdBy: actor.userId,
+          createdByName: actor.userName,
+          createdByUsername: actor.username,
+          createdByRole: actor.userRole,
+        },
+      })
+      .select("id")
+      .single();
 
-    return records[0] as WarehouseStock | undefined;
+    if (error) throw error;
+    if (!data) throw new Error("تعذر تسجيل حركة المخزون");
+
+    return data.id as string;
   };
 
-  /* =========================================================
-     UPDATE WAREHOUSE STOCK
-  ========================================================= */
-
-  const setWarehouseStock = async (
-    productId: string,
-    warehouseId: string,
-    newQuantity: number,
-  ): Promise<StockChange> => {
-    if (newQuantity < 0) {
-      throw new Error("لا يمكن أن يكون رصيد المستودع سالبًا");
-    }
-
-    const existing = await findStockRecord(productId, warehouseId);
-
-    const payload = {
-      companyId,
-      productId,
-      warehouseId,
-      quantity: Number(newQuantity.toFixed(3)),
-    };
-
-    if (existing) {
-      const oldData = { ...existing };
-
-      const updatePayload = {
-        ...payload,
-        ...getUpdateMetadata(companyId),
-      };
-
-      const response = await API.patch(
-        `/warehouseStocks/${existing.id}`,
-        updatePayload,
-      );
-
-      await recordUpdateActivity(
-        "أرصدة المستودعات",
-        `تحديث رصيد المنتج ${productId} في المستودع ${warehouseId}`,
-        existing.id,
-        `${productId} - ${warehouseId}`,
-        oldData,
-        response.data,
-      );
-
-      return {
-        action: "updated",
-        id: existing.id,
-        oldQuantity: number(existing.quantity),
-        oldData,
-      };
-    }
-
-    const createPayload = {
-      ...payload,
-      ...getCreateMetadata(companyId),
-    };
-
-    const response = await API.post("/warehouseStocks", createPayload);
-
-    await recordCreateActivity(
-      "أرصدة المستودعات",
-      `إنشاء رصيد للمنتج ${productId} في المستودع ${warehouseId}`,
-      String(response.data.id),
-      `${productId} - ${warehouseId}`,
-      response.data,
-    );
-
-    return {
-      action: "created",
-      id: String(response.data.id),
-      oldQuantity: 0,
-    };
-  };
-
-  /* =========================================================
-     ROLLBACK WAREHOUSE STOCK
-  ========================================================= */
-
-  const rollbackWarehouseStock = async (record: StockChange) => {
-    if (record.action === "updated") {
-      const currentResponse = await API.get(`/warehouseStocks/${record.id}`);
-
-      const currentRecord = currentResponse.data;
-
-      if (String(currentRecord.companyId) !== String(companyId)) {
-        throw new Error("لا يمكن التراجع عن رصيد تابع لشركة أخرى");
-      }
-
-      const oldData = { ...currentRecord };
-
-      const originalData = record.oldData || {};
-
-      const payload = {
-        quantity: record.oldQuantity,
-        updatedAt: originalData.updatedAt || null,
-        updatedBy: originalData.updatedBy || null,
-        updatedByName: originalData.updatedByName || null,
-      };
-
-      const response = await API.patch(
-        `/warehouseStocks/${record.id}`,
-        payload,
-      );
-
-      await recordUpdateActivity(
-        "أرصدة المستودعات",
-        "التراجع عن تحديث رصيد المستودع بسبب فشل التحويل",
-        record.id,
-        record.id,
-        oldData,
-        response.data,
-      );
-    } else {
-      const response = await API.get(`/warehouseStocks/${record.id}`);
-
-      const oldData = response.data;
-
-      if (String(oldData.companyId) !== String(companyId)) {
-        throw new Error("لا يمكن حذف رصيد تابع لشركة أخرى");
-      }
-
-      await API.delete(`/warehouseStocks/${record.id}`);
-
-      await recordDeleteActivity(
-        "أرصدة المستودعات",
-        "حذف رصيد تم إنشاؤه أثناء تحويل لم يكتمل",
-        record.id,
-        record.id,
-        oldData,
-      );
-    }
-  };
-
-  /* =========================================================
-     CREATE INVENTORY MOVEMENT
-  ========================================================= */
-
-  const createMovement = async (
-    transfer: Transfer,
-    type: MovementType,
-    warehouseId: string,
-    warehouseName: string,
-  ) => {
-    const payload = {
-      companyId,
-
-      productId: transfer.productId,
-      productName: transfer.productName,
-      productSKU: transfer.productSKU,
-
-      warehouseId,
-      warehouseName,
-
-      type,
-      quantity: transfer.quantity,
-
-      referenceType: "transfer" as const,
-      referenceId: String(transfer.id),
-      referenceNumber: transfer.transferNumber,
-
-      date: transfer.date,
-      notes: transfer.notes || "",
-    };
-
-    const createPayload = {
-      ...payload,
-      ...getCreateMetadata(companyId),
-    };
-
-    const response = await API.post("/inventoryMovements", createPayload);
-
-    await recordCreateActivity(
-      "حركات المخزون",
-      type === "transfer_out"
-        ? `تسجيل حركة خروج للمنتج ${transfer.productName} بسبب التحويل ${transfer.transferNumber}`
-        : `تسجيل حركة دخول للمنتج ${transfer.productName} بسبب التحويل ${transfer.transferNumber}`,
-      String(response.data.id),
-      `${transfer.transferNumber} - ${warehouseName}`,
-      response.data,
-    );
-
-    return String(response.data.id);
-  };
-
-  /* =========================================================
-     COMPLETE TRANSFER
-  ========================================================= */
+  /* =========================
+     Complete transfer
+  ========================= */
 
   const completeTransfer = async (transfer: Transfer) => {
+    if (!actor) return;
+
     if (transfer.status !== "pending") {
       toast.error("هذا التحويل ليس معلقًا");
       return;
     }
 
-    if (String(transfer.companyId) !== String(companyId)) {
-      toast.error("لا تملك صلاحية اعتماد هذا التحويل");
-      return;
-    }
+    const confirmed = window.confirm(
+      `هل تريد إتمام التحويل ${transfer.transferNumber}؟`,
+    );
 
-    if (transfer.fromWarehouseId === transfer.toWarehouseId) {
-      toast.error("المستودع المرسل والمستقبل متطابقان");
-      return;
-    }
+    if (!confirmed) return;
 
-    setSaving(true);
+    let sourceOperation: {
+      type: "created" | "updated";
+      oldQuantity: number;
+      recordId: string;
+    } | null = null;
 
-    let sourceChange: StockChange | null = null;
-    let destinationChange: StockChange | null = null;
+    let destinationOperation: {
+      type: "created" | "updated";
+      oldQuantity: number;
+      recordId: string;
+    } | null = null;
 
     const movementIds: string[] = [];
 
-    let transferWasUpdated = false;
-
     try {
-      const actor = getActorData(companyId);
+      setSaving(true);
 
-      // إعادة قراءة حالة التحويل من قاعدة البيانات لمنع اعتماد
-      // تحويل تم تعديله أو اعتماده من مستخدم آخر.
-      const latestTransferResponse = await API.get(`/transfers/${transfer.id}`);
+      // إعادة قراءة التحويل من قاعدة البيانات
+      const { data: currentTransfer, error: transferError } = await supabase
+        .from("transfers")
+        .select("*")
+        .eq("id", transfer.id)
+        .eq("companyId", actor.companyId)
+        .single();
 
-      const latestTransfer = latestTransferResponse.data as Transfer;
+      if (transferError) throw transferError;
 
-      if (
-        String(latestTransfer.companyId) !== String(companyId) ||
-        latestTransfer.status !== "pending"
-      ) {
-        throw new Error("تم تغيير حالة التحويل. يرجى تحديث الصفحة.");
+      if (currentTransfer.status !== "pending") {
+        throw new Error("تم تغيير حالة التحويل مسبقًا");
       }
-
-      // إعادة تحميل سجلات الرصيد قبل الاعتماد.
-      const [sourceStock, destinationStock] = await Promise.all([
-        findStockRecord(transfer.productId, transfer.fromWarehouseId),
-        findStockRecord(transfer.productId, transfer.toWarehouseId),
-      ]);
 
       const product = products.find((item) => item.id === transfer.productId);
 
-      if (!product) {
-        throw new Error("لم يتم العثور على المنتج");
+      const sourceWarehouse = warehouses.find(
+        (item) => item.id === transfer.fromWarehouseId,
+      );
+
+      const destinationWarehouse = warehouses.find(
+        (item) => item.id === transfer.toWarehouseId,
+      );
+
+      if (!product || !sourceWarehouse || !destinationWarehouse) {
+        throw new Error("تعذر العثور على المنتج أو المستودعات");
       }
+
+      // قراءة الرصيد الحالي من قاعدة البيانات
+      const sourceStock = await getStockRecord(
+        transfer.productId,
+        transfer.fromWarehouseId,
+      );
 
       const sourceQuantity = sourceStock
-        ? number(sourceStock.quantity)
+        ? Number(sourceStock.quantity || 0)
         : product.warehouseId === transfer.fromWarehouseId
-          ? number(product.currentStock)
+          ? Number(product.currentStock || 0)
           : 0;
 
-      const destinationQuantity = destinationStock
-        ? number(destinationStock.quantity)
-        : product.warehouseId === transfer.toWarehouseId
-          ? number(product.currentStock)
-          : 0;
-
-      const transferQuantity = number(transfer.quantity);
-
-      if (transferQuantity <= 0) {
-        throw new Error("كمية التحويل غير صحيحة");
-      }
-
-      if (sourceQuantity < transferQuantity) {
+      if (sourceQuantity < transfer.quantity) {
         throw new Error(
-          `الرصيد غير كافٍ. الرصيد المتاح: ${formatNumber(sourceQuantity)}`,
+          `الرصيد غير كافٍ. الرصيد الحالي: ${formatNumber(sourceQuantity)}`,
         );
       }
 
-      const newSourceQuantity = Number(
-        (sourceQuantity - transferQuantity).toFixed(3),
-      );
-
-      const newDestinationQuantity = Number(
-        (destinationQuantity + transferQuantity).toFixed(3),
-      );
-
-      // 1. خصم الكمية من المستودع المرسل.
-      sourceChange = await setWarehouseStock(
-        transfer.productId,
-        transfer.fromWarehouseId,
-        newSourceQuantity,
-      );
-
-      // 2. إضافة الكمية إلى المستودع المستقبل.
-      destinationChange = await setWarehouseStock(
+      const destinationStock = await getStockRecord(
         transfer.productId,
         transfer.toWarehouseId,
-        newDestinationQuantity,
       );
 
-      // 3. تسجيل حركة خروج.
-      const sourceMovementId = await createMovement(
-        transfer,
-        "transfer_out",
+      const destinationQuantity = Number(destinationStock?.quantity || 0);
+
+      // خصم المصدر
+      sourceOperation = await updateStock(
+        transfer.productId,
         transfer.fromWarehouseId,
-        transfer.fromWarehouseName,
+        sourceQuantity - transfer.quantity,
       );
 
-      movementIds.push(sourceMovementId);
-
-      // 4. تسجيل حركة دخول.
-      const destinationMovementId = await createMovement(
-        transfer,
-        "transfer_in",
+      // إضافة الوجهة
+      destinationOperation = await updateStock(
+        transfer.productId,
         transfer.toWarehouseId,
-        transfer.toWarehouseName,
+        destinationQuantity + transfer.quantity,
       );
 
-      movementIds.push(destinationMovementId);
+      // تسجيل حركة الخروج
+      const outMovementId = await createMovement({
+        product,
+        warehouse: sourceWarehouse,
+        quantity: transfer.quantity,
+        type: "transfer_out",
+        transfer,
+      });
 
-      // 5. اعتماد التحويل.
-      const oldTransferData = { ...latestTransfer };
+      movementIds.push(outMovementId);
 
-      const completionDate = new Date().toISOString();
+      // تسجيل حركة الدخول
+      const inMovementId = await createMovement({
+        product,
+        warehouse: destinationWarehouse,
+        quantity: transfer.quantity,
+        type: "transfer_in",
+        transfer,
+      });
 
-      const updatePayload = {
-        status: "completed" as TransferStatus,
+      movementIds.push(inMovementId);
 
-        ...getUpdateMetadata(companyId),
+      // تحديث حالة التحويل
+      const { data: updatedTransfer, error: updateError } = await supabase
+        .from("transfers")
+        .update({
+          status: "completed",
+          updatedAt: new Date().toISOString(),
+          extra: {
+            ...(currentTransfer.extra || {}),
+            completedBy: actor.userId,
+            completedByName: actor.userName,
+            completedByUsername: actor.username,
+            completedByRole: actor.userRole,
+            completedAt: new Date().toISOString(),
+          },
+        })
+        .eq("id", transfer.id)
+        .eq("companyId", actor.companyId)
+        .eq("status", "pending")
+        .select("id")
+        .single();
 
-        completedAt: completionDate,
-        completedBy: actor.userId,
-        completedByName: actor.userName,
-      };
-
-      const updateResponse = await API.patch(
-        `/transfers/${transfer.id}`,
-        updatePayload,
-      );
-
-      transferWasUpdated = true;
-
-      await recordUpdateActivity(
-        "تحويلات المخزون",
-        `اعتماد التحويل ${transfer.transferNumber}`,
-        transfer.id,
-        transfer.transferNumber,
-        oldTransferData,
-        updateResponse.data,
-      );
-
-      toast.success(
-        `تم التحويل بنجاح. المتبقي في المرسل: ${formatNumber(
-          newSourceQuantity,
-        )} ${transfer.unitName}`,
-      );
-
-      await loadData(companyId);
-    } catch (error) {
-      console.error("Transfer completion error:", error);
-
-      // =====================================================
-      // ROLLBACK
-      // =====================================================
-
-      // 1. إذا تم تحديث حالة التحويل، نعيدها إلى معلّق.
-      if (transferWasUpdated) {
-        try {
-          await API.patch(`/transfers/${transfer.id}`, {
-            status: "pending",
-            completedAt: null,
-            completedBy: null,
-            completedByName: null,
-          });
-        } catch (rollbackError) {
-          console.error("Transfer status rollback failed:", rollbackError);
-        }
+      if (updateError) throw updateError;
+      if (!updatedTransfer) {
+        throw new Error("تعذر تحديث حالة التحويل");
       }
 
-      // 2. حذف حركات المخزون التي تم إنشاؤها.
-      for (const id of movementIds) {
-        try {
-          const response = await API.get(`/inventoryMovements/${id}`);
+      toast.success("تم إتمام التحويل وتحديث أرصدة المستودعات");
 
-          if (String(response.data.companyId) === String(companyId)) {
-            await API.delete(`/inventoryMovements/${id}`);
-          }
-        } catch (rollbackError) {
-          console.error("Movement rollback failed:", rollbackError);
+      await loadData();
+    } catch (error: any) {
+      console.error("Complete transfer error:", error);
+
+      // محاولة التراجع عن العمليات السابقة
+      try {
+        if (movementIds.length > 0) {
+          const { error: movementDeleteError } = await supabase
+            .from("inventoryMovements")
+            .delete()
+            .in("id", movementIds)
+            .eq("companyId", actor.companyId);
+
+          if (movementDeleteError) throw movementDeleteError;
         }
+
+        if (destinationOperation) {
+          await rollbackStock(
+            transfer.productId,
+            transfer.toWarehouseId,
+            destinationOperation,
+          );
+        }
+
+        if (sourceOperation) {
+          await rollbackStock(
+            transfer.productId,
+            transfer.fromWarehouseId,
+            sourceOperation,
+          );
+        }
+      } catch (rollbackError) {
+        console.error("Rollback error:", rollbackError);
+
+        toast.error(
+          "حدث خطأ أثناء التراجع عن العمليات. يرجى مراجعة أرصدة المستودعات وحركات المخزون.",
+        );
       }
 
-      // 3. التراجع عن رصيد المستودع المستقبل.
-      if (destinationChange) {
-        try {
-          await rollbackWarehouseStock(destinationChange);
-        } catch (rollbackError) {
-          console.error("Destination rollback failed:", rollbackError);
-        }
-      }
-
-      // 4. التراجع عن رصيد المستودع المرسل.
-      if (sourceChange) {
-        try {
-          await rollbackWarehouseStock(sourceChange);
-        } catch (rollbackError) {
-          console.error("Source rollback failed:", rollbackError);
-        }
-      }
-
-      const message =
-        error instanceof Error ? error.message : "حدث خطأ أثناء تنفيذ التحويل";
-
-      toast.error(message);
-
-      await loadData(companyId);
+      toast.error(error.message || "تعذر إتمام التحويل");
+      await loadData();
     } finally {
       setSaving(false);
     }
   };
 
-  /* =========================================================
-     CANCEL TRANSFER
-  ========================================================= */
+  /* =========================
+     Cancel transfer
+  ========================= */
 
   const cancelTransfer = async (transfer: Transfer) => {
+    if (!actor) return;
+
     if (transfer.status !== "pending") {
       toast.error("يمكن إلغاء التحويلات المعلقة فقط");
       return;
     }
 
-    if (String(transfer.companyId) !== String(companyId)) {
-      toast.error("لا تملك صلاحية إلغاء هذا التحويل");
-      return;
-    }
-
-    if (!window.confirm("هل تريد إلغاء هذا التحويل؟")) {
-      return;
-    }
+    if (!window.confirm("هل تريد إلغاء هذا التحويل؟")) return;
 
     try {
       setSaving(true);
 
-      const oldData = { ...transfer };
+      const { data, error } = await supabase
+        .from("transfers")
+        .update({
+          status: "cancelled",
+          updatedAt: new Date().toISOString(),
+          extra: {
+            ...(transfer.extra || {}),
+            cancelledBy: actor.userId,
+            cancelledByName: actor.userName,
+            cancelledByUsername: actor.username,
+            cancelledByRole: actor.userRole,
+            cancelledAt: new Date().toISOString(),
+          },
+        })
+        .eq("id", transfer.id)
+        .eq("companyId", actor.companyId)
+        .eq("status", "pending")
+        .select("id")
+        .single();
 
-      const actor = getActorData(companyId);
-
-      const response = await API.patch(`/transfers/${transfer.id}`, {
-        status: "cancelled" as TransferStatus,
-        ...getUpdateMetadata(companyId),
-
-        cancelledAt: new Date().toISOString(),
-        cancelledBy: actor.userId,
-        cancelledByName: actor.userName,
-      });
-
-      await recordUpdateActivity(
-        "تحويلات المخزون",
-        `إلغاء التحويل ${transfer.transferNumber}`,
-        transfer.id,
-        transfer.transferNumber,
-        oldData,
-        response.data,
-      );
+      if (error) throw error;
+      if (!data) throw new Error("تعذر إلغاء التحويل");
 
       toast.success("تم إلغاء التحويل");
-
-      await loadData(companyId);
-    } catch (error) {
+      await loadData();
+    } catch (error: any) {
       console.error(error);
-      toast.error("تعذر إلغاء التحويل");
+      toast.error(error.message || "تعذر إلغاء التحويل");
     } finally {
       setSaving(false);
     }
   };
 
-  /* =========================================================
-     DELETE TRANSFER
-  ========================================================= */
+  /* =========================
+     Delete transfer
+  ========================= */
 
   const deleteTransfer = async (transfer: Transfer) => {
+    if (!actor) return;
+
     if (transfer.status === "completed") {
       toast.error("لا يمكن حذف تحويل مكتمل");
       return;
     }
 
-    if (String(transfer.companyId) !== String(companyId)) {
-      toast.error("لا تملك صلاحية حذف هذا التحويل");
-      return;
-    }
-
-    if (!window.confirm("هل تريد حذف طلب التحويل؟")) {
-      return;
-    }
+    if (!window.confirm("هل أنت متأكد من حذف هذا التحويل؟")) return;
 
     try {
       setSaving(true);
 
-      const oldData = { ...transfer };
+      const { data, error } = await supabase
+        .from("transfers")
+        .delete()
+        .eq("id", transfer.id)
+        .eq("companyId", actor.companyId)
+        .neq("status", "completed")
+        .select("id")
+        .maybeSingle();
 
-      await API.delete(`/transfers/${transfer.id}`);
+      if (error) throw error;
 
-      await recordDeleteActivity(
-        "تحويلات المخزون",
-        `حذف طلب التحويل ${transfer.transferNumber}`,
-        transfer.id,
-        transfer.transferNumber,
-        oldData,
-      );
+      if (!data) {
+        throw new Error(
+          "لم يتم حذف التحويل. ربما تغيرت حالته أو لا تملك صلاحية الحذف.",
+        );
+      }
 
       toast.success("تم حذف التحويل");
-
-      await loadData(companyId);
-    } catch (error) {
+      await loadData();
+    } catch (error: any) {
       console.error(error);
-      toast.error("تعذر حذف التحويل");
+      toast.error(error.message || "تعذر حذف التحويل");
     } finally {
       setSaving(false);
     }
   };
 
-  /* =========================================================
-     FILTERS
-  ========================================================= */
+  /* =========================
+     Details
+  ========================= */
+
+  const openDetails = (transfer: Transfer) => {
+    setSelectedTransfer(transfer);
+    setShowDetails(true);
+  };
+
+  /* =========================
+     Filters
+  ========================= */
 
   const filteredTransfers = useMemo(() => {
     return transfers.filter((transfer) => {
-      const searchValue = search.toLowerCase().trim();
+      const searchValue = search.trim().toLowerCase();
 
       const matchesSearch =
         !searchValue ||
@@ -1328,121 +1020,84 @@ export default function TransfersPage() {
     });
   }, [transfers, search, statusFilter, warehouseFilter]);
 
-  /* =========================================================
-     STATISTICS
-  ========================================================= */
+  const pendingCount = transfers.filter(
+    (item) => item.status === "pending",
+  ).length;
 
-  const statistics = useMemo(() => {
-    const pending = transfers.filter(
-      (item) => item.status === "pending",
-    ).length;
+  const completedCount = transfers.filter(
+    (item) => item.status === "completed",
+  ).length;
 
-    const completed = transfers.filter(
-      (item) => item.status === "completed",
-    ).length;
+  const cancelledCount = transfers.filter(
+    (item) => item.status === "cancelled",
+  ).length;
 
-    const cancelled = transfers.filter(
-      (item) => item.status === "cancelled",
-    ).length;
+  /* =========================
+     Status component
+  ========================= */
 
-    return {
-      total: transfers.length,
-      pending,
-      completed,
-      cancelled,
+  const StatusBadge = ({ status }: { status: TransferStatus }) => {
+    const config = {
+      pending: {
+        text: "معلق",
+        className: "bg-amber-100 text-amber-700",
+        icon: <FiClock />,
+      },
+      completed: {
+        text: "مكتمل",
+        className: "bg-green-100 text-green-700",
+        icon: <FiCheckCircle />,
+      },
+      cancelled: {
+        text: "ملغي",
+        className: "bg-red-100 text-red-700",
+        icon: <FiXCircle />,
+      },
     };
-  }, [transfers]);
 
-  /* =========================================================
-     STATUS
-  ========================================================= */
+    const item = config[status] || config.pending;
 
-  const statusInfo = (status: TransferStatus) => {
-    switch (status) {
-      case "completed":
-        return {
-          label: "مكتمل",
-          className: "bg-emerald-50 text-emerald-700",
-          icon: <FiCheckCircle />,
-        };
-
-      case "cancelled":
-        return {
-          label: "ملغي",
-          className: "bg-red-50 text-red-700",
-          icon: <FiXCircle />,
-        };
-
-      default:
-        return {
-          label: "معلق",
-          className: "bg-amber-50 text-amber-700",
-          icon: <FiClock />,
-        };
-    }
+    return (
+      <span
+        className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${item.className}`}
+      >
+        {item.icon}
+        {item.text}
+      </span>
+    );
   };
 
-  /* =========================================================
-     RENDER
-  ========================================================= */
-
-  if (loading) {
-    return (
-      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-500">
-          <FiRefreshCw className="animate-spin text-xl" />
-          جاري تحميل بيانات التحويلات...
-        </div>
-      </div>
-    );
-  }
-
-  if (!companyId) {
-    return (
-      <div
-        dir="rtl"
-        className="flex min-h-[400px] items-center justify-center p-5"
-      >
-        <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center text-red-700">
-          <FiAlertCircle className="mx-auto mb-2 text-3xl" />
-          <p className="font-semibold">لا يمكن الوصول إلى بيانات الشركة</p>
-          <p className="mt-1 text-sm">يرجى تسجيل الدخول مجددًا.</p>
-        </div>
-      </div>
-    );
-  }
+  /* =========================
+     Render
+  ========================= */
 
   return (
-    <div dir="rtl" className="space-y-5 p-3 text-slate-800 md:p-5">
-      {/* ================= HEADER ================= */}
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
+      {/* Header */}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <div className="flex items-center gap-2">
-            <FiArrowLeftCircle className="text-2xl text-blue-700" />
+          <h1 className="text-2xl font-bold text-slate-800">تحويلات المخزون</h1>
 
-            <h1 className="text-xl font-bold md:text-2xl">تحويلات المخزون</h1>
-          </div>
-
-          <p className="mt-1 text-xs text-slate-500 md:text-sm">
-            إدارة نقل المنتجات والكميات بين المستودعات
+          <p className="mt-1 text-sm text-slate-500">
+            إدارة تحويل المنتجات بين المستودعات ومتابعة حالتها.
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => loadData(companyId)}
-            disabled={saving}
-            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={loadData}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            <FiRefreshCw />
+            <FiRefreshCw className={loading ? "animate-spin" : ""} />
             تحديث
           </button>
 
           <button
-            onClick={openAddModal}
-            disabled={saving}
-            className="flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+            onClick={openCreateForm}
+            disabled={warehouses.length < 2 || products.length === 0}
+            className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FiPlus />
             تحويل جديد
@@ -1450,41 +1105,69 @@ export default function TransfersPage() {
         </div>
       </div>
 
-      {/* ================= STATISTICS ================= */}
+      {/* Statistics */}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
-          title="إجمالي التحويلات"
-          value={statistics.total}
-          icon={<FiArrowLeftCircle />}
-          color="blue"
-        />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">إجمالي التحويلات</p>
+              <h3 className="mt-2 text-2xl font-bold text-slate-800">
+                {formatNumber(transfers.length)}
+              </h3>
+            </div>
+            <div className="rounded-lg bg-blue-50 p-3 text-blue-600">
+              <IoFileTrayFull size={22} />
+            </div>
+          </div>
+        </div>
 
-        <StatCard
-          title="التحويلات المعلقة"
-          value={statistics.pending}
-          icon={<FiClock />}
-          color="amber"
-        />
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">قيد الانتظار</p>
+              <h3 className="mt-2 text-2xl font-bold text-amber-600">
+                {formatNumber(pendingCount)}
+              </h3>
+            </div>
+            <div className="rounded-lg bg-amber-50 p-3 text-amber-600">
+              <FiClock size={22} />
+            </div>
+          </div>
+        </div>
 
-        <StatCard
-          title="التحويلات المكتملة"
-          value={statistics.completed}
-          icon={<FiCheckCircle />}
-          color="green"
-        />
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">مكتملة</p>
+              <h3 className="mt-2 text-2xl font-bold text-green-600">
+                {formatNumber(completedCount)}
+              </h3>
+            </div>
+            <div className="rounded-lg bg-green-50 p-3 text-green-600">
+              <FiCheckCircle size={22} />
+            </div>
+          </div>
+        </div>
 
-        <StatCard
-          title="التحويلات الملغية"
-          value={statistics.cancelled}
-          icon={<FiXCircle />}
-          color="red"
-        />
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">ملغاة</p>
+              <h3 className="mt-2 text-2xl font-bold text-red-600">
+                {formatNumber(cancelledCount)}
+              </h3>
+            </div>
+            <div className="rounded-lg bg-red-50 p-3 text-red-600">
+              <FiXCircle size={22} />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* ================= FILTERS ================= */}
+      {/* Filters */}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="relative">
             <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1492,8 +1175,8 @@ export default function TransfersPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="بحث برقم التحويل أو المنتج..."
-              className="w-full rounded-lg border border-slate-200 py-2 pr-9 pl-3 text-sm outline-none focus:border-blue-500"
+              placeholder="ابحث برقم التحويل أو المنتج..."
+              className="w-full rounded-lg border border-slate-200 py-2.5 pr-10 pl-3 text-sm outline-none focus:border-slate-400"
             />
           </div>
 
@@ -1503,23 +1186,24 @@ export default function TransfersPage() {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pr-9 pl-3 text-sm outline-none focus:border-blue-500"
+              className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pr-10 pl-3 text-sm outline-none focus:border-slate-400"
             >
-              <option value="all">كل الحالات</option>
+              <option value="all">جميع الحالات</option>
               <option value="pending">معلق</option>
               <option value="completed">مكتمل</option>
               <option value="cancelled">ملغي</option>
             </select>
           </div>
 
-          <div>
+          <div className="relative">
+            <FiMapPin className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+
             <select
               value={warehouseFilter}
               onChange={(e) => setWarehouseFilter(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+              className="w-full appearance-none rounded-lg border border-slate-200 bg-white py-2.5 pr-10 pl-3 text-sm outline-none focus:border-slate-400"
             >
-              <option value="all">كل المستودعات</option>
-
+              <option value="all">جميع المستودعات</option>
               {warehouses.map((warehouse) => (
                 <option key={warehouse.id} value={warehouse.id}>
                   {warehouse.name}
@@ -1530,186 +1214,180 @@ export default function TransfersPage() {
         </div>
       </div>
 
-      {/* ================= TABLE ================= */}
+      {/* Transfers Table */}
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-right text-sm">
-            <thead className="bg-slate-50 text-xs text-slate-600">
-              <tr>
-                <th className="px-4 py-3">رقم التحويل</th>
-                <th className="px-4 py-3">المنتج</th>
-                <th className="px-4 py-3">المستودع المرسل</th>
-                <th className="px-4 py-3">المستودع المستقبل</th>
-                <th className="px-4 py-3">الكمية</th>
-                <th className="px-4 py-3">التاريخ</th>
-                <th className="px-4 py-3">الحالة</th>
-                <th className="px-4 py-3">الإجراءات</th>
-              </tr>
-            </thead>
+        <div className="flex items-center justify-between border-b border-slate-100 p-4">
+          <h2 className="font-bold text-slate-800">قائمة التحويلات</h2>
 
-            <tbody className="divide-y divide-slate-100">
-              {filteredTransfers.map((transfer) => {
-                const status = statusInfo(transfer.status);
+          <span className="text-sm text-slate-500">
+            {filteredTransfers.length} تحويل
+          </span>
+        </div>
 
-                return (
-                  <tr
-                    key={transfer.id}
-                    className="transition hover:bg-slate-50"
-                  >
-                    <td className="px-4 py-3 font-semibold text-blue-700">
+        {loading ? (
+          <div className="p-12 text-center text-slate-500">
+            <FiRefreshCw className="mx-auto mb-3 animate-spin" size={24} />
+            جاري تحميل التحويلات...
+          </div>
+        ) : filteredTransfers.length === 0 ? (
+          <div className="p-12 text-center">
+            <BiArrowToLeft className="mx-auto mb-3 text-slate-300" size={40} />
+
+            <p className="font-medium text-slate-600">لا توجد تحويلات</p>
+
+            <p className="mt-1 text-sm text-slate-400">
+              لم يتم العثور على تحويلات تطابق البحث.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[950px] text-right text-sm">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-medium">رقم التحويل</th>
+                  <th className="px-4 py-3 font-medium">المنتج</th>
+                  <th className="px-4 py-3 font-medium">من مستودع</th>
+                  <th className="px-4 py-3 font-medium">إلى مستودع</th>
+                  <th className="px-4 py-3 font-medium">الكمية</th>
+                  <th className="px-4 py-3 font-medium">التاريخ</th>
+                  <th className="px-4 py-3 font-medium">الحالة</th>
+                  <th className="px-4 py-3 font-medium">الإجراءات</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-slate-100">
+                {filteredTransfers.map((transfer) => (
+                  <tr key={transfer.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-4 font-semibold text-slate-800">
                       {transfer.transferNumber}
                     </td>
 
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{transfer.productName}</div>
+                    <td className="px-4 py-4">
+                      <p className="font-medium text-slate-800">
+                        {transfer.productName}
+                      </p>
 
-                      <div className="text-xs text-slate-400">
-                        {transfer.productSKU}
-                      </div>
+                      {transfer.productSKU && (
+                        <p className="mt-1 text-xs text-slate-400">
+                          {transfer.productSKU}
+                        </p>
+                      )}
                     </td>
 
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <FaWarehouse className="text-slate-400" />
-                        {transfer.fromWarehouseName}
-                      </div>
+                    <td className="px-4 py-4 text-slate-600">
+                      {transfer.fromWarehouseName}
                     </td>
 
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <FaWarehouse className="text-emerald-600" />
-                        {transfer.toWarehouseName}
-                      </div>
+                    <td className="px-4 py-4 text-slate-600">
+                      {transfer.toWarehouseName}
                     </td>
 
-                    <td className="px-4 py-3 font-semibold">
+                    <td className="px-4 py-4 font-semibold text-slate-800">
                       {formatNumber(transfer.quantity)} {transfer.unitName}
                     </td>
 
-                    <td className="px-4 py-3 text-slate-500">
-                      {transfer.date}
+                    <td className="px-4 py-4 text-slate-500">
+                      {formatDate(transfer.date)}
                     </td>
 
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${status.className}`}
-                      >
-                        {status.icon}
-                        {status.label}
-                      </span>
+                    <td className="px-4 py-4">
+                      <StatusBadge status={transfer.status} />
                     </td>
 
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-1">
                         <button
-                          onClick={() => setSelectedTransfer(transfer)}
                           title="التفاصيل"
-                          className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+                          onClick={() => openDetails(transfer)}
+                          className="rounded-lg p-2 text-blue-600 hover:bg-blue-50"
                         >
-                          <FiEye />
+                          <FiEye size={17} />
                         </button>
 
                         {transfer.status === "pending" && (
                           <>
                             <button
-                              onClick={() => openEditModal(transfer)}
                               title="تعديل"
-                              className="rounded-md p-2 text-blue-600 hover:bg-blue-50"
+                              onClick={() => openEditForm(transfer)}
+                              className="rounded-lg p-2 text-amber-600 hover:bg-amber-50"
                             >
-                              <FiEdit />
+                              <FiEdit size={17} />
                             </button>
 
                             <button
+                              title="إتمام التحويل"
                               onClick={() => completeTransfer(transfer)}
                               disabled={saving}
-                              title="اعتماد التحويل"
-                              className="rounded-md p-2 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
+                              className="rounded-lg p-2 text-green-600 hover:bg-green-50 disabled:opacity-50"
                             >
-                              <FiCheckCircle />
+                              <FiCheck size={17} />
                             </button>
 
                             <button
+                              title="إلغاء"
                               onClick={() => cancelTransfer(transfer)}
                               disabled={saving}
-                              title="إلغاء"
-                              className="rounded-md p-2 text-amber-600 hover:bg-amber-50 disabled:opacity-40"
+                              className="rounded-lg p-2 text-red-600 hover:bg-red-50 disabled:opacity-50"
                             >
-                              <FiXCircle />
-                            </button>
-
-                            <button
-                              onClick={() => deleteTransfer(transfer)}
-                              disabled={saving}
-                              title="حذف"
-                              className="rounded-md p-2 text-red-600 hover:bg-red-50 disabled:opacity-40"
-                            >
-                              <FiTrash2 />
+                              <FiX size={17} />
                             </button>
                           </>
+                        )}
+
+                        {transfer.status !== "completed" && (
+                          <button
+                            title="حذف"
+                            onClick={() => deleteTransfer(transfer)}
+                            disabled={saving}
+                            className="rounded-lg p-2 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                          >
+                            <FiTrash2 size={17} />
+                          </button>
                         )}
                       </div>
                     </td>
                   </tr>
-                );
-              })}
-
-              {filteredTransfers.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="px-4 py-12 text-center text-slate-400"
-                  >
-                    <FiPackage className="mx-auto mb-2 text-3xl" />
-                    لا توجد تحويلات مطابقة للبحث
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-          عدد النتائج: {filteredTransfers.length}
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* =====================================================
-          ADD / EDIT MODAL
-      ===================================================== */}
+      {/* Create / Edit Modal */}
 
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
-          <div className="max-h-[95vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-xl">
-            <div className="sticky top-0 flex items-center justify-between border-b bg-white px-5 py-4">
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+          <div className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
               <div>
-                <h2 className="font-bold">
+                <h2 className="text-lg font-bold text-slate-800">
                   {editingTransfer ? "تعديل التحويل" : "إنشاء تحويل جديد"}
                 </h2>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  حدد المنتج والمستودع والكمية المراد تحويلها
+                  أدخل بيانات نقل المنتجات بين المستودعات.
                 </p>
               </div>
 
               <button
-                onClick={closeModal}
-                className="rounded-lg p-2 hover:bg-slate-100"
+                onClick={closeForm}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"
               >
-                <FiX />
+                <FiX size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 p-5">
-              {/* FROM / TO */}
-
+            <form onSubmit={handleSave} className="space-y-5 p-5">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
-                    المستودع المرسل
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    المستودع المصدر *
                   </label>
 
                   <select
+                    required
                     value={form.fromWarehouseId}
                     onChange={(e) =>
                       setForm((prev) => ({
@@ -1717,8 +1395,7 @@ export default function TransfersPage() {
                         fromWarehouseId: e.target.value,
                       }))
                     }
-                    required
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                    className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none focus:border-slate-400"
                   >
                     <option value="">اختر المستودع</option>
 
@@ -1731,11 +1408,12 @@ export default function TransfersPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
-                    المستودع المستقبل
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    المستودع المستلم *
                   </label>
 
                   <select
+                    required
                     value={form.toWarehouseId}
                     onChange={(e) =>
                       setForm((prev) => ({
@@ -1743,8 +1421,7 @@ export default function TransfersPage() {
                         toWarehouseId: e.target.value,
                       }))
                     }
-                    required
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                    className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none focus:border-slate-400"
                   >
                     <option value="">اختر المستودع</option>
 
@@ -1759,12 +1436,13 @@ export default function TransfersPage() {
                 </div>
               </div>
 
-              {/* PRODUCT */}
-
               <div>
-                <label className="mb-2 block text-sm font-medium">المنتج</label>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  المنتج *
+                </label>
 
                 <select
+                  required
                   value={form.productId}
                   onChange={(e) =>
                     setForm((prev) => ({
@@ -1772,47 +1450,45 @@ export default function TransfersPage() {
                       productId: e.target.value,
                     }))
                   }
-                  required
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none focus:border-slate-400"
                 >
                   <option value="">اختر المنتج</option>
 
                   {products.map((product) => (
                     <option key={product.id} value={product.id}>
-                      {product.name} - {product.sku}
+                      {product.name}
+                      {product.sku ? ` - ${product.sku}` : ""}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* STOCK INFO */}
-
               {form.productId && form.fromWarehouseId && (
-                <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-600">
-                      الرصيد المتاح في المستودع المرسل
+                    <span className="text-sm text-blue-700">
+                      الرصيد المتاح في المستودع المصدر
                     </span>
 
-                    <span className="text-lg font-bold text-blue-700">
-                      {checkingStock ? "..." : formatNumber(availableStock)}
+                    <span className="font-bold text-blue-800">
+                      {formatNumber(availableStock)}{" "}
+                      {selectedProduct?.unitName || ""}
                     </span>
                   </div>
                 </div>
               )}
 
-              {/* QUANTITY / DATE */}
-
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
-                    الكمية
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    الكمية *
                   </label>
 
                   <input
                     type="number"
                     min="0.001"
-                    step="0.001"
+                    step="any"
+                    required
                     value={form.quantity}
                     onChange={(e) =>
                       setForm((prev) => ({
@@ -1820,25 +1496,19 @@ export default function TransfersPage() {
                         quantity: e.target.value,
                       }))
                     }
-                    required
                     placeholder="أدخل الكمية"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                    className="w-full rounded-lg border border-slate-200 p-3 text-sm outline-none focus:border-slate-400"
                   />
-
-                  {number(form.quantity) > availableStock && (
-                    <p className="mt-1 text-xs text-red-600">
-                      الكمية أكبر من الرصيد المتاح
-                    </p>
-                  )}
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
-                    تاريخ التحويل
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    تاريخ التحويل *
                   </label>
 
                   <input
                     type="date"
+                    required
                     value={form.date}
                     onChange={(e) =>
                       setForm((prev) => ({
@@ -1846,16 +1516,13 @@ export default function TransfersPage() {
                         date: e.target.value,
                       }))
                     }
-                    required
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                    className="w-full rounded-lg border border-slate-200 p-3 text-sm outline-none focus:border-slate-400"
                   />
                 </div>
               </div>
 
-              {/* NOTES */}
-
               <div>
-                <label className="mb-2 block text-sm font-medium">
+                <label className="mb-2 block text-sm font-medium text-slate-700">
                   ملاحظات
                 </label>
 
@@ -1868,38 +1535,29 @@ export default function TransfersPage() {
                       notes: e.target.value,
                     }))
                   }
-                  placeholder="ملاحظات إضافية..."
-                  className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  placeholder="ملاحظات إضافية حول التحويل..."
+                  className="w-full resize-none rounded-lg border border-slate-200 p-3 text-sm outline-none focus:border-slate-400"
                 />
               </div>
 
-              {/* ACTIONS */}
-
-              <div className="flex justify-end gap-2 border-t pt-4">
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
                 <button
                   type="button"
-                  onClick={closeModal}
-                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm hover:bg-slate-50"
+                  onClick={closeForm}
+                  disabled={saving}
+                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
                 >
                   إلغاء
                 </button>
 
                 <button
                   type="submit"
-                  disabled={
-                    saving ||
-                    number(form.quantity) > availableStock ||
-                    number(form.quantity) <= 0
-                  }
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-slate-800 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
                 >
-                  <FiSave />
+                  {saving && <FiRefreshCw className="animate-spin" />}
 
-                  {saving
-                    ? "جاري الحفظ..."
-                    : editingTransfer
-                      ? "حفظ التعديلات"
-                      : "إنشاء التحويل"}
+                  {editingTransfer ? "حفظ التعديلات" : "إنشاء التحويل"}
                 </button>
               </div>
             </form>
@@ -1907,107 +1565,110 @@ export default function TransfersPage() {
         </div>
       )}
 
-      {/* =====================================================
-          TRANSFER DETAILS
-      ===================================================== */}
+      {/* Details Modal */}
 
-      {selectedTransfer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b p-4">
-              <h2 className="font-bold">تفاصيل التحويل</h2>
+      {showDetails && selectedTransfer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+          <div className="my-auto w-full max-w-xl rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">
+                  تفاصيل التحويل
+                </h2>
 
-              <button
-                onClick={() => setSelectedTransfer(null)}
-                className="rounded-lg p-2 hover:bg-slate-100"
-              >
-                <FiX />
-              </button>
-            </div>
-
-            <div className="space-y-4 p-5">
-              <div className="rounded-lg bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">رقم التحويل</p>
-
-                <p className="mt-1 font-bold text-blue-700">
+                <p className="mt-1 text-sm text-slate-500">
                   {selectedTransfer.transferNumber}
                 </p>
               </div>
 
-              <DetailRow label="المنتج" value={selectedTransfer.productName} />
-
-              <DetailRow
-                label="رمز المنتج"
-                value={selectedTransfer.productSKU || "-"}
-              />
-
-              <DetailRow
-                label="المستودع المرسل"
-                value={selectedTransfer.fromWarehouseName}
-              />
-
-              <DetailRow
-                label="المستودع المستقبل"
-                value={selectedTransfer.toWarehouseName}
-              />
-
-              <DetailRow
-                label="الكمية"
-                value={`${formatNumber(
-                  selectedTransfer.quantity,
-                )} ${selectedTransfer.unitName}`}
-              />
-
-              <DetailRow label="التاريخ" value={selectedTransfer.date} />
-
-              <DetailRow
-                label="الحالة"
-                value={statusInfo(selectedTransfer.status).label}
-              />
-
-              <DetailRow
-                label="أنشأ بواسطة"
-                value={selectedTransfer.createdByName || "غير محدد"}
-              />
-
-              <DetailRow
-                label="تاريخ الإنشاء"
-                value={
-                  selectedTransfer.createdAt
-                    ? new Date(selectedTransfer.createdAt).toLocaleString("ar")
-                    : "-"
-                }
-              />
-
-              {selectedTransfer.updatedByName && (
-                <DetailRow
-                  label="آخر تعديل بواسطة"
-                  value={selectedTransfer.updatedByName}
-                />
-              )}
-
-              {selectedTransfer.completedByName && (
-                <DetailRow
-                  label="اعتمد بواسطة"
-                  value={selectedTransfer.completedByName}
-                />
-              )}
-
-              {selectedTransfer.cancelledByName && (
-                <DetailRow
-                  label="ألغي بواسطة"
-                  value={selectedTransfer.cancelledByName}
-                />
-              )}
-
-              <DetailRow
-                label="ملاحظات"
-                value={selectedTransfer.notes || "لا توجد"}
-              />
-
               <button
-                onClick={() => setSelectedTransfer(null)}
-                className="w-full rounded-lg bg-slate-800 py-2.5 text-sm text-white hover:bg-slate-900"
+                onClick={() => setShowDetails(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"
+              >
+                <FiX size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500">الحالة</span>
+                <StatusBadge status={selectedTransfer.status} />
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <p className="mb-2 text-xs text-slate-500">المنتج</p>
+
+                <p className="font-bold text-slate-800">
+                  {selectedTransfer.productName}
+                </p>
+
+                {selectedTransfer.productSKU && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    رمز المنتج: {selectedTransfer.productSKU}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="mb-2 text-xs text-slate-500">المستودع المصدر</p>
+
+                  <p className="font-semibold text-slate-800">
+                    {selectedTransfer.fromWarehouseName}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="mb-2 text-xs text-slate-500">
+                    المستودع المستلم
+                  </p>
+
+                  <p className="font-semibold text-slate-800">
+                    {selectedTransfer.toWarehouseName}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="mb-2 text-xs text-slate-500">الكمية</p>
+
+                  <p className="text-lg font-bold text-slate-800">
+                    {formatNumber(selectedTransfer.quantity)}{" "}
+                    {selectedTransfer.unitName}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="mb-2 text-xs text-slate-500">تاريخ التحويل</p>
+
+                  <p className="font-semibold text-slate-800">
+                    {formatDate(selectedTransfer.date)}
+                  </p>
+                </div>
+              </div>
+
+              {selectedTransfer.notes && (
+                <div className="rounded-xl border border-slate-100 p-4">
+                  <p className="mb-2 text-xs text-slate-500">الملاحظات</p>
+
+                  <p className="whitespace-pre-wrap text-sm text-slate-700">
+                    {selectedTransfer.notes}
+                  </p>
+                </div>
+              )}
+
+              <div className="border-t border-slate-100 pt-4">
+                <p className="text-xs text-slate-400">
+                  تاريخ إنشاء التحويل: {formatDate(selectedTransfer.createdAt)}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-slate-100 p-4">
+              <button
+                onClick={() => setShowDetails(false)}
+                className="rounded-lg bg-slate-800 px-5 py-2 text-sm font-medium text-white hover:bg-slate-700"
               >
                 إغلاق
               </button>
@@ -2015,74 +1676,6 @@ export default function TransfersPage() {
           </div>
         </div>
       )}
-
-      {/* ================= FOOTNOTE ================= */}
-
-      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-800">
-        <FiAlertCircle className="mt-1 shrink-0" />
-
-        <p>
-          عند اعتماد التحويل يتم تحديث أرصدة المستودعات في warehouseStocks،
-          وتسجيل حركتي خروج ودخول في inventoryMovements، مع حفظ هوية المستخدم
-          الذي نفّذ العملية. لا يتم إنشاء قيد إيراد أو مصروف؛ لأن التحويل داخلي
-          ولا يغير إجمالي قيمة المخزون أو نتيجة قائمة الدخل.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   STAT CARD
-========================================================= */
-
-function StatCard({
-  title,
-  value,
-  icon,
-  color,
-}: {
-  title: string;
-  value: number;
-  icon: React.ReactNode;
-  color: "blue" | "amber" | "green" | "red";
-}) {
-  const colors = {
-    blue: "bg-blue-50 text-blue-700",
-    amber: "bg-amber-50 text-amber-700",
-    green: "bg-emerald-50 text-emerald-700",
-    red: "bg-red-50 text-red-700",
-  };
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 md:p-4">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="text-xs text-slate-500">{title}</p>
-
-          <p className="mt-2 text-xl font-bold">{formatNumber(value)}</p>
-        </div>
-
-        <div
-          className={`flex h-10 w-10 items-center justify-center rounded-xl text-lg ${colors[color]}`}
-        >
-          {icon}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   DETAIL ROW
-========================================================= */
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 text-sm">
-      <span className="text-slate-500">{label}</span>
-
-      <span className="text-left font-medium">{value}</span>
     </div>
   );
 }

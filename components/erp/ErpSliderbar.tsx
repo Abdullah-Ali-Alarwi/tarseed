@@ -20,6 +20,7 @@ import {
   FiClock,
   FiLogOut,
   FiTruck,
+  FiPackage,
 } from "react-icons/fi";
 
 export default function Sidebar() {
@@ -61,17 +62,14 @@ export default function Sidebar() {
 
   // تسجيل الخروج ومنع الرجوع
   const logout = () => {
-    // حذف جميع بيانات تسجيل الدخول
     ["token", "type", "username", "role"].forEach((key) => {
       document.cookie = `${key}=; path=/; max-age=0; SameSite=Lax`;
     });
 
-    // حذف بيانات المستخدم المحلية
     localStorage.removeItem("authUser");
     localStorage.removeItem("authRole");
     localStorage.removeItem("erp-sidebar-open-menu");
 
-    // الانتقال إلى تسجيل الدخول مع استبدال الصفحة الحالية
     window.location.replace("/login");
   };
 
@@ -106,6 +104,11 @@ export default function Sidebar() {
       title: "المخزون",
       url: "/erp/inventory",
       icon: FiBriefcase,
+    },
+    {
+      title: "المنتجات",
+      url: "/erp/products",
+      icon: FiPackage,
     },
     {
       title: "المستخدمون",

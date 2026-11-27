@@ -1,1586 +1,1349 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
-
 import {
+  FiRefreshCw,
+  FiPrinter,
+  FiSearch,
+  FiCalendar,
   FiTrendingUp,
   FiTrendingDown,
   FiDollarSign,
-  FiCalendar,
-  FiRefreshCw,
-  FiPrinter,
-  FiDownload,
   FiFileText,
-  FiBarChart2,
-  FiCheckCircle,
   FiAlertCircle,
+  FiCheckCircle,
+  FiChevronDown,
+  FiChevronLeft,
+  FiEye,
 } from "react-icons/fi";
 
-import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
-/* =========================================================
-   CONFIGURATION
-========================================================= */
+type Account = {
+  id: string;
+  companyId: string;
+  code: string;
+  name: string;
+  type: string;
+  nature: string;
+  parentId: string | null;
+  isGroup: boolean;
+  isSystem?: boolean;
+  systemKey?: string;
+  status?: string;
+  isActive?: boolean;
+  extra?: Record<string, any> | null;
+};
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-/* =========================================================
-   TYPES
-========================================================= */
-
-type AccountType =
-  | "asset"
-  | "liability"
-  | "equity"
-  | "revenue"
-  | "expense"
-  | "other";
-
-type AccountCategory =
+type ReportCategory =
   | "revenue"
   | "costOfSales"
   | "operatingExpense"
   | "otherIncome"
   | "otherExpense"
-  | "other";
+  | "none";
 
-interface Account {
-  id: string | number;
-  code?: string;
-  name: string;
+type AccountBalance = {
+  debit: number;
+  credit: number;
+  net: number;
+};
 
-  type?: string;
-  accountType?: string;
-  category?: string;
-  nature?: string;
+type ReportRow = {
+  account: Account;
+  category: ReportCategory;
+  balance: AccountBalance;
+  depth: number;
+  hasChildren: boolean;
+};
 
-  companyId?: string;
+const getLocalDate = () => {
+  const date = new Date();
 
-  parentId?: string | number | null;
-
-  isGroup?: boolean;
-  allowPosting?: boolean;
-  isActive?: boolean;
-}
-
-interface Journal {
-  id: string | number;
-
-  date?: string;
-  journalDate?: string;
-
-  status?: string;
-  isPosted?: boolean;
-
-  companyId?: string;
-}
-
-interface JournalLine {
-  id: string | number;
-
-  journalId?: string | number;
-  accountId?: string | number;
-
-  debit?: number;
-  credit?: number;
-
-  companyId?: string;
-}
-
-interface ReportItem {
-  id: string;
-  code: string;
-  name: string;
-  amount: number;
-}
-
-interface ReportData {
-  revenueItems: ReportItem[];
-  costOfSalesItems: ReportItem[];
-  operatingExpenseItems: ReportItem[];
-  otherIncomeItems: ReportItem[];
-  otherExpenseItems: ReportItem[];
-
-  totalRevenue: number;
-  totalCostOfSales: number;
-  grossProfit: number;
-
-  totalOperatingExpenses: number;
-  operatingProfit: number;
-
-  totalOtherIncome: number;
-  totalOtherExpenses: number;
-
-  netProfit: number;
-  profitMargin: number;
-
-  journalCount: number;
-  lineCount: number;
-
-  totalDebit: number;
-  totalCredit: number;
-}
-
-/* =========================================================
-   DATE HELPERS
-========================================================= */
-
-const getLocalDate = (date: Date) => {
   const year = date.getFullYear();
-
   const month = String(date.getMonth() + 1).padStart(2, "0");
-
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
 };
 
-const currentDate = getLocalDate(new Date());
+const getFirstDayOfMonth = () => {
+  const date = new Date();
 
-const firstDayOfMonth = getLocalDate(
-  new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-01`;
+};
 
-/* =========================================================
-   FORMATTERS
-========================================================= */
+const numberValue = (value: any) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
 
-const money = (value: number) =>
+const roundMoney = (value: number) =>
+  Math.round((value + Number.EPSILON) * 100) / 100;
+
+const formatMoney = (value: number) =>
   new Intl.NumberFormat("ar-YE", {
-    style: "currency",
-    currency: "YER",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(Math.abs(roundMoney(value)));
 
-const numberValue = (value: unknown) => {
-  const result = Number(value);
+const formatDate = (value: string) => {
+  if (!value) return "-";
 
-  return Number.isFinite(result) ? result : 0;
+  return new Intl.DateTimeFormat("ar-YE", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date(`${value}T00:00:00`));
 };
 
-const normalizeId = (value: string | number | null | undefined) =>
-  String(value ?? "");
+const getCookie = (name: string): string | null => {
+  if (typeof document === "undefined") return null;
 
-const normalizeDate = (value?: string) => {
-  if (!value) return "";
+  const cookie = document.cookie
+    .split(";")
+    .find((item) => item.trim().startsWith(`${name}=`));
 
-  return String(value).substring(0, 10);
+  if (!cookie) return null;
+
+  return decodeURIComponent(cookie.trim().substring(name.length + 1));
 };
 
-/* =========================================================
-   JOURNAL STATUS
-========================================================= */
+const isAccountActive = (account: Account) =>
+  account.isActive !== false &&
+  account.status !== "inactive" &&
+  account.status !== "disabled";
 
-const isPostedJournal = (journal: Journal) => {
-  if (journal.isPosted === true) return true;
+const emptyBalance = (): AccountBalance => ({
+  debit: 0,
+  credit: 0,
+  net: 0,
+});
 
-  const status = String(journal.status || "")
+const addBalance = (target: AccountBalance, source: AccountBalance) => {
+  target.debit += source.debit;
+  target.credit += source.credit;
+  target.net += source.net;
+};
+
+const normalize = (value: any) =>
+  String(value ?? "")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 
-  return [
-    "posted",
-    "approved",
-    "مُرحّل",
-    "مرحل",
-    "مرحّل",
-    "معتمد",
-    "مُعتمد",
-  ].includes(status);
-};
+const containsAny = (value: string, words: string[]) =>
+  words.some((word) => value.includes(normalize(word)));
 
-/* =========================================================
-   ACCOUNT CLASSIFICATION
-========================================================= */
+// --------------------------------------------------
+// تصنيف الحسابات
+// --------------------------------------------------
 
-const normalizeText = (value: string) => {
-  return value.trim().toLowerCase().replace(/[أإآ]/g, "ا").replace(/ة/g, "ه");
-};
+const classifyAccount = (account: Account): ReportCategory => {
+  const extra = account.extra || {};
 
-const getAccountType = (account: Account): AccountType => {
-  const type = normalizeText(
-    [account.type, account.accountType, account.category]
-      .filter(Boolean)
-      .join(" "),
+  const explicitCategory = normalize(
+    extra.reportCategory ??
+      extra.accountCategory ??
+      extra.statementCategory ??
+      extra.financialStatementCategory,
   );
 
-  if (
-    type.includes("revenue") ||
-    type.includes("income") ||
-    type.includes("ايراد") ||
-    type.includes("دخل")
-  ) {
-    return "revenue";
-  }
+  const systemKey = normalize(account.systemKey);
 
-  if (
-    type.includes("expense") ||
-    type.includes("cost") ||
-    type.includes("مصروف") ||
-    type.includes("تكلفه")
-  ) {
-    return "expense";
-  }
+  const accountType = normalize(account.type);
 
-  if (type.includes("asset") || type.includes("اصل")) {
-    return "asset";
-  }
+  const accountName = normalize(account.name);
 
-  if (type.includes("liability") || type.includes("التزام")) {
-    return "liability";
-  }
+  const accountCode = String(account.code || "");
 
-  if (type.includes("equity") || type.includes("حقوق الملكيه")) {
-    return "equity";
-  }
-
-  const code = String(account.code || "");
-
-  if (code.startsWith("4")) return "revenue";
-
-  if (code.startsWith("5") || code.startsWith("6")) {
-    return "expense";
-  }
-
-  return "other";
-};
-
-/* =========================================================
-   INCOME STATEMENT CLASSIFICATION
-========================================================= */
-
-const getAccountCategory = (account: Account): AccountCategory => {
-  const type = getAccountType(account);
-
-  const name = normalizeText(account.name || "");
-
-  const code = String(account.code || "");
-
-  const classification = normalizeText(
-    [account.category, account.accountType, account.type]
-      .filter(Boolean)
-      .join(" "),
+  const metadata = [explicitCategory, systemKey, accountType, accountName].join(
+    " ",
   );
 
-  /* -----------------------------------------
-     REVENUE
-  ----------------------------------------- */
-
-  if (type === "revenue") {
-    return "revenue";
-  }
-
-  if (type !== "expense") {
-    return "other";
-  }
-
-  /* -----------------------------------------
-     COST OF SALES
-  ----------------------------------------- */
-
-  const costKeywords = [
-    "تكلفه المبيعات",
-    "تكلفه البضاعه المباعه",
-    "تكلفه البضاعة المباعه",
-    "تكلفه البضائع المباعه",
-    "تكلفه المبيعات",
-    "تكلفه المشتريات المباعه",
-    "تكلفه البضاعه",
-    "cost of goods sold",
-    "cost of sales",
-    "cogs",
-  ];
-
-  const isCostOfSales =
-    costKeywords.some((keyword) => name.includes(normalizeText(keyword))) ||
-    classification.includes("costofsales") ||
-    classification.includes("cost_of_sales") ||
-    classification.includes("cogs");
-
-  if (isCostOfSales) {
+  // تكلفة البضاعة المباعة
+  if (
+    extra.isCostOfGoodsSold === true ||
+    containsAny(metadata, [
+      "cost_of_goods_sold",
+      "cost of goods sold",
+      "cost_of_sales",
+      "cost of sales",
+      "cogs",
+      "تكلفة البضاعة المباعة",
+      "تكلفة المبيعات",
+      "تكلفة البضاعة",
+      "تكلفة المبيعات",
+    ])
+  ) {
     return "costOfSales";
   }
 
-  /* -----------------------------------------
-     OTHER INCOME
-  ----------------------------------------- */
-
+  // إيرادات أخرى
   if (
-    classification.includes("otherincome") ||
-    classification.includes("other_income")
+    containsAny(metadata, [
+      "other_income",
+      "other income",
+      "non_operating_income",
+      "non operating income",
+      "إيرادات أخرى",
+      "دخل آخر",
+      "إيرادات غير تشغيلية",
+    ])
   ) {
     return "otherIncome";
   }
 
-  /* -----------------------------------------
-     OTHER EXPENSE
-  ----------------------------------------- */
-
-  const otherExpenseKeywords = [
-    "خسائر",
-    "غرامات",
-    "فروق عملات",
-    "خسائر بيع الاصول",
-    "مصروفات تمويل",
-    "فوائد مدينه",
-    "عمولات بنكيه",
-    "other expense",
-    "financial expense",
-  ];
-
+  // مصروفات أخرى
   if (
-    otherExpenseKeywords.some((keyword) =>
-      name.includes(normalizeText(keyword)),
-    ) ||
-    classification.includes("otherexpense") ||
-    classification.includes("other_expense")
+    containsAny(metadata, [
+      "other_expense",
+      "other expenses",
+      "non_operating_expense",
+      "non operating expense",
+      "مصروفات أخرى",
+      "مصروفات غير تشغيلية",
+      "خسائر أخرى",
+    ])
   ) {
     return "otherExpense";
   }
 
-  /* -----------------------------------------
-     OTHER INCOME BY NAME
-  ----------------------------------------- */
-
-  const otherIncomeKeywords = [
-    "ارباح بيع الاصول",
-    "ارباح استثمارات",
-    "ايرادات اخرى",
-    "ايرادات استثماريه",
-    "other income",
-  ];
-
+  // الإيرادات
   if (
-    otherIncomeKeywords.some((keyword) => name.includes(normalizeText(keyword)))
+    containsAny(metadata, [
+      "revenue",
+      "revenues",
+      "income",
+      "sales",
+      "إيراد",
+      "إيرادات",
+      "دخل",
+      "مبيعات",
+    ])
   ) {
-    return "otherIncome";
+    return "revenue";
   }
 
-  /* -----------------------------------------
-     OPERATING EXPENSES
-  ----------------------------------------- */
-
+  // المصروفات
   if (
-    classification.includes("operatingexpense") ||
-    classification.includes("operating_expense")
+    containsAny(metadata, [
+      "expense",
+      "expenses",
+      "cost",
+      "مصروف",
+      "مصروفات",
+      "تكلفة",
+      "تكاليف",
+    ])
   ) {
     return "operatingExpense";
   }
 
-  return "operatingExpense";
+  // التصنيف الاحتياطي حسب رمز الحساب
+  if (accountCode.startsWith("4")) {
+    return "revenue";
+  }
+
+  if (accountCode.startsWith("5") || accountCode.startsWith("6")) {
+    return "operatingExpense";
+  }
+
+  return "none";
 };
 
-/* =========================================================
-   EMPTY REPORT
-========================================================= */
+const categoryLabel = (category: ReportCategory) => {
+  switch (category) {
+    case "revenue":
+      return "إيرادات";
 
-const emptyReport: ReportData = {
-  revenueItems: [],
-  costOfSalesItems: [],
-  operatingExpenseItems: [],
-  otherIncomeItems: [],
-  otherExpenseItems: [],
+    case "costOfSales":
+      return "تكلفة المبيعات";
 
-  totalRevenue: 0,
-  totalCostOfSales: 0,
-  grossProfit: 0,
+    case "operatingExpense":
+      return "مصروفات تشغيلية";
 
-  totalOperatingExpenses: 0,
-  operatingProfit: 0,
+    case "otherIncome":
+      return "إيرادات أخرى";
 
-  totalOtherIncome: 0,
-  totalOtherExpenses: 0,
+    case "otherExpense":
+      return "مصروفات أخرى";
 
-  netProfit: 0,
-  profitMargin: 0,
-
-  journalCount: 0,
-  lineCount: 0,
-
-  totalDebit: 0,
-  totalCredit: 0,
+    default:
+      return "غير مصنف";
+  }
 };
 
-/* =========================================================
-   COMPONENT
-========================================================= */
+// --------------------------------------------------
+// الصفحة
+// --------------------------------------------------
 
 export default function IncomeStatementPage() {
-  const [accounts, setAccounts] = useState<Account[]>([]);
-
-  const [journals, setJournals] = useState<Journal[]>([]);
-
-  const [lines, setLines] = useState<JournalLine[]>([]);
-
   const [loading, setLoading] = useState(true);
-
-  const [startDate, setStartDate] = useState(firstDayOfMonth);
-
-  const [endDate, setEndDate] = useState(currentDate);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
   const [companyId, setCompanyId] = useState("");
 
-  const [error, setError] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [journals, setJournals] = useState<any[]>([]);
+  const [journalLines, setJournalLines] = useState<any[]>([]);
 
-  /* =========================================================
-     LOAD COMPANY
-  ========================================================= */
+  const [fromDate, setFromDate] = useState(getFirstDayOfMonth());
+  const [toDate, setToDate] = useState(getLocalDate());
 
-  useEffect(() => {
-    try {
-      const storedUser = localStorage.getItem("authUser");
+  const [search, setSearch] = useState("");
 
-      if (!storedUser) {
-        setError("لم يتم العثور على المستخدم المسجل.");
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(
+    new Set(),
+  );
 
-        setLoading(false);
+  // --------------------------------------------------
+  // المستخدم الحالي
+  // --------------------------------------------------
 
-        return;
-      }
+  const loadUser = useCallback(async () => {
+    const username = getCookie("username");
 
-      const user = JSON.parse(storedUser);
-
-      if (user.type === "platform") {
-        setError("مستخدم المنصة لا يمكنه الوصول إلى قائمة دخل الشركة.");
-
-        setLoading(false);
-
-        return;
-      }
-
-      if (!user.companyId) {
-        setError("لم يتم العثور على الشركة المرتبطة بالمستخدم.");
-
-        setLoading(false);
-
-        return;
-      }
-
-      setCompanyId(String(user.companyId));
-    } catch {
-      setError("تعذر قراءة بيانات المستخدم.");
-
-      setLoading(false);
+    if (!username) {
+      throw new Error("لم يتم العثور على بيانات تسجيل الدخول.");
     }
+
+    const result: any = await getUserByUsername(username);
+
+    const user = result?.data ?? result;
+
+    if (!user) {
+      throw new Error("تعذر العثور على المستخدم.");
+    }
+
+    if (user.type === "platform") {
+      throw new Error("لا يمكن لمستخدم المنصة عرض قائمة دخل الشركة.");
+    }
+
+    if (
+      user.isActive === false ||
+      user.status === "inactive" ||
+      user.status === "disabled"
+    ) {
+      throw new Error("حساب المستخدم غير نشط.");
+    }
+
+    if (!user.companyId) {
+      throw new Error("المستخدم غير مرتبط بشركة.");
+    }
+
+    setCompanyId(user.companyId);
+
+    return user.companyId as string;
   }, []);
 
-  /* =========================================================
-     FETCH DATA
-  ========================================================= */
+  // --------------------------------------------------
+  // تحميل البيانات
+  // --------------------------------------------------
 
-  const fetchData = useCallback(async () => {
-    if (!companyId) return;
+  const loadData = useCallback(async () => {
+    setError("");
 
     try {
-      setLoading(true);
+      const currentCompanyId = companyId || (await loadUser());
 
-      setError("");
+      const [accountsResult, journalsResult, linesResult] = await Promise.all([
+        supabase.from("accounts").select("*").eq("companyId", currentCompanyId),
 
-      const [accountsResponse, journalsResponse, linesResponse] =
-        await Promise.all([
-          api.get("/accounts"),
-          api.get("/journals"),
-          api.get("/journalLines"),
-        ]);
+        supabase.from("journals").select("*").eq("companyId", currentCompanyId),
 
-      const companyAccounts: Account[] = accountsResponse.data.filter(
-        (item: Account) => String(item.companyId) === companyId,
+        supabase
+          .from("journalLines")
+          .select("*")
+          .eq("companyId", currentCompanyId),
+      ]);
+
+      if (accountsResult.error) throw accountsResult.error;
+      if (journalsResult.error) throw journalsResult.error;
+      if (linesResult.error) throw linesResult.error;
+
+      setAccounts(
+        ((accountsResult.data || []) as Account[]).filter(
+          (account) =>
+            account.companyId === currentCompanyId && isAccountActive(account),
+        ),
       );
 
-      const companyJournals: Journal[] = journalsResponse.data.filter(
-        (item: Journal) => String(item.companyId) === companyId,
+      setJournals(
+        (journalsResult.data || []).filter(
+          (journal: any) => journal.companyId === currentCompanyId,
+        ),
       );
 
-      const companyLines: JournalLine[] = linesResponse.data.filter(
-        (item: JournalLine) => String(item.companyId) === companyId,
+      setJournalLines(
+        (linesResult.data || []).filter(
+          (line: any) => line.companyId === currentCompanyId,
+        ),
       );
+    } catch (err: any) {
+      console.error("Income Statement Error:", err);
 
-      setAccounts(companyAccounts);
-
-      setJournals(companyJournals);
-
-      setLines(companyLines);
-    } catch (error) {
-      console.error("Income Statement Error:", error);
-
-      setError("تعذر تحميل بيانات قائمة الدخل.");
-
-      toast.error("تعذر تحميل بيانات قائمة الدخل");
-    } finally {
-      setLoading(false);
+      setError(err?.message || "حدث خطأ أثناء تحميل قائمة الدخل.");
     }
-  }, [companyId]);
+  }, [companyId, loadUser]);
 
   useEffect(() => {
-    if (companyId) {
-      fetchData();
-    }
-  }, [companyId, fetchData]);
+    const initialize = async () => {
+      setLoading(true);
+      await loadData();
+      setLoading(false);
+    };
 
-  /* =========================================================
-     CALCULATE REPORT
-  ========================================================= */
+    initialize();
+  }, [loadData]);
 
-  const report = useMemo<ReportData>(() => {
-    if (!companyId || !startDate || !endDate) {
-      return emptyReport;
-    }
+  // --------------------------------------------------
+  // تحديث
+  // --------------------------------------------------
 
-    if (startDate > endDate) {
-      return emptyReport;
-    }
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  };
 
-    /* -----------------------------------------
-       1. POSTED JOURNALS
-    ----------------------------------------- */
+  // --------------------------------------------------
+  // حساب قائمة الدخل
+  // --------------------------------------------------
 
-    const postedJournals = journals.filter((journal) => {
-      const date = normalizeDate(journal.date || journal.journalDate);
-
-      return (
-        String(journal.companyId) === companyId &&
-        isPostedJournal(journal) &&
-        !!date &&
-        date >= startDate &&
-        date <= endDate
-      );
-    });
-
-    const journalIds = new Set(
-      postedJournals.map((journal) => normalizeId(journal.id)),
-    );
-
-    /* -----------------------------------------
-       2. FILTER JOURNAL LINES
-    ----------------------------------------- */
-
-    const filteredLines = lines.filter((line) => {
-      return (
-        String(line.companyId) === companyId &&
-        journalIds.has(normalizeId(line.journalId))
-      );
-    });
-
-    /* -----------------------------------------
-       3. ACCOUNT MAP
-    ----------------------------------------- */
-
+  const report = useMemo(() => {
     const accountMap = new Map<string, Account>();
 
     accounts.forEach((account) => {
-      accountMap.set(normalizeId(account.id), account);
+      accountMap.set(account.id, account);
     });
 
-    /* -----------------------------------------
-       4. DIRECT ACCOUNT BALANCES
+    const journalDateMap = new Map<string, string>();
 
-       Each account is calculated once.
-       Group accounts are excluded to prevent
-       double counting parent and child balances.
-    ----------------------------------------- */
-
-    const balances = new Map<
-      string,
-      {
-        debit: number;
-        credit: number;
-      }
-    >();
-
-    filteredLines.forEach((line) => {
-      const accountId = normalizeId(line.accountId);
-
-      const account = accountMap.get(accountId);
-
-      if (!account) return;
-
-      // الحسابات التجميعية لا تدخل في التقرير
-      if (account.isGroup === true) return;
-
-      // منع الحسابات غير القابلة للترحيل
-      if (account.allowPosting === false) return;
-
-      const current = balances.get(accountId) || {
-        debit: 0,
-        credit: 0,
-      };
-
-      balances.set(accountId, {
-        debit: current.debit + numberValue(line.debit),
-
-        credit: current.credit + numberValue(line.credit),
-      });
-    });
-
-    /* -----------------------------------------
-       5. PREPARE REPORT ITEMS
-    ----------------------------------------- */
-
-    const revenueItems: ReportItem[] = [];
-
-    const costOfSalesItems: ReportItem[] = [];
-
-    const operatingExpenseItems: ReportItem[] = [];
-
-    const otherIncomeItems: ReportItem[] = [];
-
-    const otherExpenseItems: ReportItem[] = [];
-
-    let totalDebit = 0;
-
-    let totalCredit = 0;
-
-    balances.forEach((balance) => {
-      totalDebit += balance.debit;
-
-      totalCredit += balance.credit;
-    });
-
-    /* -----------------------------------------
-       6. CLASSIFY ACCOUNTS
-    ----------------------------------------- */
-
-    accounts.forEach((account) => {
-      if (String(account.companyId) !== companyId) {
+    journals.forEach((journal) => {
+      if (
+        journal.status !== "posted" ||
+        journal.companyId !== companyId ||
+        !journal.date
+      ) {
         return;
       }
 
-      if (account.isGroup === true) return;
+      const date = String(journal.date).slice(0, 10);
 
-      if (account.allowPosting === false) return;
+      if (date < fromDate || date > toDate) return;
 
-      const accountId = normalizeId(account.id);
+      journalDateMap.set(String(journal.id), date);
+    });
 
-      const balance = balances.get(accountId);
+    // الأرصدة المباشرة للحسابات
+    const ownBalances = new Map<string, AccountBalance>();
+
+    accounts.forEach((account) => {
+      ownBalances.set(account.id, emptyBalance());
+    });
+
+    // احتساب سطور القيود المرحلة داخل الفترة
+    journalLines.forEach((line: any) => {
+      if (!accountMap.has(line.accountId)) return;
+
+      if (line.companyId !== companyId) return;
+
+      const date = journalDateMap.get(String(line.journalId));
+
+      if (!date) return;
+
+      const balance = ownBalances.get(line.accountId);
 
       if (!balance) return;
 
-      const category = getAccountCategory(account);
-
-      const debit = balance.debit;
-
-      const credit = balance.credit;
-
-      const creditBalance = credit - debit;
-
-      const debitBalance = debit - credit;
-
-      const item: ReportItem = {
-        id: accountId,
-        code: account.code || "",
-        name: account.name,
-        amount: 0,
-      };
-
-      /* ---------------------------------------
-         REVENUE
-      --------------------------------------- */
-
-      if (category === "revenue") {
-        item.amount = creditBalance;
-
-        if (Math.abs(item.amount) > 0.000001) {
-          revenueItems.push(item);
-        }
-
-        return;
-      }
-
-      /* ---------------------------------------
-         COST OF SALES
-      --------------------------------------- */
-
-      if (category === "costOfSales") {
-        item.amount = debitBalance;
-
-        if (Math.abs(item.amount) > 0.000001) {
-          costOfSalesItems.push(item);
-        }
-
-        return;
-      }
-
-      /* ---------------------------------------
-         OPERATING EXPENSE
-      --------------------------------------- */
-
-      if (category === "operatingExpense") {
-        item.amount = debitBalance;
-
-        if (Math.abs(item.amount) > 0.000001) {
-          operatingExpenseItems.push(item);
-        }
-
-        return;
-      }
-
-      /* ---------------------------------------
-         OTHER INCOME
-      --------------------------------------- */
-
-      if (category === "otherIncome") {
-        item.amount = creditBalance;
-
-        if (Math.abs(item.amount) > 0.000001) {
-          otherIncomeItems.push(item);
-        }
-
-        return;
-      }
-
-      /* ---------------------------------------
-         OTHER EXPENSE
-      --------------------------------------- */
-
-      if (category === "otherExpense") {
-        item.amount = debitBalance;
-
-        if (Math.abs(item.amount) > 0.000001) {
-          otherExpenseItems.push(item);
-        }
-      }
+      balance.debit += numberValue(line.debit);
+      balance.credit += numberValue(line.credit);
     });
 
-    /* -----------------------------------------
-       7. SORT ITEMS
-    ----------------------------------------- */
+    ownBalances.forEach((balance) => {
+      balance.debit = roundMoney(balance.debit);
+      balance.credit = roundMoney(balance.credit);
 
-    const sortItems = (items: ReportItem[]) => {
-      return items.sort((a, b) =>
-        a.code.localeCompare(b.code, "en", {
+      balance.net = roundMoney(balance.credit - balance.debit);
+    });
+
+    // شجرة الحسابات
+    const childrenMap = new Map<string, Account[]>();
+
+    accounts.forEach((account) => {
+      if (!account.parentId) return;
+
+      if (!accountMap.has(account.parentId)) return;
+
+      const children = childrenMap.get(account.parentId) || [];
+
+      children.push(account);
+
+      childrenMap.set(account.parentId, children);
+    });
+
+    const sortAccounts = (items: Account[]) =>
+      [...items].sort((a, b) =>
+        String(a.code || "").localeCompare(String(b.code || ""), "en", {
           numeric: true,
         }),
       );
-    };
 
-    sortItems(revenueItems);
-
-    sortItems(costOfSalesItems);
-
-    sortItems(operatingExpenseItems);
-
-    sortItems(otherIncomeItems);
-
-    sortItems(otherExpenseItems);
-
-    /* -----------------------------------------
-       8. TOTALS
-    ----------------------------------------- */
-
-    const sumItems = (items: ReportItem[]) =>
-      items.reduce((sum, item) => sum + item.amount, 0);
-
-    const totalRevenue = sumItems(revenueItems);
-
-    const totalCostOfSales = sumItems(costOfSalesItems);
-
-    const grossProfit = totalRevenue - totalCostOfSales;
-
-    const totalOperatingExpenses = sumItems(operatingExpenseItems);
-
-    const operatingProfit = grossProfit - totalOperatingExpenses;
-
-    const totalOtherIncome = sumItems(otherIncomeItems);
-
-    const totalOtherExpenses = sumItems(otherExpenseItems);
-
-    const netProfit = operatingProfit + totalOtherIncome - totalOtherExpenses;
-
-    const profitMargin =
-      totalRevenue !== 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-    /* -----------------------------------------
-       9. RETURN REPORT
-    ----------------------------------------- */
-
-    return {
-      revenueItems,
-      costOfSalesItems,
-      operatingExpenseItems,
-      otherIncomeItems,
-      otherExpenseItems,
-
-      totalRevenue,
-      totalCostOfSales,
-      grossProfit,
-
-      totalOperatingExpenses,
-      operatingProfit,
-
-      totalOtherIncome,
-      totalOtherExpenses,
-
-      netProfit,
-      profitMargin,
-
-      journalCount: postedJournals.length,
-
-      lineCount: filteredLines.length,
-
-      totalDebit,
-      totalCredit,
-    };
-  }, [accounts, journals, lines, companyId, startDate, endDate]);
-
-  /* =========================================================
-     DATE VALIDATION
-  ========================================================= */
-
-  const validateDates = () => {
-    if (!startDate || !endDate) {
-      toast.error("يرجى تحديد الفترة المالية.");
-
-      return false;
-    }
-
-    if (startDate > endDate) {
-      toast.error("تاريخ البداية يجب أن يكون قبل تاريخ النهاية.");
-
-      return false;
-    }
-
-    return true;
-  };
-
-  /* =========================================================
-     EXPORT CSV
-  ========================================================= */
-
-  const exportCSV = () => {
-    if (!validateDates()) return;
-
-    const rows = [
-      ["قائمة الدخل"],
-      [`من تاريخ: ${startDate}`, `إلى تاريخ: ${endDate}`],
-      [],
-
-      ["الإيرادات"],
-      ["رقم الحساب", "اسم الحساب", "المبلغ"],
-
-      ...report.revenueItems.map((item) => [item.code, item.name, item.amount]),
-
-      ["إجمالي الإيرادات", "", report.totalRevenue],
-
-      [],
-
-      ["تكلفة البضاعة المباعة"],
-      ["رقم الحساب", "اسم الحساب", "المبلغ"],
-
-      ...report.costOfSalesItems.map((item) => [
-        item.code,
-        item.name,
-        item.amount,
-      ]),
-
-      ["إجمالي تكلفة المبيعات", "", report.totalCostOfSales],
-
-      ["مجمل الربح", "", report.grossProfit],
-
-      [],
-
-      ["المصروفات التشغيلية"],
-      ["رقم الحساب", "اسم الحساب", "المبلغ"],
-
-      ...report.operatingExpenseItems.map((item) => [
-        item.code,
-        item.name,
-        item.amount,
-      ]),
-
-      ["إجمالي المصروفات التشغيلية", "", report.totalOperatingExpenses],
-
-      ["الربح التشغيلي", "", report.operatingProfit],
-
-      [],
-
-      ["الإيرادات الأخرى"],
-      ["رقم الحساب", "اسم الحساب", "المبلغ"],
-
-      ...report.otherIncomeItems.map((item) => [
-        item.code,
-        item.name,
-        item.amount,
-      ]),
-
-      ["إجمالي الإيرادات الأخرى", "", report.totalOtherIncome],
-
-      [],
-
-      ["المصروفات الأخرى"],
-      ["رقم الحساب", "اسم الحساب", "المبلغ"],
-
-      ...report.otherExpenseItems.map((item) => [
-        item.code,
-        item.name,
-        item.amount,
-      ]),
-
-      ["إجمالي المصروفات الأخرى", "", report.totalOtherExpenses],
-
-      [],
-
-      ["صافي الربح / الخسارة", "", report.netProfit],
-
-      ["هامش الربح", "", `${report.profitMargin.toFixed(2)}%`],
-    ];
-
-    const csv =
-      "\uFEFF" +
-      rows
-        .map((row) =>
-          row
-            .map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`)
-            .join(","),
-        )
-        .join("\n");
-
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
+    childrenMap.forEach((children, id) => {
+      childrenMap.set(id, sortAccounts(children));
     });
 
-    const url = URL.createObjectURL(blob);
+    // تجميع الأرصدة الهرمية
+    const aggregateCache = new Map<string, AccountBalance>();
 
-    const link = document.createElement("a");
+    const aggregateAccount = (
+      accountId: string,
+      visited = new Set<string>(),
+    ): AccountBalance => {
+      const cached = aggregateCache.get(accountId);
 
-    link.href = url;
+      if (cached) return { ...cached };
 
-    link.download = `income-statement-${startDate}-${endDate}.csv`;
+      if (visited.has(accountId)) return emptyBalance();
 
-    document.body.appendChild(link);
+      const nextVisited = new Set(visited);
+      nextVisited.add(accountId);
 
-    link.click();
+      const result = {
+        ...(ownBalances.get(accountId) || emptyBalance()),
+      };
 
-    document.body.removeChild(link);
+      const children = childrenMap.get(accountId) || [];
 
-    URL.revokeObjectURL(url);
+      children.forEach((child) => {
+        addBalance(result, aggregateAccount(child.id, nextVisited));
+      });
 
-    toast.success("تم تصدير التقرير بنجاح");
+      result.debit = roundMoney(result.debit);
+      result.credit = roundMoney(result.credit);
+      result.net = roundMoney(result.net);
+
+      aggregateCache.set(accountId, result);
+
+      return { ...result };
+    };
+
+    // تصنيف الحسابات القابلة للترحيل فقط
+    const accountCategories = new Map<string, ReportCategory>();
+
+    accounts.forEach((account) => {
+      const children = childrenMap.get(account.id) || [];
+
+      const allowPosting = account.extra?.allowPosting !== false;
+
+      const canPost =
+        account.isGroup === false && allowPosting && children.length === 0;
+
+      accountCategories.set(
+        account.id,
+        canPost ? classifyAccount(account) : "none",
+      );
+    });
+
+    const totals = {
+      revenue: 0,
+      costOfSales: 0,
+      operatingExpense: 0,
+      otherIncome: 0,
+      otherExpense: 0,
+    };
+
+    // الإجماليات من الحسابات النهائية فقط
+    accounts.forEach((account) => {
+      const category = accountCategories.get(account.id);
+
+      if (!category || category === "none") return;
+
+      const balance = ownBalances.get(account.id);
+
+      if (!balance) return;
+
+      const amount = roundMoney(balance.net);
+
+      switch (category) {
+        case "revenue":
+          totals.revenue += amount;
+          break;
+
+        case "costOfSales":
+          totals.costOfSales += -amount;
+          break;
+
+        case "operatingExpense":
+          totals.operatingExpense += -amount;
+          break;
+
+        case "otherIncome":
+          totals.otherIncome += amount;
+          break;
+
+        case "otherExpense":
+          totals.otherExpense += -amount;
+          break;
+      }
+    });
+
+    totals.revenue = roundMoney(totals.revenue);
+    totals.costOfSales = roundMoney(totals.costOfSales);
+    totals.operatingExpense = roundMoney(totals.operatingExpense);
+    totals.otherIncome = roundMoney(totals.otherIncome);
+    totals.otherExpense = roundMoney(totals.otherExpense);
+
+    const grossProfit = roundMoney(totals.revenue - totals.costOfSales);
+
+    const operatingProfit = roundMoney(grossProfit - totals.operatingExpense);
+
+    const netProfit = roundMoney(
+      operatingProfit + totals.otherIncome - totals.otherExpense,
+    );
+
+    const profitMargin =
+      totals.revenue !== 0 ? roundMoney((netProfit / totals.revenue) * 100) : 0;
+
+    // الصفوف الهرمية
+    const rows: ReportRow[] = [];
+
+    const rendered = new Set<string>();
+
+    const renderAccount = (account: Account, depth: number) => {
+      if (rendered.has(account.id)) return;
+
+      rendered.add(account.id);
+
+      const children = childrenMap.get(account.id) || [];
+
+      const balance = aggregateAccount(account.id);
+
+      const category = accountCategories.get(account.id) || "none";
+
+      rows.push({
+        account,
+        category,
+        balance,
+        depth,
+        hasChildren: children.length > 0,
+      });
+
+      if (expandedAccounts.has(account.id)) {
+        children.forEach((child) => {
+          renderAccount(child, depth + 1);
+        });
+      }
+    };
+
+    const roots = sortAccounts(
+      accounts.filter(
+        (account) => !account.parentId || !accountMap.has(account.parentId),
+      ),
+    );
+
+    roots.forEach((account) => renderAccount(account, 0));
+
+    // الحسابات اليتيمة أو ذات العلاقة غير السليمة
+    sortAccounts(accounts).forEach((account) => {
+      if (!rendered.has(account.id)) {
+        renderAccount(account, 0);
+      }
+    });
+
+    return {
+      rows,
+      totals,
+      grossProfit,
+      operatingProfit,
+      netProfit,
+      profitMargin,
+      childrenMap,
+    };
+  }, [
+    accounts,
+    journals,
+    journalLines,
+    companyId,
+    fromDate,
+    toDate,
+    expandedAccounts,
+  ]);
+
+  // --------------------------------------------------
+  // البحث
+  // --------------------------------------------------
+
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return report.rows.filter(({ account, category }) => {
+      if (category === "none") return false;
+
+      if (!query) return true;
+
+      return (
+        String(account.name || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(account.code || "")
+          .toLowerCase()
+          .includes(query)
+      );
+    });
+  }, [report.rows, search]);
+
+  // --------------------------------------------------
+  // توسيع وطي الحسابات
+  // --------------------------------------------------
+
+  const expandAll = () => {
+    setExpandedAccounts(
+      new Set(
+        accounts
+          .filter(
+            (account) => (report.childrenMap.get(account.id)?.length || 0) > 0,
+          )
+          .map((account) => account.id),
+      ),
+    );
   };
 
-  /* =========================================================
-     STAT CARD
-  ========================================================= */
+  const collapseAll = () => {
+    setExpandedAccounts(new Set());
+  };
 
-  const StatCard = ({
-    title,
-    value,
-    icon: Icon,
-    color,
-    subtitle,
-  }: {
-    title: string;
-    value: string;
-    icon: React.ElementType;
-    color: string;
-    subtitle: string;
-  }) => (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="mb-1 text-xs text-slate-500">{title}</p>
+  const toggleAccount = (id: string) => {
+    setExpandedAccounts((previous) => {
+      const next = new Set(previous);
 
-          <h3 className="text-lg font-bold text-slate-800">{value}</h3>
-        </div>
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
 
-        <div
-          className={`flex h-10 w-10 items-center justify-center rounded-xl ${color}`}
-        >
-          <Icon size={19} />
-        </div>
-      </div>
+      return next;
+    });
+  };
 
-      <p className="text-xs text-slate-400">{subtitle}</p>
-    </div>
-  );
+  // --------------------------------------------------
+  // الطباعة
+  // --------------------------------------------------
 
-  /* =========================================================
-     ACCOUNT TABLE
-  ========================================================= */
+  const handlePrint = () => {
+    window.print();
+  };
 
-  const AccountTable = ({
-    title,
-    items,
-    total,
-    color,
-  }: {
-    title: string;
-    items: ReportItem[];
-    total: number;
-    color: string;
-  }) => (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <div className="flex items-center justify-between border-b border-slate-100 p-4">
-        <h3 className="text-sm font-bold text-slate-800">{title}</h3>
-
-        <span className="text-xs text-slate-500">{items.length} حساب</span>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-right text-sm">
-          <thead className="bg-slate-50 text-xs text-slate-500">
-            <tr>
-              <th className="p-3">رقم الحساب</th>
-
-              <th className="p-3">اسم الحساب</th>
-
-              <th className="p-3">المبلغ</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {items.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="p-8 text-center text-slate-400">
-                  لا توجد بيانات خلال هذه الفترة
-                </td>
-              </tr>
-            ) : (
-              items.map((item) => (
-                <tr
-                  key={item.id}
-                  className="border-t border-slate-100 hover:bg-slate-50"
-                >
-                  <td className="p-3 text-slate-500">{item.code || "-"}</td>
-
-                  <td className="p-3 font-medium text-slate-700">
-                    {item.name}
-                  </td>
-
-                  <td className={`p-3 font-semibold ${color}`}>
-                    {money(item.amount)}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-
-          <tfoot className="border-t bg-slate-50">
-            <tr>
-              <td colSpan={2} className="p-3 font-bold">
-                الإجمالي
-              </td>
-
-              <td className={`p-3 font-bold ${color}`}>{money(total)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </div>
-  );
-
-  /* =========================================================
-     LOADING
-  ========================================================= */
+  // --------------------------------------------------
+  // تحميل
+  // --------------------------------------------------
 
   if (loading) {
     return (
-      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
-        <FiRefreshCw className="animate-spin text-2xl text-slate-500" />
-
-        <span className="mr-3 text-sm text-slate-500">
-          جاري تحميل قائمة الدخل...
-        </span>
-      </div>
-    );
-  }
-
-  /* =========================================================
-     ERROR
-  ========================================================= */
-
-  if (error) {
-    return (
-      <div dir="rtl" className="rounded-xl border border-red-200 bg-red-50 p-6">
-        <div className="flex items-center gap-3 text-red-700">
-          <FiAlertCircle size={22} />
-
-          <h2 className="font-bold">تعذر تحميل قائمة الدخل</h2>
+      <div dir="rtl" className="flex min-h-[450px] items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <FiRefreshCw className="animate-spin text-3xl text-blue-600" />
+          <p className="text-sm text-slate-500">جاري إعداد قائمة الدخل...</p>
         </div>
-
-        <p className="mt-3 text-sm text-red-600">{error}</p>
-
-        <button
-          onClick={fetchData}
-          className="mt-4 flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm text-white"
-        >
-          <FiRefreshCw size={15} />
-          إعادة المحاولة
-        </button>
       </div>
     );
   }
 
-  /* =========================================================
-     MAIN UI
-  ========================================================= */
+  // --------------------------------------------------
+  // خطأ
+  // --------------------------------------------------
+
+  if (error && accounts.length === 0) {
+    return (
+      <div dir="rtl" className="p-6">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
+          <div className="flex items-center gap-3">
+            <FiAlertCircle className="text-2xl text-red-600" />
+
+            <div>
+              <h2 className="font-bold text-red-800">تعذر تحميل قائمة الدخل</h2>
+
+              <p className="mt-2 text-sm text-red-700">{error}</p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleRefresh}
+            className="mt-5 flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white"
+          >
+            <FiRefreshCw size={16} />
+            إعادة المحاولة
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --------------------------------------------------
+  // الصفحة
+  // --------------------------------------------------
 
   return (
-    <div dir="rtl" className="space-y-5 pb-10">
-      {/* HEADER */}
+    <main dir="rtl" className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-[1500px]">
+        {/* Header */}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-slate-800 p-2 text-white">
-              <FiFileText size={20} />
+        <div className="mb-7 flex flex-col justify-between gap-4 lg:flex-row lg:items-center print:hidden">
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-sm text-slate-400">
+              <span>التقارير</span>
+              <FiChevronLeft size={14} />
+              <span className="text-slate-600">قائمة الدخل</span>
             </div>
 
-            <h1 className="text-xl font-bold text-slate-800">قائمة الدخل</h1>
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+                <FiTrendingUp size={24} />
+              </div>
+
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900">
+                  قائمة الدخل
+                </h1>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  تقرير الإيرادات والمصروفات وصافي الربح أو الخسارة.
+                </p>
+              </div>
+            </div>
           </div>
 
-          <p className="mt-2 text-xs text-slate-500">
-            تقرير الإيرادات وتكلفة المبيعات والمصروفات وصافي الربح والخسارة
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={fetchData}
-            className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
-          >
-            <FiRefreshCw />
-            تحديث
-          </button>
-
-          <button
-            onClick={exportCSV}
-            className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-slate-50"
-          >
-            <FiDownload />
-            Excel / CSV
-          </button>
-
-          <button
-            onClick={() => window.print()}
-            className="flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-700"
-          >
-            <FiPrinter />
-            طباعة
-          </button>
-        </div>
-      </div>
-
-      {/* DATE FILTER */}
-
-      <div className="rounded-xl border bg-white p-4">
-        <div className="mb-3 flex items-center gap-2">
-          <FiCalendar className="text-slate-500" />
-
-          <h3 className="text-sm font-bold text-slate-700">الفترة المالية</h3>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div>
-            <label className="mb-2 block text-xs text-slate-500">
-              من تاريخ
-            </label>
-
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-500"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs text-slate-500">
-              إلى تاريخ
-            </label>
-
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-500"
-            />
-          </div>
-
-          <div className="flex items-end">
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => {
-                if (!validateDates()) return;
-
-                toast.success("تم تحديث الفترة المالية");
-              }}
-              className="w-full rounded-lg bg-slate-800 py-2 text-sm text-white hover:bg-slate-700"
+              onClick={expandAll}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
             >
-              عرض التقرير
+              توسيع الكل
+            </button>
+
+            <button
+              onClick={collapseAll}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              طي الكل
+            </button>
+
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-50"
+            >
+              <FiRefreshCw
+                size={16}
+                className={refreshing ? "animate-spin" : ""}
+              />
+              تحديث
+            </button>
+
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              <FiPrinter size={16} />
+              طباعة
             </button>
           </div>
         </div>
-      </div>
 
-      {/* STATISTICS */}
+        {/* Print Header */}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="إجمالي الإيرادات"
-          value={money(report.totalRevenue)}
-          icon={FiTrendingUp}
-          color="bg-emerald-50 text-emerald-600"
-          subtitle="إجمالي حسابات الإيرادات"
-        />
+        <div className="mb-6 hidden print:block">
+          <h1 className="text-center text-2xl font-bold">قائمة الدخل</h1>
 
-        <StatCard
-          title="تكلفة المبيعات"
-          value={money(report.totalCostOfSales)}
-          icon={FiTrendingDown}
-          color="bg-orange-50 text-orange-600"
-          subtitle="تكلفة البضاعة المباعة"
-        />
+          <p className="mt-2 text-center text-sm">
+            من {formatDate(fromDate)} إلى {formatDate(toDate)}
+          </p>
+        </div>
 
-        <StatCard
-          title="مجمل الربح"
-          value={money(report.grossProfit)}
-          icon={FiDollarSign}
-          color="bg-blue-50 text-blue-600"
-          subtitle="الإيرادات بعد خصم تكلفة المبيعات"
-        />
+        {/* Filters */}
 
-        <StatCard
-          title={report.netProfit >= 0 ? "صافي الربح" : "صافي الخسارة"}
-          value={money(Math.abs(report.netProfit))}
-          icon={FiBarChart2}
-          color={
-            report.netProfit >= 0
-              ? "bg-emerald-50 text-emerald-600"
-              : "bg-red-50 text-red-600"
-          }
-          subtitle="النتيجة النهائية للفترة"
-        />
-      </div>
+        <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
+          <div className="mb-4 flex items-center gap-2">
+            <FiCalendar className="text-blue-600" />
 
-      {/* PROFIT SUMMARY */}
+            <h2 className="font-bold text-slate-800">الفترة المحاسبية</h2>
+          </div>
 
-      <div className="rounded-xl border bg-white p-5">
-        <div className="mb-5 flex items-center justify-between">
-          <div>
-            <h3 className="font-bold text-slate-800">ملخص الأداء المالي</h3>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-600">
+                من تاريخ
+              </label>
+
+              <input
+                type="date"
+                value={fromDate}
+                max={toDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-600">
+                إلى تاريخ
+              </label>
+
+              <input
+                type="date"
+                value={toDate}
+                min={fromDate}
+                max={getLocalDate()}
+                onChange={(e) => setToDate(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-600">
+                البحث عن حساب
+              </label>
+
+              <div className="relative">
+                <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="اسم الحساب أو رمزه..."
+                  className="w-full rounded-xl border border-slate-200 py-3 pr-10 pl-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center gap-2 text-xs text-slate-400">
+            الفترة المحددة:
+            <span className="rounded-lg bg-slate-100 px-2 py-1 text-slate-600">
+              {formatDate(fromDate)}
+            </span>
+            إلى
+            <span className="rounded-lg bg-slate-100 px-2 py-1 text-slate-600">
+              {formatDate(toDate)}
+            </span>
+          </div>
+        </section>
+
+        {/* Error */}
+
+        {error && (
+          <div className="mb-5 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <FiAlertCircle />
+            {error}
+          </div>
+        )}
+
+        {/* Main Results */}
+
+        <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-500">إجمالي الإيرادات</p>
+
+                <h3 className="mt-2 text-xl font-bold text-emerald-700">
+                  {formatMoney(report.totals.revenue)}
+                </h3>
+              </div>
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                <FiTrendingUp size={22} />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-500">تكلفة البضاعة المباعة</p>
+
+                <h3 className="mt-2 text-xl font-bold text-amber-700">
+                  {formatMoney(report.totals.costOfSales)}
+                </h3>
+              </div>
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                <FiDollarSign size={22} />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-500">المصروفات التشغيلية</p>
+
+                <h3 className="mt-2 text-xl font-bold text-red-700">
+                  {formatMoney(report.totals.operatingExpense)}
+                </h3>
+              </div>
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                <FiTrendingDown size={22} />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-500">صافي الربح / الخسارة</p>
+
+                <h3
+                  className={`mt-2 text-xl font-bold ${
+                    report.netProfit >= 0 ? "text-emerald-700" : "text-red-700"
+                  }`}
+                >
+                  {formatMoney(report.netProfit)}
+                </h3>
+              </div>
+
+              <div
+                className={`flex h-11 w-11 items-center justify-center rounded-xl ${
+                  report.netProfit >= 0
+                    ? "bg-emerald-50 text-emerald-600"
+                    : "bg-red-50 text-red-600"
+                }`}
+              >
+                {report.netProfit >= 0 ? (
+                  <FiTrendingUp size={22} />
+                ) : (
+                  <FiTrendingDown size={22} />
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Profit Summary */}
+
+        <section className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-5">
+            <h2 className="font-bold text-slate-800">ملخص نتائج الأعمال</h2>
 
             <p className="mt-1 text-xs text-slate-400">
-              نتائج النشاط خلال الفترة المحددة
+              النتائج المالية للفترة المحددة
             </p>
           </div>
 
-          <FiBarChart2 className="text-slate-400" size={22} />
-        </div>
+          <div className="divide-y divide-slate-100">
+            <div className="flex items-center justify-between gap-3 px-5 py-4">
+              <span className="text-sm text-slate-600">إجمالي الإيرادات</span>
 
-        <div className="space-y-4">
-          {/* REVENUE */}
-
-          <div>
-            <div className="mb-2 flex justify-between text-sm">
-              <span className="text-slate-600">الإيرادات</span>
-
-              <strong className="text-emerald-600">
-                {money(report.totalRevenue)}
-              </strong>
+              <span className="font-bold text-emerald-700">
+                {formatMoney(report.totals.revenue)}
+              </span>
             </div>
 
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full bg-emerald-500"
-                style={{
-                  width: report.totalRevenue > 0 ? "100%" : "0%",
-                }}
-              />
-            </div>
-          </div>
+            <div className="flex items-center justify-between gap-3 px-5 py-4">
+              <span className="text-sm text-slate-600">
+                (-) تكلفة البضاعة المباعة
+              </span>
 
-          {/* COST */}
-
-          <div>
-            <div className="mb-2 flex justify-between text-sm">
-              <span className="text-slate-600">تكلفة المبيعات</span>
-
-              <strong className="text-orange-600">
-                {money(report.totalCostOfSales)}
-              </strong>
+              <span className="font-semibold text-red-600">
+                {formatMoney(report.totals.costOfSales)}
+              </span>
             </div>
 
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full bg-orange-500"
-                style={{
-                  width:
-                    report.totalRevenue > 0
-                      ? `${Math.min(
-                          Math.max(
-                            (report.totalCostOfSales / report.totalRevenue) *
-                              100,
-                            0,
-                          ),
-                          100,
-                        )}%`
-                      : "0%",
-                }}
-              />
-            </div>
-          </div>
+            <div className="flex items-center justify-between gap-3 bg-blue-50/60 px-5 py-4">
+              <span className="font-bold text-slate-800">مجمل الربح</span>
 
-          {/* OPERATING EXPENSES */}
-
-          <div>
-            <div className="mb-2 flex justify-between text-sm">
-              <span className="text-slate-600">المصروفات التشغيلية</span>
-
-              <strong className="text-red-600">
-                {money(report.totalOperatingExpenses)}
-              </strong>
+              <span className="text-lg font-bold text-blue-700">
+                {formatMoney(report.grossProfit)}
+              </span>
             </div>
 
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full bg-red-500"
-                style={{
-                  width:
-                    report.totalRevenue > 0
-                      ? `${Math.min(
-                          Math.max(
-                            (report.totalOperatingExpenses /
-                              report.totalRevenue) *
-                              100,
-                            0,
-                          ),
-                          100,
-                        )}%`
-                      : "0%",
-                }}
-              />
+            <div className="flex items-center justify-between gap-3 px-5 py-4">
+              <span className="text-sm text-slate-600">
+                (-) المصروفات التشغيلية
+              </span>
+
+              <span className="font-semibold text-red-600">
+                {formatMoney(report.totals.operatingExpense)}
+              </span>
             </div>
-          </div>
-        </div>
 
-        <div className="mt-5 flex flex-wrap justify-between gap-4 border-t pt-4">
-          <div>
-            <p className="text-xs text-slate-500">هامش صافي الربح</p>
+            <div className="flex items-center justify-between gap-3 bg-slate-50 px-5 py-4">
+              <span className="font-bold text-slate-800">الربح التشغيلي</span>
 
-            <p
-              className={`mt-1 text-xl font-bold ${
-                report.netProfit >= 0 ? "text-emerald-600" : "text-red-600"
+              <span className="font-bold text-slate-800">
+                {formatMoney(report.operatingProfit)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 px-5 py-4">
+              <span className="text-sm text-slate-600">(+) إيرادات أخرى</span>
+
+              <span className="font-semibold text-emerald-700">
+                {formatMoney(report.totals.otherIncome)}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 px-5 py-4">
+              <span className="text-sm text-slate-600">(-) مصروفات أخرى</span>
+
+              <span className="font-semibold text-red-600">
+                {formatMoney(report.totals.otherExpense)}
+              </span>
+            </div>
+
+            <div
+              className={`flex items-center justify-between gap-3 px-5 py-5 ${
+                report.netProfit >= 0 ? "bg-emerald-50" : "bg-red-50"
               }`}
             >
-              {report.profitMargin.toFixed(2)}%
-            </p>
+              <div>
+                <h3 className="font-bold text-slate-900">
+                  صافي الربح / الخسارة
+                </h3>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  هامش صافي الربح: {report.profitMargin}%
+                </p>
+              </div>
+
+              <span
+                className={`text-xl font-bold ${
+                  report.netProfit >= 0 ? "text-emerald-700" : "text-red-700"
+                }`}
+              >
+                {formatMoney(report.netProfit)}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {/* Account Details */}
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="font-bold text-slate-800">
+                تفاصيل حسابات قائمة الدخل
+              </h2>
+
+              <p className="mt-1 text-xs text-slate-400">
+                الحسابات التي ساهمت في نتائج الفترة
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <FiEye size={15} />
+              {filteredRows.length} حساب
+            </div>
           </div>
 
-          <div>
-            <p className="text-xs text-slate-500">قيود اليومية المرحلة</p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[800px] border-collapse text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-xs font-bold text-slate-600">
+                  <th className="px-4 py-4 text-right">الحساب</th>
 
-            <p className="mt-1 text-xl font-bold text-slate-800">
-              {report.journalCount}
-            </p>
+                  <th className="px-4 py-4 text-right">التصنيف</th>
+
+                  <th className="px-4 py-4 text-left">مدين</th>
+
+                  <th className="px-4 py-4 text-left">دائن</th>
+
+                  <th className="px-4 py-4 text-left">صافي الحركة</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-16 text-center">
+                      <div className="flex flex-col items-center gap-3">
+                        <FiFileText className="text-4xl text-slate-300" />
+
+                        <p className="font-semibold text-slate-600">
+                          لا توجد حسابات إيرادات أو مصروفات
+                        </p>
+
+                        <p className="text-xs text-slate-400">
+                          تحقق من الفترة المحددة وتصنيف الحسابات والقيود
+                          المرحلة.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRows.map(
+                    ({ account, category, balance, depth, hasChildren }) => {
+                      const expanded = expandedAccounts.has(account.id);
+
+                      return (
+                        <tr
+                          key={account.id}
+                          className={`border-b border-slate-100 hover:bg-blue-50/40 ${
+                            account.isGroup ? "bg-slate-50/70" : "bg-white"
+                          }`}
+                        >
+                          <td className="px-4 py-3">
+                            <div
+                              className="flex min-w-[230px] items-center gap-2"
+                              style={{
+                                paddingRight: `${depth * 20}px`,
+                              }}
+                            >
+                              {hasChildren ? (
+                                <button
+                                  onClick={() => toggleAccount(account.id)}
+                                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200 print:hidden"
+                                >
+                                  <FiChevronDown
+                                    size={15}
+                                    className={`transition-transform ${
+                                      expanded ? "" : "rotate-90"
+                                    }`}
+                                  />
+                                </button>
+                              ) : (
+                                <span className="w-6 shrink-0" />
+                              )}
+
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-blue-600">
+                                    {account.code}
+                                  </span>
+
+                                  <span
+                                    className={
+                                      account.isGroup
+                                        ? "font-bold text-slate-800"
+                                        : "font-medium text-slate-700"
+                                    }
+                                  >
+                                    {account.name}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-4 py-3">
+                            <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                              {categoryLabel(category)}
+                            </span>
+                          </td>
+
+                          <td className="px-4 py-3 text-left tabular-nums text-slate-600">
+                            {balance.debit > 0
+                              ? formatMoney(balance.debit)
+                              : "-"}
+                          </td>
+
+                          <td className="px-4 py-3 text-left tabular-nums text-slate-600">
+                            {balance.credit > 0
+                              ? formatMoney(balance.credit)
+                              : "-"}
+                          </td>
+
+                          <td
+                            className={`px-4 py-3 text-left font-semibold tabular-nums ${
+                              balance.net >= 0
+                                ? "text-emerald-700"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {formatMoney(balance.net)}
+                          </td>
+                        </tr>
+                      );
+                    },
+                  )
+                )}
+              </tbody>
+            </table>
           </div>
 
-          <div>
-            <p className="text-xs text-slate-500">عدد تفاصيل القيود</p>
+          <div className="border-t border-slate-100 bg-slate-50 px-5 py-4 text-xs text-slate-500">
+            تم احتساب الحركات من القيود المرحلة خلال الفترة المحددة.
+          </div>
+        </section>
 
-            <p className="mt-1 text-xl font-bold text-slate-800">
-              {report.lineCount}
-            </p>
+        {/* Accounting Notes */}
+
+        <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50/60 p-4 print:hidden">
+          <div className="flex items-start gap-3">
+            <FiAlertCircle className="mt-0.5 shrink-0 text-blue-600" />
+
+            <div>
+              <h3 className="text-sm font-bold text-blue-900">
+                ملاحظات محاسبية
+              </h3>
+
+              <ul className="mt-2 space-y-1 text-xs leading-6 text-blue-800/80">
+                <li>• يتم احتساب قائمة الدخل من الحركات المرحلة فقط.</li>
+
+                <li>• الإيرادات = الدائن - المدين.</li>
+
+                <li>• المصروفات = المدين - الدائن.</li>
+
+                <li>• لا تدخل الأرصدة الافتتاحية في قائمة الدخل.</li>
+
+                <li>
+                  • يتم تجميع أرصدة الحسابات الفرعية في الحسابات الرئيسية.
+                </li>
+
+                <li>
+                  • تكلفة البضاعة المباعة تحتاج إلى تصنيف حساباتها بشكل صحيح حتى
+                  يظهر مجمل الربح بدقة.
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
-
-      {/* REVENUE */}
-
-      <AccountTable
-        title="الإيرادات"
-        items={report.revenueItems}
-        total={report.totalRevenue}
-        color="text-emerald-600"
-      />
-
-      {/* COST OF SALES */}
-
-      <AccountTable
-        title="تكلفة البضاعة المباعة"
-        items={report.costOfSalesItems}
-        total={report.totalCostOfSales}
-        color="text-orange-600"
-      />
-
-      {/* GROSS PROFIT */}
-
-      <div className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-4">
-        <span className="font-bold text-blue-900">مجمل الربح</span>
-
-        <span className="text-xl font-bold text-blue-700">
-          {money(report.grossProfit)}
-        </span>
-      </div>
-
-      {/* OPERATING EXPENSES */}
-
-      <AccountTable
-        title="المصروفات التشغيلية"
-        items={report.operatingExpenseItems}
-        total={report.totalOperatingExpenses}
-        color="text-red-600"
-      />
-
-      {/* OPERATING PROFIT */}
-
-      <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-        <span className="font-bold text-indigo-900">صافي الربح التشغيلي</span>
-
-        <span className="text-xl font-bold text-indigo-700">
-          {money(report.operatingProfit)}
-        </span>
-      </div>
-
-      {/* OTHER INCOME */}
-
-      <AccountTable
-        title="الإيرادات الأخرى"
-        items={report.otherIncomeItems}
-        total={report.totalOtherIncome}
-        color="text-emerald-600"
-      />
-
-      {/* OTHER EXPENSES */}
-
-      <AccountTable
-        title="المصروفات الأخرى"
-        items={report.otherExpenseItems}
-        total={report.totalOtherExpenses}
-        color="text-red-600"
-      />
-
-      {/* FINAL RESULT */}
-
-      <div
-        className={`rounded-xl border p-5 ${
-          report.netProfit >= 0
-            ? "border-emerald-200 bg-emerald-50"
-            : "border-red-200 bg-red-50"
-        }`}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm text-slate-600">
-              النتيجة النهائية للفترة المالية
-            </p>
-
-            <h2 className="mt-2 text-xl font-bold text-slate-800">
-              {report.netProfit >= 0 ? "صافي الربح" : "صافي الخسارة"}
-            </h2>
-          </div>
-
-          <div className="text-left">
-            <p
-              className={`text-2xl font-bold ${
-                report.netProfit >= 0 ? "text-emerald-700" : "text-red-700"
-              }`}
-            >
-              {money(Math.abs(report.netProfit))}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-4 border-t border-slate-200/70 pt-4 text-sm sm:grid-cols-3">
-          <div>
-            <span className="text-slate-500">مجمل الربح</span>
-
-            <p className="mt-1 font-bold">{money(report.grossProfit)}</p>
-          </div>
-
-          <div>
-            <span className="text-slate-500">المصروفات التشغيلية</span>
-
-            <p className="mt-1 font-bold">
-              {money(report.totalOperatingExpenses)}
-            </p>
-          </div>
-
-          <div>
-            <span className="text-slate-500">صافي النتيجة</span>
-
-            <p className="mt-1 font-bold">{money(report.netProfit)}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* ACCOUNTING CHECK */}
-
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="flex items-center gap-2">
-          {Math.abs(report.totalDebit - report.totalCredit) < 0.01 ? (
-            <FiCheckCircle className="text-emerald-600" size={20} />
-          ) : (
-            <FiAlertCircle className="text-red-600" size={20} />
-          )}
-
-          <h3 className="font-bold text-slate-800">التحقق من توازن القيود</h3>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">إجمالي المدين</p>
-
-            <p className="mt-2 font-bold text-slate-800">
-              {money(report.totalDebit)}
-            </p>
-          </div>
-
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">إجمالي الدائن</p>
-
-            <p className="mt-2 font-bold text-slate-800">
-              {money(report.totalCredit)}
-            </p>
-          </div>
-        </div>
-
-        <p className="mt-3 text-xs text-slate-500">
-          {Math.abs(report.totalDebit - report.totalCredit) < 0.01
-            ? "إجمالي المدين يساوي إجمالي الدائن."
-            : "يوجد اختلاف في إجمالي المدين والدائن. يرجى مراجعة القيود المرحلة."}
-        </p>
-      </div>
-
-      {/* FOOTER */}
-
-      <div className="text-center text-xs text-slate-400">
-        تم إعداد التقرير اعتماداً على قيود اليومية المرحلة للفترة من {startDate}{" "}
-        إلى {endDate}
-      </div>
-
-      {/* PRINT */}
 
       <style jsx global>{`
         @media print {
+          @page {
+            size: portrait;
+            margin: 12mm;
+          }
+
           body {
             background: white !important;
           }
 
+          main {
+            padding: 0 !important;
+            background: white !important;
+          }
+
           button,
-          input,
-          .no-print {
+          input {
             display: none !important;
           }
 
-          * {
-            print-color-adjust: exact !important;
-            -webkit-print-color-adjust: exact !important;
+          .print\\:hidden {
+            display: none !important;
           }
 
-          @page {
-            size: A4;
-            margin: 12mm;
+          .print\\:block {
+            display: block !important;
+          }
+
+          section {
+            break-inside: avoid;
           }
         }
       `}</style>
-    </div>
+    </main>
   );
 }

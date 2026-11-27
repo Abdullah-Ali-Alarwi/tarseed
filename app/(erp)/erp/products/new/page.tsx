@@ -1,637 +1,433 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 
-import {
-  FiArrowRight,
-  FiPackage,
-  FiLayers,
-  FiBox,
-  FiHash,
-  FiDollarSign,
-  FiSave,
-  FiRefreshCw,
-  FiAlertCircle,
-  FiCheckCircle,
-  FiBarChart,
-  FiAward,
-} from "react-icons/fi";
-
-/* =====================================================
-   API
-===================================================== */
-
-const API_URL = "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-/* =====================================================
-   TYPES
-===================================================== */
-
-interface Category {
+type Option = {
   id: string;
-  companyId: string;
   name: string;
-  code?: string;
-  status?: string;
-}
+  code?: string | null;
+  symbol?: string | null;
+  isDefault?: boolean | null;
+};
 
-interface Unit {
-  id: string;
-  companyId: string;
+type ProductForm = {
   name: string;
-  symbol: string;
-  status?: string;
-}
-
-interface Warehouse {
-  id: string;
-  companyId: string;
-  name: string;
-  code?: string;
-  status?: string;
-}
-
-interface Item {
-  id: string;
-  companyId: string;
-  name: string;
-  sku?: string;
-  barcode?: string;
-  categoryId: string;
-  categoryName?: string;
-  unitId: string;
-  unitName?: string;
-  status?: string;
-}
-
-interface ProductForm {
-  itemId: string;
   sku: string;
   barcode: string;
+  categoryId: string;
+  unitId: string;
   warehouseId: string;
   purchasePrice: string;
   sellingPrice: string;
   currentStock: string;
   minStock: string;
   description: string;
-}
+  trackInventory: boolean;
+  status: string;
+};
 
-/* =====================================================
-   COMPONENT
-===================================================== */
+const initialForm: ProductForm = {
+  name: "",
+  sku: "",
+  barcode: "",
+  categoryId: "",
+  unitId: "",
+  warehouseId: "",
+  purchasePrice: "0",
+  sellingPrice: "0",
+  currentStock: "0",
+  minStock: "0",
+  description: "",
+  trackInventory: true,
+  status: "active",
+};
 
 export default function NewProductPage() {
   const router = useRouter();
 
   const [companyId, setCompanyId] = useState("");
+  const [categories, setCategories] = useState<Option[]>([]);
+  const [units, setUnits] = useState<Option[]>([]);
+  const [warehouses, setWarehouses] = useState<Option[]>([]);
 
-  const [items, setItems] = useState<Item[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [units, setUnits] = useState<Unit[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-
-  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<ProductForm>(initialForm);
+  const [loadingData, setLoadingData] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [form, setForm] = useState<ProductForm>({
-    itemId: "",
-    sku: "",
-    barcode: "",
-    warehouseId: "",
-    purchasePrice: "",
-    sellingPrice: "",
-    currentStock: "0",
-    minStock: "0",
-    description: "",
-  });
-
-  /* =====================================================
-     LOAD USER AND DATA
-  ===================================================== */
-
   useEffect(() => {
-    initialize();
+    const loadUserAndOptions = async () => {
+      try {
+        const storedUser = localStorage.getItem("authUser");
+
+        if (!storedUser) {
+          toast.error("يرجى تسجيل الدخول أولاً");
+          setLoadingData(false);
+          return;
+        }
+
+        const user = JSON.parse(storedUser);
+
+        if (!user.companyId) {
+          toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
+          setLoadingData(false);
+          return;
+        }
+
+        if (user.type === "platform") {
+          toast.error("لا يمكن لمستخدم المنصة إضافة أصناف");
+          setLoadingData(false);
+          return;
+        }
+
+        setCompanyId(user.companyId);
+
+        const [categoriesResult, unitsResult, warehousesResult] =
+          await Promise.all([
+            supabase
+              .from("categories")
+              .select("id, name, code, status")
+              .eq("companyId", user.companyId)
+              .eq("status", "active")
+              .order("name"),
+
+            supabase
+              .from("units")
+              .select("id, name, symbol, status, isDefault")
+              .eq("companyId", user.companyId)
+              .eq("status", "active")
+              .order("name"),
+
+            supabase
+              .from("warehouses")
+              .select("id, name, code, status, isDefault")
+              .eq("companyId", user.companyId)
+              .eq("status", "active")
+              .order("name"),
+          ]);
+
+        if (categoriesResult.error) throw categoriesResult.error;
+        if (unitsResult.error) throw unitsResult.error;
+        if (warehousesResult.error) throw warehousesResult.error;
+
+        const loadedCategories = categoriesResult.data ?? [];
+        const loadedUnits = unitsResult.data ?? [];
+        const loadedWarehouses = warehousesResult.data ?? [];
+
+        setCategories(loadedCategories);
+        setUnits(loadedUnits);
+        setWarehouses(loadedWarehouses);
+
+        const defaultUnit =
+          loadedUnits.find((unit) => unit.isDefault) ?? loadedUnits[0];
+
+        const defaultWarehouse =
+          loadedWarehouses.find((warehouse) => warehouse.isDefault) ??
+          loadedWarehouses[0];
+
+        setForm((previous) => ({
+          ...previous,
+          unitId: defaultUnit?.id ?? "",
+          warehouseId: defaultWarehouse?.id ?? "",
+        }));
+      } catch (error) {
+        console.error("Load product options error:", error);
+        toast.error("حدث خطأ أثناء تحميل بيانات الأصناف");
+      } finally {
+        setLoadingData(false);
+      }
+    };
+
+    loadUserAndOptions();
   }, []);
 
-  const initialize = async () => {
-    try {
-      const cookies = document.cookie.split("; ");
-
-      const getCookie = (name: string) => {
-        const cookie = cookies.find((item) => item.startsWith(`${name}=`));
-
-        return cookie
-          ? decodeURIComponent(cookie.substring(name.length + 1))
-          : "";
-      };
-
-      const userType = getCookie("type");
-
-      if (userType === "platform") {
-        toast.error("هذا القسم مخصص لمستخدمي الشركات");
-        return;
-      }
-
-      const currentCompanyId = getCookie("companyId");
-
-      if (!currentCompanyId) {
-        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
-        return;
-      }
-
-      setCompanyId(currentCompanyId);
-
-      await loadData(currentCompanyId);
-    } catch (error) {
-      console.error("Initialize error:", error);
-      toast.error("حدث خطأ أثناء تحميل البيانات");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /* =====================================================
-     LOAD DATA
-  ===================================================== */
-
-  const loadData = async (currentCompanyId: string) => {
-    try {
-      const [itemsRes, categoriesRes, unitsRes, warehousesRes] =
-        await Promise.all([
-          api.get("/products", {
-            params: { companyId: currentCompanyId },
-          }),
-
-          api.get("/categories", {
-            params: { companyId: currentCompanyId },
-          }),
-
-          api.get("/units", {
-            params: { companyId: currentCompanyId },
-          }),
-
-          api.get("/warehouses", {
-            params: { companyId: currentCompanyId },
-          }),
-        ]);
-
-      setItems(
-        itemsRes.data.filter(
-          (item: Item) =>
-            item.companyId === currentCompanyId && item.status !== "inactive",
-        ),
-      );
-
-      setCategories(
-        categoriesRes.data.filter(
-          (item: Category) =>
-            item.companyId === currentCompanyId && item.status !== "inactive",
-        ),
-      );
-
-      setUnits(
-        unitsRes.data.filter(
-          (item: Unit) =>
-            item.companyId === currentCompanyId && item.status !== "inactive",
-        ),
-      );
-
-      setWarehouses(
-        warehousesRes.data.filter(
-          (item: Warehouse) =>
-            item.companyId === currentCompanyId && item.status !== "inactive",
-        ),
-      );
-    } catch (error) {
-      console.error("Load data error:", error);
-      toast.error("تعذر تحميل بيانات الأصناف والمستودعات");
-    }
-  };
-
-  /* =====================================================
-     SELECTED ITEM
-  ===================================================== */
-
-  const selectedItem = useMemo(
-    () => items.find((item) => String(item.id) === form.itemId),
-    [items, form.itemId],
-  );
-
-  const selectedCategory = useMemo(
-    () =>
-      categories.find(
-        (category) => String(category.id) === String(selectedItem?.categoryId),
-      ),
-    [categories, selectedItem],
-  );
-
-  const selectedUnit = useMemo(
-    () =>
-      units.find((unit) => String(unit.id) === String(selectedItem?.unitId)),
-    [units, selectedItem],
-  );
-
-  /* =====================================================
-     GENERATE SKU
-  ===================================================== */
-
-  const generateSKU = () => {
-    const maxNumber = items.reduce((max, item) => {
-      const match = item.sku?.match(/^PRD-(\d+)$/);
-
-      if (!match) return max;
-
-      return Math.max(max, Number(match[1]));
-    }, 0);
-
-    return `PRD-${String(maxNumber + 1).padStart(4, "0")}`;
-  };
-
-  /* =====================================================
-     HANDLE ITEM CHANGE
-  ===================================================== */
-
-  const handleItemChange = (itemId: string) => {
-    const item = items.find((product) => String(product.id) === itemId);
-
-    setForm((prev) => ({
-      ...prev,
-      itemId,
-      sku: item?.sku || generateSKU(),
-      barcode: item?.barcode || "",
+  const updateField = (field: keyof ProductForm, value: string | boolean) => {
+    setForm((previous) => ({
+      ...previous,
+      [field]: value,
     }));
   };
-
-  /* =====================================================
-     HANDLE INPUT CHANGE
-  ===================================================== */
-
-  const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-    >,
-  ) => {
-    const { name, value } = e.target;
-
-    setForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-  };
-
-  /* =====================================================
-     VALIDATION
-  ===================================================== */
 
   const validateForm = () => {
-    if (!form.itemId) {
-      toast.error("يرجى اختيار الصنف");
+    if (!form.name.trim()) {
+      toast.error("يرجى إدخال اسم الصنف");
       return false;
     }
 
-    if (!form.warehouseId) {
+    if (!form.unitId) {
+      toast.error("يرجى اختيار وحدة الصنف");
+      return false;
+    }
+
+    if (!form.warehouseId && form.trackInventory) {
       toast.error("يرجى اختيار المستودع");
       return false;
     }
 
-    if (form.purchasePrice === "" || form.sellingPrice === "") {
-      toast.error("يرجى إدخال أسعار الشراء والبيع");
-      return false;
-    }
+    const numericFields = [
+      { label: "سعر الشراء", value: form.purchasePrice },
+      { label: "سعر البيع", value: form.sellingPrice },
+      { label: "الرصيد الحالي", value: form.currentStock },
+      { label: "الحد الأدنى للمخزون", value: form.minStock },
+    ];
 
-    const purchasePrice = Number(form.purchasePrice);
-    const sellingPrice = Number(form.sellingPrice);
-    const currentStock = Number(form.currentStock);
-    const minStock = Number(form.minStock);
+    for (const field of numericFields) {
+      const value = Number(field.value);
 
-    if (
-      [purchasePrice, sellingPrice, currentStock, minStock].some(
-        (value) => !Number.isFinite(value) || value < 0,
-      )
-    ) {
-      toast.error("تأكد من صحة القيم الرقمية");
-      return false;
+      if (!Number.isFinite(value) || value < 0) {
+        toast.error(
+          `${field.label} يجب أن يكون رقمًا صحيحًا أو عشريًا غير سالب`,
+        );
+        return false;
+      }
     }
 
     return true;
   };
 
-  /* =====================================================
-     SAVE
-  ===================================================== */
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+    if (!validateForm() || !companyId) return;
 
-    if (!companyId) {
-      toast.error("الشركة غير محددة");
-      return;
-    }
-
-    if (!validateForm()) return;
-
-    if (!selectedItem) {
-      toast.error("الصنف المحدد غير موجود");
-      return;
-    }
+    setSaving(true);
 
     try {
-      setSaving(true);
+      const selectedCategory = categories.find(
+        (category) => category.id === form.categoryId,
+      );
 
-      const payload = {
+      const selectedUnit = units.find((unit) => unit.id === form.unitId);
+
+      const selectedWarehouse = warehouses.find(
+        (warehouse) => warehouse.id === form.warehouseId,
+      );
+
+      const productId = crypto.randomUUID();
+      const itemId = crypto.randomUUID();
+      const now = new Date().toISOString();
+
+      const productData = {
+        id: productId,
         companyId,
 
-        // الصنف المختار
-        itemId: selectedItem.id,
-        name: selectedItem.name,
+        name: form.name.trim(),
+        sku: form.sku.trim() || null,
+        barcode: form.barcode.trim() || null,
 
-        // المجموعة والوحدة من الصنف
-        categoryId: selectedItem.categoryId,
-        categoryName: selectedCategory?.name || selectedItem.categoryName || "",
+        categoryId: selectedCategory?.id ?? null,
+        categoryName: selectedCategory?.name ?? null,
 
-        unitId: selectedItem.unitId,
-        unitName: selectedUnit?.name || selectedItem.unitName || "",
+        unitId: selectedUnit?.id ?? null,
+        unitName: selectedUnit?.name ?? null,
 
-        // بيانات المنتج
-        sku: form.sku,
-        barcode: form.barcode,
-        warehouseId: form.warehouseId,
+        warehouseId: form.trackInventory
+          ? (selectedWarehouse?.id ?? null)
+          : null,
 
         purchasePrice: Number(form.purchasePrice),
         sellingPrice: Number(form.sellingPrice),
 
-        currentStock: Number(form.currentStock),
-        minStock: Number(form.minStock),
+        currentStock: form.trackInventory ? Number(form.currentStock) : 0,
 
-        description: form.description.trim(),
+        minStock: form.trackInventory ? Number(form.minStock) : 0,
 
-        status: "active",
-        createdAt: new Date().toISOString(),
+        description: form.description.trim() || null,
+        status: form.status,
+        trackInventory: form.trackInventory,
+
+        itemId,
+        createdAt: now,
+        updatedAt: now,
+
+        extra: {
+          id: productId,
+          itemId,
+          companyId,
+
+          name: form.name.trim(),
+          sku: form.sku.trim() || null,
+          barcode: form.barcode.trim() || null,
+
+          categoryId: selectedCategory?.id ?? null,
+          categoryName: selectedCategory?.name ?? null,
+
+          unitId: selectedUnit?.id ?? null,
+          unitName: selectedUnit?.name ?? null,
+
+          warehouseId: form.trackInventory
+            ? (selectedWarehouse?.id ?? null)
+            : null,
+
+          purchasePrice: Number(form.purchasePrice),
+          sellingPrice: Number(form.sellingPrice),
+
+          currentStock: form.trackInventory ? Number(form.currentStock) : 0,
+
+          minStock: form.trackInventory ? Number(form.minStock) : 0,
+
+          description: form.description.trim(),
+          trackInventory: form.trackInventory,
+          status: form.status,
+          createdAt: now,
+        },
       };
 
-      await api.post("/products", payload);
+      const { error } = await supabase.from("products").insert(productData);
 
-      toast.success("تمت إضافة المنتج بنجاح");
+      if (error) throw error;
+
+      toast.success("تمت إضافة الصنف بنجاح");
 
       router.push("/erp/products");
       router.refresh();
     } catch (error) {
-      console.error("Save product error:", error);
-      toast.error("حدث خطأ أثناء حفظ المنتج");
+      console.error("Create product error:", error);
+
+      const message =
+        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ الصنف";
+
+      toast.error(message);
     } finally {
       setSaving(false);
     }
   };
 
-  /* =====================================================
-     STYLES
-  ===================================================== */
-
-  const inputClass =
-    "w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10";
-
-  const labelClass = "mb-2 block text-sm font-semibold text-slate-700";
-
-  /* =====================================================
-     LOADING
-  ===================================================== */
-
-  if (loading) {
+  if (loadingData) {
     return (
       <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
-        <div className="flex items-center gap-3 text-blue-600">
-          <FiRefreshCw className="animate-spin text-2xl" />
-          <span className="text-sm font-medium">جارٍ تحميل البيانات...</span>
+        <div className="flex flex-col items-center gap-3 text-slate-500">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
+          <p className="text-sm">جاري تحميل البيانات...</p>
         </div>
       </div>
     );
   }
 
-  if (!companyId) {
-    return (
-      <div
-        dir="rtl"
-        className="m-5 rounded-2xl border border-red-200 bg-red-50 p-6 text-center"
-      >
-        <FiAlertCircle className="mx-auto mb-3 text-3xl text-red-500" />
-        <h2 className="font-bold text-red-700">لم يتم العثور على الشركة</h2>
-        <p className="mt-2 text-sm text-red-600">
-          تحقق من بيانات المستخدم المسجل ووجود companyId.
-        </p>
-      </div>
-    );
-  }
-
-  /* =====================================================
-     UI
-  ===================================================== */
-
   return (
-    <div dir="rtl" className="min-h-screen space-y-6 p-4 md:p-6">
-      {/* Header */}
-
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
+      {/* العنوان */}
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
-          <div className="mb-3 flex items-center gap-2 text-sm text-slate-500">
-            <Link
-              href="/erp/products"
-              className="transition hover:text-blue-600"
-            >
-              المنتجات
+          <div className="mb-2 flex items-center gap-2 text-sm text-slate-400">
+            <Link href="/erp/products" className="hover:text-slate-700">
+              الأصناف
             </Link>
-
             <span>/</span>
-
-            <span className="font-medium text-blue-600">إضافة منتج</span>
+            <span className="text-slate-600">إضافة صنف جديد</span>
           </div>
 
-          <h1 className="text-2xl font-bold text-slate-800">إضافة منتج جديد</h1>
+          <h1 className="text-2xl font-bold text-slate-800">إضافة صنف جديد</h1>
 
-          <p className="mt-2 text-sm text-slate-500">
-            اختر الصنف وحدد بيانات المنتج والمخزون والأسعار.
+          <p className="mt-1 text-sm text-slate-500">
+            أدخل بيانات الصنف والأسعار وإعدادات المخزون
           </p>
         </div>
 
         <Link
           href="/erp/products"
-          className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+          className="w-fit rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
         >
-          <FiArrowRight />
-          العودة للمنتجات
+          العودة للأصناف
         </Link>
       </div>
 
-      {/* Main Form */}
-
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Item Information */}
-
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4">
-            <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
-              <FiPackage size={21} />
-            </div>
-
-            <div>
-              <h2 className="font-bold text-slate-800">بيانات الصنف</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                اختر الصنف من الأصناف المسجلة مسبقاً.
-              </p>
-            </div>
+        {/* البيانات الأساسية */}
+        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h2 className="font-bold text-slate-800">البيانات الأساسية</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              المعلومات التعريفية للصنف
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2">
-            {/* Item Select */}
+          <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2 xl:grid-cols-3">
+            <Field label="اسم الصنف" required>
+              <input
+                required
+                value={form.name}
+                onChange={(e) => updateField("name", e.target.value)}
+                placeholder="مثال: عسل سدر"
+                className={inputClass}
+              />
+            </Field>
 
-            <div className="md:col-span-2">
-              <label className={labelClass}>
-                اسم المنتج <span className="text-red-500">*</span>
-              </label>
+            <Field label="كود الصنف (SKU)">
+              <input
+                value={form.sku}
+                onChange={(e) => updateField("sku", e.target.value)}
+                placeholder="مثال: PRD-001"
+                className={inputClass}
+              />
+            </Field>
 
-              <div className="relative">
-                <FiPackage className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Field label="الباركود">
+              <input
+                dir="ltr"
+                value={form.barcode}
+                onChange={(e) => updateField("barcode", e.target.value)}
+                placeholder="2000000000001"
+                className={inputClass}
+              />
+            </Field>
 
-                <select
-                  name="itemId"
-                  value={form.itemId}
-                  onChange={(e) => handleItemChange(e.target.value)}
-                  className={`${inputClass} pr-11`}
-                  required
-                >
-                  <option value="">اختر الصنف</option>
+            <Field label="التصنيف">
+              <select
+                value={form.categoryId}
+                onChange={(e) => updateField("categoryId", e.target.value)}
+                className={inputClass}
+              >
+                <option value="">بدون تصنيف</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                    {category.code ? ` (${category.code})` : ""}
+                  </option>
+                ))}
+              </select>
 
-                  {items.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                      {item.sku ? ` — ${item.sku}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {items.length === 0 && (
-                <p className="mt-2 flex items-center gap-2 text-xs text-amber-600">
-                  <FiAlertCircle />
-                  لا توجد أصناف مسجلة. أضف الأصناف أولاً من إعدادات المخزون.
+              {categories.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600">
+                  لا توجد تصنيفات نشطة لهذه الشركة.
                 </p>
               )}
-            </div>
+            </Field>
 
-            {/* Category */}
-
-            <div>
-              <label className={labelClass}>المجموعة</label>
-
-              <div className="relative">
-                <FiLayers className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-
-                <input
-                  value={selectedCategory?.name || ""}
-                  readOnly
-                  placeholder="تظهر تلقائياً بعد اختيار الصنف"
-                  className={`${inputClass} bg-slate-50 pr-11`}
-                />
-              </div>
-            </div>
-
-            {/* Unit */}
-
-            <div>
-              <label className={labelClass}>وحدة القياس</label>
-
-              <div className="relative">
-                <FiBox className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-
-                <input
-                  value={selectedUnit?.name || ""}
-                  readOnly
-                  placeholder="تظهر تلقائياً بعد اختيار الصنف"
-                  className={`${inputClass} bg-slate-50 pr-11`}
-                />
-              </div>
-            </div>
-
-            {/* SKU */}
-
-            <div>
-              <label className={labelClass}>رقم المنتج</label>
-
-              <div className="relative">
-                <FiHash className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-
-                <input
-                  name="sku"
-                  value={form.sku}
-                  readOnly
-                  className={`${inputClass} bg-slate-50 pr-11 font-mono`}
-                  placeholder="يُحدد تلقائياً"
-                />
-              </div>
-            </div>
-
-            {/* Barcode */}
-
-            <div>
-              <label className={labelClass}>الباركود</label>
-
-              <div className="relative">
-                <FiBarChart className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-
-                <input
-                  name="barcode"
-                  value={form.barcode}
-                  onChange={handleChange}
-                  className={`${inputClass} pr-11`}
-                  placeholder="أدخل الباركود"
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Warehouse and Stock */}
-
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4">
-            <div className="rounded-xl bg-emerald-50 p-3 text-emerald-600">
-              <FiAward size={21} />
-            </div>
-
-            <div>
-              <h2 className="font-bold text-slate-800">بيانات المخزون</h2>
-
-              <p className="mt-1 text-xs text-slate-500">
-                حدد المستودع والكمية الحالية والحد الأدنى.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <label className={labelClass}>
-                المستودع <span className="text-red-500">*</span>
-              </label>
-
+            <Field label="وحدة القياس" required>
               <select
-                name="warehouseId"
-                value={form.warehouseId}
-                onChange={handleChange}
-                className={inputClass}
                 required
+                value={form.unitId}
+                onChange={(e) => updateField("unitId", e.target.value)}
+                className={inputClass}
+              >
+                <option value="">اختر الوحدة</option>
+                {units.map((unit) => (
+                  <option key={unit.id} value={unit.id}>
+                    {unit.name}
+                    {unit.symbol ? ` (${unit.symbol})` : ""}
+                  </option>
+                ))}
+              </select>
+
+              {units.length === 0 && (
+                <p className="mt-1 text-xs text-red-600">
+                  لا توجد وحدات نشطة. أضف وحدة أولاً.
+                </p>
+              )}
+            </Field>
+
+            <Field label="المستودع">
+              <select
+                value={form.warehouseId}
+                onChange={(e) => updateField("warehouseId", e.target.value)}
+                disabled={!form.trackInventory}
+                className={inputClass}
               >
                 <option value="">اختر المستودع</option>
-
                 {warehouses.map((warehouse) => (
                   <option key={warehouse.id} value={warehouse.id}>
                     {warehouse.name}
@@ -640,155 +436,208 @@ export default function NewProductPage() {
                 ))}
               </select>
 
-              {warehouses.length === 0 && (
-                <p className="mt-2 text-xs text-amber-600">
+              {form.trackInventory && warehouses.length === 0 && (
+                <p className="mt-1 text-xs text-red-600">
                   لا توجد مستودعات نشطة لهذه الشركة.
                 </p>
               )}
-            </div>
-
-            <div>
-              <label className={labelClass}>الكمية الحالية</label>
-
-              <input
-                type="number"
-                name="currentStock"
-                min="0"
-                step="any"
-                value={form.currentStock}
-                onChange={handleChange}
-                className={inputClass}
-              />
-            </div>
-
-            <div>
-              <label className={labelClass}>الحد الأدنى للمخزون</label>
-
-              <input
-                type="number"
-                name="minStock"
-                min="0"
-                step="any"
-                value={form.minStock}
-                onChange={handleChange}
-                className={inputClass}
-              />
-            </div>
+            </Field>
           </div>
         </section>
 
-        {/* Prices */}
-
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4">
-            <div className="rounded-xl bg-amber-50 p-3 text-amber-600">
-              <FiDollarSign size={21} />
-            </div>
-
-            <div>
-              <h2 className="font-bold text-slate-800">الأسعار</h2>
-
-              <p className="mt-1 text-xs text-slate-500">
-                حدد سعر الشراء وسعر البيع.
-              </p>
-            </div>
+        {/* الأسعار */}
+        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h2 className="font-bold text-slate-800">الأسعار</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              تحديد أسعار شراء وبيع الصنف
+            </p>
           </div>
 
           <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2">
-            <div>
-              <label className={labelClass}>
-                سعر الشراء <span className="text-red-500">*</span>
-              </label>
+            <Field label="سعر الشراء">
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.purchasePrice}
+                  onChange={(e) => updateField("purchasePrice", e.target.value)}
+                  className={`${inputClass} pl-14`}
+                />
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                  ر.ي
+                </span>
+              </div>
+            </Field>
 
+            <Field label="سعر البيع">
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.sellingPrice}
+                  onChange={(e) => updateField("sellingPrice", e.target.value)}
+                  className={`${inputClass} pl-14`}
+                />
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                  ر.ي
+                </span>
+              </div>
+            </Field>
+          </div>
+        </section>
+
+        {/* المخزون */}
+        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h2 className="font-bold text-slate-800">إعدادات المخزون</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              تحديد طريقة متابعة كمية الصنف
+            </p>
+          </div>
+
+          <div className="space-y-5 p-5">
+            <label className="flex cursor-pointer items-center gap-3">
               <input
-                type="number"
-                name="purchasePrice"
-                min="0"
-                step="any"
-                value={form.purchasePrice}
-                onChange={handleChange}
-                className={inputClass}
-                placeholder="0.00"
-                required
+                type="checkbox"
+                checked={form.trackInventory}
+                onChange={(e) =>
+                  updateField("trackInventory", e.target.checked)
+                }
+                className="h-4 w-4 accent-slate-800"
               />
-            </div>
 
-            <div>
-              <label className={labelClass}>
-                سعر البيع <span className="text-red-500">*</span>
-              </label>
-
-              <input
-                type="number"
-                name="sellingPrice"
-                min="0"
-                step="any"
-                value={form.sellingPrice}
-                onChange={handleChange}
-                className={inputClass}
-                placeholder="0.00"
-                required
-              />
-            </div>
-
-            {form.purchasePrice !== "" && form.sellingPrice !== "" && (
-              <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 md:col-span-2">
-                <p className="text-xs font-medium text-blue-700">فرق السعر</p>
-
-                <p className="mt-1 text-xl font-bold text-blue-800">
-                  {(
-                    Number(form.sellingPrice) - Number(form.purchasePrice)
-                  ).toLocaleString("en-US")}
+              <div>
+                <p className="text-sm font-semibold text-slate-700">
+                  تتبع المخزون
                 </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  تفعيل متابعة الكميات وحركات المخزون لهذا الصنف
+                </p>
+              </div>
+            </label>
+
+            {form.trackInventory && (
+              <div className="grid grid-cols-1 gap-5 border-t border-slate-100 pt-5 md:grid-cols-2">
+                <Field label="الرصيد الحالي / الافتتاحي">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.currentStock}
+                    onChange={(e) =>
+                      updateField("currentStock", e.target.value)
+                    }
+                    className={inputClass}
+                  />
+                  <p className="mt-1 text-xs text-slate-400">
+                    الكمية الحالية التي سيتم تسجيلها عند إنشاء الصنف.
+                  </p>
+                </Field>
+
+                <Field label="الحد الأدنى للمخزون">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.minStock}
+                    onChange={(e) => updateField("minStock", e.target.value)}
+                    className={inputClass}
+                  />
+                  <p className="mt-1 text-xs text-slate-400">
+                    يظهر تنبيه عند وصول الكمية إلى هذا الحد أو أقل.
+                  </p>
+                </Field>
+              </div>
+            )}
+
+            {!form.trackInventory && (
+              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
+                لن تتم متابعة الكميات لهذا الصنف، وسيتم حفظ رصيده وحده الأدنى
+                بصفر.
               </div>
             )}
           </div>
         </section>
 
-        {/* Description */}
+        {/* معلومات إضافية */}
+        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h2 className="font-bold text-slate-800">معلومات إضافية</h2>
+          </div>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <label className={labelClass}>وصف المنتج</label>
+          <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2">
+            <Field label="حالة الصنف">
+              <select
+                value={form.status}
+                onChange={(e) => updateField("status", e.target.value)}
+                className={inputClass}
+              >
+                <option value="active">نشط</option>
+                <option value="inactive">غير نشط</option>
+              </select>
+            </Field>
 
-          <textarea
-            name="description"
-            value={form.description}
-            onChange={handleChange}
-            rows={4}
-            className={inputClass}
-            placeholder="أدخل وصفاً أو ملاحظات عن المنتج..."
-          />
+            <Field label="الوصف">
+              <textarea
+                rows={3}
+                value={form.description}
+                onChange={(e) => updateField("description", e.target.value)}
+                placeholder="أدخل وصفًا اختياريًا للصنف..."
+                className={inputClass}
+              />
+            </Field>
+          </div>
         </section>
 
-        {/* Actions */}
-
+        {/* الأزرار */}
         <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
           <Link
             href="/erp/products"
-            className="flex items-center justify-center rounded-xl border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+            className="rounded-lg border border-slate-200 bg-white px-6 py-3 text-center text-sm font-medium text-slate-600 hover:bg-slate-50"
           >
             إلغاء
           </Link>
 
           <button
             type="submit"
-            disabled={saving || items.length === 0 || warehouses.length === 0}
-            className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-7 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={
+              saving ||
+              !companyId ||
+              !form.unitId ||
+              (form.trackInventory && !form.warehouseId)
+            }
+            className="rounded-lg bg-[#0E1F33] px-8 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? (
-              <>
-                <FiRefreshCw className="animate-spin" />
-                جارٍ الحفظ...
-              </>
-            ) : (
-              <>
-                <FiSave />
-                حفظ المنتج
-              </>
-            )}
+            {saving ? "جاري الحفظ..." : "حفظ الصنف"}
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+const inputClass =
+  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:bg-white";
+
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium text-slate-700">
+        {label}
+        {required && <span className="mr-1 text-red-500">*</span>}
+      </label>
+      {children}
     </div>
   );
 }

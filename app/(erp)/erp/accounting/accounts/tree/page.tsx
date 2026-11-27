@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -62,21 +62,18 @@ function getCookie(name: string): string | null {
 }
 
 function getCurrentUsername(): string | null {
-  // قراءة اسم المستخدم من Cookie
   const cookieUsername = getCookie("username");
 
   if (cookieUsername) {
     return cookieUsername;
   }
 
-  // الرجوع إلى localStorage
   if (typeof window !== "undefined") {
     try {
       const authUser = localStorage.getItem("authUser");
 
       if (authUser) {
         const user = JSON.parse(authUser);
-
         return user.username || null;
       }
     } catch (error) {
@@ -85,6 +82,18 @@ function getCurrentUsername(): string | null {
   }
 
   return null;
+}
+
+function isAccountActive(account: Account): boolean {
+  return account.isActive !== false && account.status !== "inactive";
+}
+
+function getAccountParentId(account: Account): string {
+  return String(account.parentId ?? "").trim();
+}
+
+function getAccountType(account: Account): AccountType {
+  return account.type;
 }
 
 // ==========================================
@@ -106,14 +115,6 @@ function getAccountTypeName(type: AccountType) {
   return accountTypes.find((item) => item.value === type)?.label || "غير محدد";
 }
 
-function isAccountActive(account: Account): boolean {
-  return account.isActive !== false && account.status !== "inactive";
-}
-
-function getAccountParentId(account: Account): string {
-  return String(account.parentId ?? "");
-}
-
 // ==========================================
 // Build Tree
 // ==========================================
@@ -122,20 +123,18 @@ function buildAccountTree(accounts: Account[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
   const roots: TreeNode[] = [];
 
-  // إنشاء عقد الشجرة
+  // إنشاء جميع العقد أولاً
   accounts.forEach((account, index) => {
     const treeKey = account.id ? String(account.id) : `account-${index}`;
 
-    const node: TreeNode = {
+    map.set(treeKey, {
       ...account,
       treeKey,
       children: [],
-    };
-
-    map.set(treeKey, node);
+    });
   });
 
-  // ربط الحسابات الرئيسية بالفرعية
+  // ربط الحسابات بالأبناء
   accounts.forEach((account, index) => {
     const treeKey = account.id ? String(account.id) : `account-${index}`;
 
@@ -145,7 +144,7 @@ function buildAccountTree(accounts: Account[]): TreeNode[] {
 
     const parentId = getAccountParentId(account);
 
-    // الحساب الرئيسي
+    // حساب رئيسي
     if (!parentId) {
       roots.push(node);
       return;
@@ -153,16 +152,16 @@ function buildAccountTree(accounts: Account[]): TreeNode[] {
 
     const parent = map.get(parentId);
 
-    // الحساب الأب موجود
+    // إذا كان الأب موجوداً
     if (parent && parent !== node) {
       parent.children.push(node);
     } else {
-      // حساب يتيم أو لا يوجد حساب أب مطابق
+      // حساب يتيم
       roots.push(node);
     }
   });
 
-  // ترتيب الحسابات حسب الرقم
+  // ترتيب الحسابات
   const sortNodes = (nodes: TreeNode[], visited = new Set<string>()) => {
     nodes.sort((a, b) =>
       String(a.code).localeCompare(String(b.code), undefined, {
@@ -174,14 +173,13 @@ function buildAccountTree(accounts: Account[]): TreeNode[] {
       if (visited.has(node.treeKey)) return;
 
       visited.add(node.treeKey);
-
       sortNodes(node.children, visited);
     });
   };
 
   sortNodes(roots);
 
-  // معالجة الحسابات التي قد تكون ضمن علاقة دائرية
+  // معالجة الحسابات التي لم تصل إليها الشجرة
   const visited = new Set<string>();
 
   const markVisited = (nodes: TreeNode[]) => {
@@ -202,6 +200,8 @@ function buildAccountTree(accounts: Account[]): TreeNode[] {
     }
   });
 
+  sortNodes(roots);
+
   return roots;
 }
 
@@ -221,12 +221,14 @@ function filterTree(
 
     const matchesSearch =
       !search ||
-      node.name.toLowerCase().includes(searchText) ||
-      node.code.toLowerCase().includes(searchText) ||
-      node.nameEn?.toLowerCase().includes(searchText);
+      String(node.name ?? "")
+        .toLowerCase()
+        .includes(searchText) ||
+      String(node.code ?? "")
+        .toLowerCase()
+        .includes(searchText);
 
-    const matchesType =
-      typeFilter === "all" || (node.accountType ?? node.type) === typeFilter;
+    const matchesType = typeFilter === "all" || node.type === typeFilter;
 
     if ((matchesSearch && matchesType) || filteredChildren.length > 0) {
       result.push({
@@ -262,26 +264,23 @@ export default function AccountsTreePage() {
   // Load Data
   // ========================================
 
-  async function loadAccounts() {
+  const loadAccounts = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      // الحصول على المستخدم الحالي
       const username = getCurrentUsername();
 
       if (!username) {
         throw new Error("لم يتم العثور على المستخدم الحالي");
       }
 
-      // جلب المستخدم من API
       const user = await getUserByUsername(username);
 
       if (!user) {
         throw new Error("المستخدم غير موجود");
       }
 
-      // منع مستخدم المنصة من الوصول إلى دليل حسابات الشركة
       if (user.type === "platform") {
         throw new Error("لا يمكن لمستخدم المنصة عرض دليل حسابات الشركة");
       }
@@ -298,24 +297,20 @@ export default function AccountsTreePage() {
 
       setCompanyId(currentCompanyId);
 
-      // جلب حسابات الشركة
+      // جلب حسابات الشركة من Supabase
+      // يجب أن تقوم getAccounts بفلترة companyId داخل الاستعلام
       const companyAccounts = await getAccounts(currentCompanyId);
 
-      // التأكد من أن الحسابات تتبع الشركة الحالية
+      // تحقق إضافي من ملكية الحسابات
       const filteredAccounts = companyAccounts.filter(
         (account) => String(account.companyId) === currentCompanyId,
       );
 
       setAccounts(filteredAccounts);
 
-      // فتح المستوى الأول تلقائياً
+      // فتح الحسابات الرئيسية تلقائياً
       const rootIds = filteredAccounts
-        .filter(
-          (account) =>
-            account.parentId === null ||
-            account.parentId === undefined ||
-            account.parentId === "",
-        )
+        .filter((account) => !getAccountParentId(account))
         .map((account) => String(account.id))
         .filter(Boolean);
 
@@ -327,15 +322,34 @@ export default function AccountsTreePage() {
         err instanceof Error ? err.message : "تعذر تحميل شجرة الحسابات";
 
       setError(message);
+      setAccounts([]);
+      setCompanyId("");
+      setExpanded(new Set());
+
       toast.error(message);
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  // ========================================
+  // Initial Load
+  // ========================================
 
   useEffect(() => {
-    loadAccounts();
-  }, []);
+    let cancelled = false;
+
+    const load = async () => {
+      if (cancelled) return;
+      await loadAccounts();
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadAccounts]);
 
   // ========================================
   // Statistics
@@ -345,10 +359,9 @@ export default function AccountsTreePage() {
     return {
       total: accounts.length,
 
-      groups: accounts.filter((account) => account.isGroup).length,
+      groups: accounts.filter((account) => account.isGroup === true).length,
 
-      posting: accounts.filter((account) => account.allowPosting === true)
-        .length,
+      posting: accounts.filter((account) => account.isGroup === false).length,
 
       active: accounts.filter((account) => isAccountActive(account)).length,
 
@@ -365,7 +378,6 @@ export default function AccountsTreePage() {
   const filteredTree = useMemo(() => {
     let result = filterTree(tree, search.trim(), typeFilter);
 
-    // تصفية حسب الحالة
     if (statusFilter !== "all") {
       const filterStatus = (nodes: TreeNode[]): TreeNode[] =>
         nodes.reduce<TreeNode[]>((acc, node) => {
@@ -411,7 +423,7 @@ export default function AccountsTreePage() {
 
   function expandAll() {
     const ids = accounts
-      .filter((account) => account.isGroup)
+      .filter((account) => account.isGroup === true)
       .map((account) => String(account.id))
       .filter(Boolean);
 
@@ -431,7 +443,6 @@ export default function AccountsTreePage() {
     depth = 0,
     path = new Set<string>(),
   ): ReactNode {
-    // منع الدوران اللانهائي في حالة وجود بيانات دائرية
     if (path.has(node.treeKey)) {
       return null;
     }
@@ -444,11 +455,11 @@ export default function AccountsTreePage() {
     const isExpanded =
       search.trim().length > 0 ? true : expanded.has(node.treeKey);
 
-    const isGroup = node.isGroup;
+    const isGroup = node.isGroup === true;
 
     const isActive = isAccountActive(node);
 
-    const accountType = node.accountType ?? node.type;
+    const accountType = getAccountType(node);
 
     return (
       <div key={node.treeKey}>
@@ -696,7 +707,6 @@ export default function AccountsTreePage() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <FiFilter className="text-gray-500" />
-
             <h2 className="font-bold text-gray-800">البحث والتصفية</h2>
           </div>
 
@@ -795,17 +805,11 @@ export default function AccountsTreePage() {
             {/* Columns */}
             <div className="flex items-center bg-gray-50 text-xs font-bold text-gray-600">
               <div className="w-10" />
-
               <div className="w-32 px-3 py-4">رقم الحساب</div>
-
               <div className="flex-1 px-3 py-4">اسم الحساب</div>
-
               <div className="w-32 px-3 py-4">التصنيف</div>
-
               <div className="w-24 px-3 py-4">الطبيعة</div>
-
               <div className="w-32 px-3 py-4">نوع الحساب</div>
-
               <div className="w-24 px-3 py-4 text-center">الإجراءات</div>
             </div>
 

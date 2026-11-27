@@ -27,12 +27,16 @@ import {
 import {
   getAccounts,
   createAccount as createAccountApi,
-  type Account,
-  type AccountType,
-  type AccountNature,
+  type AccountRecord,
 } from "@/lib/api/accounts";
 
 import { getUserByUsername, type User } from "@/lib/api/users";
+
+// الأنواع المستخدمة في صفحة الإنشاء.
+// ملف accounts.ts يصدّر AccountRecord ولا يصدّر Account/AccountType/AccountNature.
+type Account = AccountRecord;
+type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
+type AccountNature = "debit" | "credit";
 
 // =====================================================
 // Types
@@ -69,7 +73,6 @@ interface DefaultAccount {
   parentCode?: string;
   level: number;
   isGroup: boolean;
-  allowPosting: boolean;
 }
 
 // =====================================================
@@ -114,9 +117,7 @@ const accountCategories: AccountCategory[] = [
 // =====================================================
 
 const defaultAccounts: DefaultAccount[] = [
-  // ===================================================
   // الأصول
-  // ===================================================
 
   {
     code: "1",
@@ -125,7 +126,6 @@ const defaultAccounts: DefaultAccount[] = [
     nature: "debit",
     level: 1,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "11",
@@ -135,7 +135,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "1",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "111",
@@ -145,7 +144,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "11",
     level: 3,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "1111",
@@ -155,7 +153,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "111",
     level: 4,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "1112",
@@ -165,7 +162,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "111",
     level: 4,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "112",
@@ -175,7 +171,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "11",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "113",
@@ -185,7 +180,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "11",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "114",
@@ -195,7 +189,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "11",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "12",
@@ -205,7 +198,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "1",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "121",
@@ -215,7 +207,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "12",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "122",
@@ -225,12 +216,9 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "12",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
 
-  // ===================================================
   // الالتزامات
-  // ===================================================
 
   {
     code: "2",
@@ -239,7 +227,6 @@ const defaultAccounts: DefaultAccount[] = [
     nature: "credit",
     level: 1,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "21",
@@ -249,7 +236,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "2",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "211",
@@ -259,7 +245,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "21",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "212",
@@ -269,7 +254,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "21",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "213",
@@ -279,7 +263,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "21",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "22",
@@ -289,7 +272,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "2",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "221",
@@ -299,12 +281,9 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "22",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
 
-  // ===================================================
   // حقوق الملكية
-  // ===================================================
 
   {
     code: "3",
@@ -313,7 +292,6 @@ const defaultAccounts: DefaultAccount[] = [
     nature: "credit",
     level: 1,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "31",
@@ -323,7 +301,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "3",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "311",
@@ -333,7 +310,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "31",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "312",
@@ -343,7 +319,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "31",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "313",
@@ -353,12 +328,9 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "31",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
 
-  // ===================================================
   // الإيرادات
-  // ===================================================
 
   {
     code: "4",
@@ -367,7 +339,6 @@ const defaultAccounts: DefaultAccount[] = [
     nature: "credit",
     level: 1,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "41",
@@ -377,7 +348,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "4",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "411",
@@ -387,7 +357,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "41",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "412",
@@ -397,7 +366,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "41",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "413",
@@ -407,7 +375,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "41",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "414",
@@ -417,13 +384,9 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "41",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
 
-  // ===================================================
   // تكلفة المبيعات
-  // تصنف حالياً ضمن expense لأن AccountType لا يحتوي cogs
-  // ===================================================
 
   {
     code: "5",
@@ -432,7 +395,6 @@ const defaultAccounts: DefaultAccount[] = [
     nature: "debit",
     level: 1,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "51",
@@ -442,7 +404,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "5",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "511",
@@ -452,7 +413,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "51",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "512",
@@ -462,12 +422,9 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "51",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
 
-  // ===================================================
   // المصروفات
-  // ===================================================
 
   {
     code: "6",
@@ -476,7 +433,6 @@ const defaultAccounts: DefaultAccount[] = [
     nature: "debit",
     level: 1,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "61",
@@ -486,7 +442,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "6",
     level: 2,
     isGroup: true,
-    allowPosting: false,
   },
   {
     code: "611",
@@ -496,7 +451,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "612",
@@ -506,7 +460,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "613",
@@ -516,7 +469,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "614",
@@ -526,7 +478,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "615",
@@ -536,7 +487,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "616",
@@ -546,7 +496,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
   {
     code: "617",
@@ -556,7 +505,6 @@ const defaultAccounts: DefaultAccount[] = [
     parentCode: "61",
     level: 3,
     isGroup: false,
-    allowPosting: true,
   },
 ];
 
@@ -565,15 +513,19 @@ const defaultAccounts: DefaultAccount[] = [
 // =====================================================
 
 function getAccountType(account: Account): AccountType {
-  return account.type || account.accountType || "asset";
+  return (account.type || account.accountType || "asset") as AccountType;
 }
 
 function sortAccounts(accounts: Account[]): Account[] {
   return [...accounts].sort((a, b) =>
-    a.code.localeCompare(b.code, undefined, {
+    String(a.code ?? "").localeCompare(String(b.code ?? ""), undefined, {
       numeric: true,
     }),
   );
+}
+
+function isAccountActive(account: Account): boolean {
+  return account.isActive !== false && account.status !== "inactive";
 }
 
 // =====================================================
@@ -590,6 +542,7 @@ function generateAccountCode(
   }
 
   const parentId = String(parent.id || "");
+  const parentCode = String(parent.code || "");
 
   const children = allAccounts.filter(
     (account) => String(account.parentId || "") === parentId,
@@ -598,8 +551,7 @@ function generateAccountCode(
   const usedNumbers = new Set<number>();
 
   children.forEach((account) => {
-    const code = String(account.code);
-    const parentCode = String(parent.code);
+    const code = String(account.code || "");
 
     if (!code.startsWith(parentCode)) return;
 
@@ -614,14 +566,13 @@ function generateAccountCode(
     }
   });
 
-  // اختيار أول رقم غير مستخدم بدلاً من أكبر رقم + 1
   let nextNumber = 1;
 
   while (usedNumbers.has(nextNumber)) {
     nextNumber++;
   }
 
-  return `${parent.code}${nextNumber}`;
+  return `${parentCode}${nextNumber}`;
 }
 
 // =====================================================
@@ -633,9 +584,15 @@ function getCurrentUsername(): string {
     .split(";")
     .find((item) => item.trim().startsWith("username="));
 
-  const cookieUsername = cookie
-    ? decodeURIComponent(cookie.split("=").slice(1).join("="))
-    : "";
+  let cookieUsername = "";
+
+  try {
+    cookieUsername = cookie
+      ? decodeURIComponent(cookie.split("=").slice(1).join("="))
+      : "";
+  } catch {
+    cookieUsername = "";
+  }
 
   let storedUser: Partial<User> | null = null;
 
@@ -687,43 +644,36 @@ export default function CreateAccountPage() {
   // ===================================================
 
   const getCurrentUser = useCallback(async (): Promise<CurrentUser | null> => {
-    try {
-      const username = getCurrentUsername();
+    const username = getCurrentUsername();
 
-      if (!username) {
-        throw new Error("لم يتم العثور على المستخدم الحالي");
-      }
-
-      const currentUser = await getUserByUsername(username);
-
-      if (!currentUser) {
-        throw new Error("المستخدم غير موجود");
-      }
-
-      if (currentUser.type === "platform" || !currentUser.companyId) {
-        throw new Error("هذا الحساب غير مرتبط بمؤسسة");
-      }
-
-      if (currentUser.isActive === false || currentUser.status !== "active") {
-        throw new Error("حساب المستخدم غير نشط");
-      }
-
-      return {
-        id: String(currentUser.id || ""),
-        name: currentUser.name,
-        username: currentUser.username,
-        companyId: String(currentUser.companyId),
-        companyname: currentUser.companyname,
-      };
-    } catch (error) {
-      console.error("Get current user error:", error);
-
-      toast.error(
-        error instanceof Error ? error.message : "تعذر تحديد المستخدم الحالي",
-      );
-
-      return null;
+    if (!username) {
+      throw new Error("لم يتم العثور على المستخدم الحالي");
     }
+
+    const currentUser = await getUserByUsername(username);
+
+    if (!currentUser) {
+      throw new Error("المستخدم غير موجود");
+    }
+
+    if (currentUser.type === "platform" || !currentUser.companyId) {
+      throw new Error("هذا الحساب غير مرتبط بمؤسسة");
+    }
+
+    if (
+      currentUser.isActive === false ||
+      (currentUser.status && currentUser.status !== "active")
+    ) {
+      throw new Error("حساب المستخدم غير نشط");
+    }
+
+    return {
+      id: String(currentUser.id || ""),
+      name: currentUser.name,
+      username: currentUser.username,
+      companyId: String(currentUser.companyId),
+      companyname: currentUser.companyname,
+    };
   }, []);
 
   // ===================================================
@@ -731,16 +681,21 @@ export default function CreateAccountPage() {
   // ===================================================
 
   const fetchAccounts = useCallback(
-    async (companyId: string): Promise<Account[]> => {
+    async (
+      companyId: string,
+      isCurrent: () => boolean = () => true,
+    ): Promise<Account[]> => {
       const result = await getAccounts(companyId);
 
       const companyAccounts = result.filter(
-        (account) => String(account.companyId) === String(companyId),
+        (account: Account) => String(account.companyId) === String(companyId),
       );
 
       const sorted = sortAccounts(companyAccounts);
 
-      setAccounts(sorted);
+      if (isCurrent()) {
+        setAccounts(sorted);
+      }
 
       return sorted;
     },
@@ -751,31 +706,45 @@ export default function CreateAccountPage() {
   // Load Data
   // ===================================================
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(
+    async (isCurrent: () => boolean = () => true) => {
+      try {
+        const currentUser = await getCurrentUser();
 
-    try {
-      const currentUser = await getCurrentUser();
+        if (!isCurrent()) return;
 
-      if (!currentUser) {
-        setUser(null);
-        return;
+        setUser(currentUser);
+
+        await fetchAccounts(currentUser.companyId, isCurrent);
+      } catch (error) {
+        console.error("Load data error:", error);
+
+        if (isCurrent()) {
+          setUser(null);
+
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "تعذر تحميل بيانات المؤسسة",
+          );
+        }
+      } finally {
+        if (isCurrent()) {
+          setLoading(false);
+        }
       }
-
-      setUser(currentUser);
-
-      await fetchAccounts(currentUser.companyId);
-    } catch (error) {
-      console.error("Load data error:", error);
-
-      toast.error("تعذر تحميل الحسابات");
-    } finally {
-      setLoading(false);
-    }
-  }, [getCurrentUser, fetchAccounts]);
+    },
+    [getCurrentUser, fetchAccounts],
+  );
 
   useEffect(() => {
-    loadData();
+    let ignore = false;
+
+    loadData(() => !ignore);
+
+    return () => {
+      ignore = true;
+    };
   }, [loadData]);
 
   // ===================================================
@@ -794,7 +763,7 @@ export default function CreateAccountPage() {
 
   const parentAccounts = useMemo(() => {
     return selectedTypeAccounts.filter(
-      (account) => account.isGroup && account.isActive !== false && account.id,
+      (account) => account.isGroup && isAccountActive(account) && account.id,
     );
   }, [selectedTypeAccounts]);
 
@@ -815,6 +784,13 @@ export default function CreateAccountPage() {
   const suggestedCode = useMemo(() => {
     return generateAccountCode(selectedParent, accounts, selectedCategory);
   }, [selectedParent, accounts, selectedCategory]);
+
+  // ===================================================
+  // Selected Nature
+  // ===================================================
+
+  const selectedNature = (selectedParent?.nature ||
+    selectedCategory.nature) as AccountNature;
 
   // ===================================================
   // Handle Change
@@ -846,7 +822,7 @@ export default function CreateAccountPage() {
   // ===================================================
 
   const addDefaultAccounts = async () => {
-    if (!user?.companyId) {
+    if (!user?.companyId || addingDefaults) {
       toast.error("لم يتم تحديد المؤسسة");
       return;
     }
@@ -854,16 +830,22 @@ export default function CreateAccountPage() {
     try {
       setAddingDefaults(true);
 
-      // جلب أحدث البيانات قبل الإضافة
+      // جلب أحدث الحسابات من Supabase
+
       const existingAccounts = await getAccounts(user.companyId);
 
       const companyAccounts = existingAccounts.filter(
-        (account) => String(account.companyId) === String(user.companyId),
+        (account: Account) =>
+          String(account.companyId) === String(user.companyId),
       );
 
+      // تحديد أرقام الحسابات الموجودة
+
       const existingCodes = new Set(
-        companyAccounts.map((account) => String(account.code)),
+        companyAccounts.map((account: Account) => String(account.code)),
       );
+
+      // تحديد الحسابات الناقصة فقط
 
       const missingAccounts = defaultAccounts.filter(
         (account) => !existingCodes.has(account.code),
@@ -873,75 +855,75 @@ export default function CreateAccountPage() {
         setAccounts(sortAccounts(companyAccounts));
 
         toast.info("جميع الحسابات الافتراضية موجودة بالفعل");
+
         return;
       }
 
-      // خريطة تربط رقم الحساب بمعرفه
+      // خريطة أرقام الحسابات ومعرفاتها
+
       const accountIds = new Map<string, string>();
 
       // الاحتفاظ بمعرفات الحسابات الموجودة
-      defaultAccounts.forEach((account) => {
-        const existing = companyAccounts.find(
-          (item) => String(item.code) === account.code,
-        );
 
-        if (existing?.id) {
-          accountIds.set(account.code, String(existing.id));
+      companyAccounts.forEach((account: Account) => {
+        if (account.id && account.code) {
+          accountIds.set(String(account.code), String(account.id));
         }
       });
 
-      // إنشاء معرفات للحسابات الجديدة
-      missingAccounts.forEach((account) => {
-        accountIds.set(account.code, crypto.randomUUID());
+      // ترتيب الحسابات حسب المستوى
+
+      const sortedMissing = [...missingAccounts].sort((a, b) => {
+        if (a.level !== b.level) {
+          return a.level - b.level;
+        }
+
+        return a.code.localeCompare(b.code, undefined, { numeric: true });
       });
 
-      // ترتيب الحسابات حسب المستوى لضمان إنشاء الأب قبل الابن
-      const sortedMissing = [...missingAccounts].sort(
-        (a, b) => a.level - b.level,
-      );
-
       let created = 0;
+
+      // إنشاء الحسابات واحداً تلو الآخر
 
       for (const account of sortedMissing) {
         const parentId = account.parentCode
           ? accountIds.get(account.parentCode)
-          : undefined;
+          : null;
 
-        // لا ننشئ حساباً فرعياً إذا لم نجد الأب
         if (account.parentCode && !parentId) {
           throw new Error(`تعذر تحديد الحساب الأب للحساب ${account.code}`);
         }
 
+        // لا ننشئ معرفاً يدوياً.
+        // Supabase يعيد معرف الحساب بعد الحفظ.
+
         const accountData = {
-          id: accountIds.get(account.code),
-
           companyId: user.companyId,
-
           code: account.code,
           name: account.name,
-
           type: account.type,
-          accountType: account.type,
-
           nature: account.nature,
-
           parentId: parentId || null,
-          parentCode: account.parentCode,
-
-          level: account.level,
-
           isGroup: account.isGroup,
-          allowPosting: account.allowPosting,
-
-          isActive: true,
-          balance: 0,
-
           isSystem: true,
-
-          createdAt: new Date().toISOString(),
+          isActive: true,
+          status: "active",
+          accountType: account.type,
+          parentCode: account.parentCode || null,
+          level: account.level,
+          allowPosting: !account.isGroup,
+          balance: 0,
         };
 
-        await createAccountApi(accountData);
+        const createdAccount = await createAccountApi(accountData);
+
+        if (!createdAccount?.id) {
+          throw new Error(`لم يتم إرجاع معرف الحساب ${account.code} بعد الحفظ`);
+        }
+
+        // استخدام المعرف الحقيقي للحساب الأبناء
+
+        accountIds.set(account.code, String(createdAccount.id));
 
         created++;
       }
@@ -952,15 +934,18 @@ export default function CreateAccountPage() {
     } catch (error) {
       console.error("Add default accounts error:", error);
 
-      // تحديث البيانات لمعرفة ما تم حفظه فعلياً
+      // تحديث البيانات حتى لو فشلت عملية جزئية
+
       try {
         await fetchAccounts(user.companyId);
       } catch (fetchError) {
-        console.error(fetchError);
+        console.error("Refresh accounts error:", fetchError);
       }
 
       toast.error(
-        "حدث خطأ أثناء إضافة الحسابات. تحقق من الحسابات المحفوظة قبل إعادة المحاولة.",
+        error instanceof Error
+          ? `تعذر إكمال الإضافة: ${error.message}`
+          : "حدث خطأ أثناء إضافة الحسابات. تحقق من الحسابات المحفوظة قبل إعادة المحاولة.",
       );
     } finally {
       setAddingDefaults(false);
@@ -979,6 +964,8 @@ export default function CreateAccountPage() {
       return;
     }
 
+    if (saving) return;
+
     const name = form.name.trim();
 
     if (!name) {
@@ -986,36 +973,32 @@ export default function CreateAccountPage() {
       return;
     }
 
-    // التحقق من تكرار رقم الحساب
-    const codeExists = accounts.some(
-      (account) => String(account.code) === String(suggestedCode),
-    );
-
-    if (codeExists) {
-      toast.error(
-        "رقم الحساب المقترح موجود بالفعل. حدّث البيانات وحاول مرة أخرى.",
-      );
-
-      return;
-    }
-
     // التحقق من الحساب الأب
+
     if (form.parentId && !selectedParent) {
       toast.error("الحساب الأب المحدد غير موجود");
       return;
     }
 
+    if (selectedParent && !isAccountActive(selectedParent)) {
+      toast.error("لا يمكن الإضافة تحت حساب غير نشط");
+      return;
+    }
+
     if (selectedParent && !selectedParent.isGroup) {
       toast.error("لا يمكن إضافة حساب فرعي تحت حساب تفصيلي");
+
       return;
     }
 
     if (selectedParent && getAccountType(selectedParent) !== form.type) {
       toast.error("يجب أن يكون الحساب الأب من التصنيف نفسه");
+
       return;
     }
 
     // التحقق من وجود الحساب الرئيسي
+
     if (!selectedParent) {
       const rootExists = accounts.some(
         (account) =>
@@ -1032,39 +1015,47 @@ export default function CreateAccountPage() {
       }
     }
 
+    // التحقق من تكرار رقم الحساب
+
+    const codeExists = accounts.some(
+      (account) => String(account.code) === String(suggestedCode),
+    );
+
+    if (codeExists) {
+      toast.error(
+        "رقم الحساب المقترح موجود بالفعل. حدّث البيانات وحاول مرة أخرى.",
+      );
+
+      return;
+    }
+
     try {
       setSaving(true);
 
       const accountData = {
         companyId: user.companyId,
-
         code: suggestedCode,
         name,
-
         type: form.type,
-        accountType: form.type,
-
-        nature: selectedCategory.nature,
-
+        nature: selectedNature,
         parentId: selectedParent?.id || null,
-        parentCode: selectedParent?.code,
-
-        level: selectedParent ? (selectedParent.level || 1) + 1 : 1,
-
         isGroup: form.isGroup,
-        allowPosting: !form.isGroup,
-
-        isActive: true,
-        balance: 0,
-
-        description: form.description.trim(),
-
         isSystem: false,
-
-        createdAt: new Date().toISOString(),
+        isActive: true,
+        status: "active",
+        accountType: form.type,
+        parentCode: selectedParent?.code || null,
+        level: Number(selectedParent?.level ?? 0) + 1,
+        allowPosting: !form.isGroup,
+        balance: 0,
+        description: form.description.trim() || undefined,
       };
 
-      await createAccountApi(accountData);
+      const createdAccount = await createAccountApi(accountData);
+
+      if (!createdAccount?.id) {
+        throw new Error("لم يتم إرجاع معرف الحساب بعد الحفظ");
+      }
 
       toast.success(`تم إنشاء الحساب ${suggestedCode} بنجاح`);
 
@@ -1078,7 +1069,9 @@ export default function CreateAccountPage() {
     } catch (error) {
       console.error("Create account error:", error);
 
-      toast.error("حدث خطأ أثناء إنشاء الحساب");
+      toast.error(
+        error instanceof Error ? error.message : "حدث خطأ أثناء إنشاء الحساب",
+      );
     } finally {
       setSaving(false);
     }
@@ -1103,6 +1096,7 @@ export default function CreateAccountPage() {
       const accountId = String(account.id);
 
       // منع الدوران في العلاقات الهرمية
+
       if (visited.has(accountId)) {
         return null;
       }
@@ -1291,12 +1285,7 @@ export default function CreateAccountPage() {
             <p className="text-sm text-gray-500">الحسابات التفصيلية</p>
 
             <p className="mt-3 text-2xl font-bold text-[#0E1F33]">
-              {
-                accounts.filter(
-                  (account) =>
-                    !account.isGroup && account.allowPosting !== false,
-                ).length
-              }
+              {accounts.filter((account) => !account.isGroup).length}
             </p>
           </div>
         </div>
@@ -1383,7 +1372,7 @@ export default function CreateAccountPage() {
                 <span className="rounded-lg bg-white px-3 py-2 text-gray-600">
                   الطبيعة:{" "}
                   <strong>
-                    {selectedCategory.nature === "debit" ? "مدين" : "دائن"}
+                    {selectedNature === "debit" ? "مدين" : "دائن"}
                   </strong>
                 </span>
 
@@ -1444,13 +1433,12 @@ export default function CreateAccountPage() {
               </p>
 
               <p className="mt-2 text-sm text-gray-600">
-                {selectedCategory.nature === "debit"
-                  ? "مدين (Debit)"
-                  : "دائن (Credit)"}
+                {selectedNature === "debit" ? "مدين (Debit)" : "دائن (Credit)"}
               </p>
 
               <p className="mt-1 text-xs text-gray-400">
-                يحدد النظام طبيعة الحساب تلقائياً بناءً على تصنيفه.
+                يرث الحساب الفرعي طبيعة الحساب الأب، أو يستخدم طبيعة التصنيف عند
+                إنشاء حساب رئيسي.
               </p>
             </div>
 
@@ -1469,6 +1457,10 @@ export default function CreateAccountPage() {
                 placeholder="وصف الحساب..."
                 className="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-sm outline-none focus:border-blue-500"
               />
+              <p className="mt-1 text-xs text-gray-400">
+                لم تتم إضافة الوصف إلى طلب الحفظ؛ لأن وجود عمود description في
+                جدول Supabase لم يتم تأكيده بعد.
+              </p>
             </div>
 
             {/* Submit */}
@@ -1567,7 +1559,7 @@ export default function CreateAccountPage() {
                 );
               })}
 
-              {/* الحسابات التي لا تملك حساباً أباً صالحاً */}
+              {/* Orphan Accounts */}
 
               {accounts.some((account) => {
                 if (!account.parentId) return false;

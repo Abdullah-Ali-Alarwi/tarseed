@@ -1,202 +1,157 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
 import { toast } from "sonner";
-
 import {
   FiRefreshCw,
   FiPrinter,
   FiSearch,
-  FiAlertCircle,
-  FiCheckCircle,
   FiChevronDown,
   FiChevronLeft,
+  FiCheckCircle,
+  FiAlertCircle,
+  FiCalendar,
   FiDollarSign,
   FiTrendingUp,
   FiTrendingDown,
-  FiBriefcase,
-  FiCalendar,
-  FiFileText,
+  FiPieChart,
 } from "react-icons/fi";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+// =====================================================
+// TYPES
+// =====================================================
 
-// ==========================================
-// Types
-// ==========================================
-
-type AccountType =
-  | "asset"
-  | "liability"
-  | "equity"
-  | "revenue"
-  | "expense"
-  | string;
+type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
 
 interface CurrentUser {
-  id: string | number;
+  id: string;
+  username: string;
   name?: string;
   fullName?: string;
-  username: string;
   type?: string;
-  companyId?: string | number;
-}
-
-interface Company {
-  id: string | number;
-  name?: string;
+  companyId?: string;
   companyName?: string;
+  isActive?: boolean;
+  status?: string;
 }
 
 interface Account {
-  id: string | number;
-  companyId: string | number;
+  id: string;
+  companyId: string;
   code: string;
   name: string;
-  nameEn?: string;
-
   type: AccountType;
-  nature?: "debit" | "credit" | string;
-
-  parentId?: string | number | null;
-
+  nature?: "debit" | "credit";
+  parentId?: string | null;
   isGroup?: boolean;
-  allowPosting?: boolean;
+  isSystem?: boolean;
+  systemKey?: string;
   isActive?: boolean;
-}
-
-interface OpeningEntry {
-  id: string | number;
-  companyId: string | number;
-  accountId: string | number;
-
-  date?: string;
-
-  debit?: number;
-  credit?: number;
-
   status?: string;
-  isPosted?: boolean;
+  extra?: Record<string, unknown> | null;
 }
 
 interface Journal {
-  id: string | number;
-  companyId?: string | number;
-
-  date?: string;
-  status?: string;
-  isPosted?: boolean;
+  id: string;
+  companyId: string;
+  date: string;
+  status: string;
+  journalNumber?: string;
+  description?: string;
 }
 
 interface JournalLine {
-  id: string | number;
-
-  companyId?: string | number;
-  journalId?: string | number;
-
-  accountId: string | number;
-
-  date?: string;
-
-  debit?: number;
-  credit?: number;
+  id: string;
+  journalId: string;
+  accountId: string;
+  companyId: string;
+  debit: number;
+  credit: number;
 }
 
-interface AccountBalance {
+interface OpeningEntry {
+  id: string;
+  companyId: string;
+  extra: Record<string, unknown> | null;
+}
+
+interface Balance {
   debit: number;
   credit: number;
   net: number;
 }
 
 interface ReportAccount extends Account {
-  balance: AccountBalance;
+  balance: Balance;
   children: ReportAccount[];
 }
 
-interface FinancialSection {
-  accounts: ReportAccount[];
-  total: number;
+interface FlatAccount {
+  account: ReportAccount;
+  level: number;
 }
 
-// ==========================================
-// Helpers
-// ==========================================
+// =====================================================
+// HELPERS
+// =====================================================
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
 
-  const cookie = document.cookie
+  const item = document.cookie
     .split("; ")
-    .find((item) => item.startsWith(`${name}=`));
+    .find((cookie) => cookie.startsWith(`${name}=`));
 
-  if (!cookie) return null;
+  if (!item) return null;
 
-  return decodeURIComponent(cookie.substring(name.length + 1));
+  return decodeURIComponent(item.substring(name.length + 1));
 }
 
 function getTodayDate() {
   const date = new Date();
 
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
 
-  return `${year}-${month}-${day}`;
+function getFirstDayOfYear(date: string) {
+  return `${date.substring(0, 4)}-01-01`;
 }
 
 function toNumber(value: unknown): number {
   const number = Number(value);
-
   return Number.isFinite(number) ? number : 0;
 }
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value || 0);
+function createEmptyBalance(): Balance {
+  return {
+    debit: 0,
+    credit: 0,
+    net: 0,
+  };
 }
 
-function normalizeType(type: unknown): string {
-  const value = String(type || "")
-    .trim()
-    .toLowerCase();
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("ar-YE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
 
-  const types: Record<string, string> = {
-    asset: "asset",
-    assets: "asset",
-    أصل: "asset",
-    أصول: "asset",
+function normalizeDate(value: unknown): string {
+  if (!value) return "";
 
-    liability: "liability",
-    liabilities: "liability",
-    التزام: "liability",
-    الالتزامات: "liability",
+  return String(value).substring(0, 10);
+}
 
-    equity: "equity",
-    "حقوق الملكية": "equity",
-    "حقوق الملكيه": "equity",
-
-    revenue: "revenue",
-    income: "revenue",
-    إيراد: "revenue",
-    الإيرادات: "revenue",
-
-    expense: "expense",
-    expenses: "expense",
-    مصروف: "expense",
-    المصروفات: "expense",
-  };
-
-  return types[value] || value;
+function getUsername() {
+  return getCookie("username")?.trim() || "";
 }
 
 function getAccountTypeName(type: string) {
@@ -208,48 +163,61 @@ function getAccountTypeName(type: string) {
     expense: "المصروفات",
   };
 
-  return names[normalizeType(type)] || type;
+  return names[type] || type;
 }
 
-function createEmptyBalance(): AccountBalance {
-  return {
-    debit: 0,
-    credit: 0,
-    net: 0,
-  };
+function getBalanceSheetNature(
+  account: Account,
+  debit: number,
+  credit: number,
+) {
+  const nature =
+    account.nature || (account.type === "asset" ? "debit" : "credit");
+
+  return nature === "debit" ? debit - credit : credit - debit;
 }
 
-function isPostedStatus(status?: string) {
-  if (!status) return true;
-
-  return ["posted", "approved", "مُرحّل", "مرحل", "معتمد"].includes(status);
+function isActiveAccount(account: Account) {
+  return account.isActive !== false && account.status !== "inactive";
 }
 
-function isValidDate(date?: string, asOfDate?: string) {
-  if (!date || !asOfDate) return false;
-
-  return date.substring(0, 10) <= asOfDate;
+function isPostedJournal(journal: Journal) {
+  return journal.status === "posted";
 }
 
-// ==========================================
-// Account balance helper
-// ==========================================
+// =====================================================
+// SUPABASE PAGINATION
+// =====================================================
 
-function calculateAccountNet(account: Account, debit: number, credit: number) {
-  const type = normalizeType(account.type);
+async function fetchAllRows<T>(table: string, companyId: string): Promise<T[]> {
+  const pageSize = 1000;
+  let from = 0;
+  let allRows: T[] = [];
 
-  // الأصول والمصروفات طبيعتها مدينة
-  if (type === "asset" || type === "expense") {
-    return debit - credit;
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("companyId", companyId)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const rows = (data || []) as T[];
+
+    allRows = allRows.concat(rows);
+
+    if (rows.length < pageSize) break;
+
+    from += pageSize;
   }
 
-  // الالتزامات وحقوق الملكية والإيرادات طبيعتها دائنة
-  return credit - debit;
+  return allRows;
 }
 
-// ==========================================
-// Page
-// ==========================================
+// =====================================================
+// PAGE
+// =====================================================
 
 export default function BalanceSheetPage() {
   const [loading, setLoading] = useState(true);
@@ -259,21 +227,20 @@ export default function BalanceSheetPage() {
   const [companyName, setCompanyName] = useState("");
 
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [openingEntries, setOpeningEntries] = useState<OpeningEntry[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
   const [journalLines, setJournalLines] = useState<JournalLine[]>([]);
+  const [openingEntries, setOpeningEntries] = useState<OpeningEntry[]>([]);
 
   const [asOfDate, setAsOfDate] = useState(getTodayDate());
 
   const [search, setSearch] = useState("");
+  const [showZeroBalances, setShowZeroBalances] = useState(false);
 
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
-  const [showZeroBalances, setShowZeroBalances] = useState(false);
-
-  // ==========================================
-  // Load Data
-  // ==========================================
+  // =====================================================
+  // LOAD DATA
+  // =====================================================
 
   const loadData = useCallback(async (showRefresh = false) => {
     try {
@@ -283,28 +250,27 @@ export default function BalanceSheetPage() {
         setLoading(true);
       }
 
-      const username = getCookie("username");
+      const username = getUsername();
 
       if (!username) {
         toast.error("يرجى تسجيل الدخول أولاً");
         return;
       }
 
-      const usersResponse = await api.get<CurrentUser[]>("/users", {
-        params: { username },
-      });
-
-      const user = usersResponse.data.find(
-        (item) => item.username === username,
-      );
+      const user = (await getUserByUsername(username)) as CurrentUser | null;
 
       if (!user) {
-        toast.error("تعذر العثور على المستخدم");
+        toast.error("تعذر العثور على بيانات المستخدم");
         return;
       }
 
       if (user.type === "platform") {
         toast.error("لا يمكن لمستخدم المنصة الدخول إلى تقارير الشركة");
+        return;
+      }
+
+      if (user.isActive === false || user.status === "inactive") {
+        toast.error("حساب المستخدم غير نشط");
         return;
       }
 
@@ -317,92 +283,40 @@ export default function BalanceSheetPage() {
 
       setCompanyId(currentCompanyId);
 
-      // الشركة
-      const companiesResponse = await api.get<Company[]>("/companies", {
-        params: { id: currentCompanyId },
-      });
+      const [accountsData, journalsData, journalLinesData, openingEntriesData] =
+        await Promise.all([
+          fetchAllRows<Account>("accounts", currentCompanyId),
+          fetchAllRows<Journal>("journals", currentCompanyId),
+          fetchAllRows<JournalLine>("journalLines", currentCompanyId),
+          fetchAllRows<OpeningEntry>("openingEntries", currentCompanyId),
+        ]);
 
-      const company = companiesResponse.data.find(
-        (item) => String(item.id) === currentCompanyId,
-      );
-
-      setCompanyName(
-        company?.name ||
-          company?.companyName ||
-          user.name ||
-          user.fullName ||
-          user.username,
-      );
-
-      // البيانات المحاسبية
-      const [
-        accountsResponse,
-        openingResponse,
-        journalsResponse,
-        journalLinesResponse,
-      ] = await Promise.all([
-        api.get<Account[]>("/accounts", {
-          params: { companyId: currentCompanyId },
-        }),
-
-        api.get<OpeningEntry[]>("/openingEntries", {
-          params: { companyId: currentCompanyId },
-        }),
-
-        api.get<Journal[]>("/journals", {
-          params: { companyId: currentCompanyId },
-        }),
-
-        api.get<JournalLine[]>("/journalLines", {
-          params: { companyId: currentCompanyId },
-        }),
-      ]);
-
-      // تصفية الحسابات حسب الشركة
-      const companyAccounts = accountsResponse.data.filter(
+      const companyAccounts = accountsData.filter(
         (account) =>
           String(account.companyId) === currentCompanyId &&
-          account.isActive !== false,
+          isActiveAccount(account),
       );
 
-      // الأرصدة الافتتاحية
-      const companyOpeningEntries = openingResponse.data.filter(
+      const companyJournals = journalsData.filter(
+        (journal) => String(journal.companyId) === currentCompanyId,
+      );
+
+      const companyJournalLines = journalLinesData.filter(
+        (line) => String(line.companyId) === currentCompanyId,
+      );
+
+      const companyOpeningEntries = openingEntriesData.filter(
         (entry) => String(entry.companyId) === currentCompanyId,
       );
 
-      // القيود الخاصة بالشركة
-      const companyJournals = journalsResponse.data.filter(
-        (journal) =>
-          journal.companyId == null ||
-          String(journal.companyId) === currentCompanyId,
-      );
-
-      const validJournalIds = new Set(
-        companyJournals.map((journal) => String(journal.id)),
-      );
-
-      // تفاصيل القيود
-      const companyJournalLines = journalLinesResponse.data.filter((line) => {
-        if (
-          line.companyId != null &&
-          String(line.companyId) !== currentCompanyId
-        ) {
-          return false;
-        }
-
-        if (line.journalId != null) {
-          return validJournalIds.has(String(line.journalId));
-        }
-
-        return (
-          line.companyId != null && String(line.companyId) === currentCompanyId
-        );
-      });
-
       setAccounts(companyAccounts);
-      setOpeningEntries(companyOpeningEntries);
       setJournals(companyJournals);
       setJournalLines(companyJournalLines);
+      setOpeningEntries(companyOpeningEntries);
+
+      setCompanyName(
+        user.companyName || user.name || user.fullName || "الشركة",
+      );
 
       setExpandedGroups(
         companyAccounts
@@ -412,7 +326,11 @@ export default function BalanceSheetPage() {
     } catch (error) {
       console.error("Balance sheet loading error:", error);
 
-      toast.error("حدث خطأ أثناء تحميل بيانات الميزانية العمومية");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "حدث خطأ أثناء تحميل الميزانية العمومية",
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -423,9 +341,9 @@ export default function BalanceSheetPage() {
     loadData();
   }, [loadData]);
 
-  // ==========================================
-  // Journal Map
-  // ==========================================
+  // =====================================================
+  // JOURNAL MAP
+  // =====================================================
 
   const journalMap = useMemo(() => {
     const map = new Map<string, Journal>();
@@ -437,92 +355,86 @@ export default function BalanceSheetPage() {
     return map;
   }, [journals]);
 
-  // ==========================================
-  // Calculate real account balances
-  // ==========================================
+  // =====================================================
+  // CALCULATE ACCOUNT BALANCES
+  // =====================================================
 
-  const accountBalances = useMemo(() => {
-    const balances = new Map<string, AccountBalance>();
+  const balanceMap = useMemo(() => {
+    const map = new Map<string, Balance>();
 
     accounts.forEach((account) => {
-      balances.set(String(account.id), createEmptyBalance());
+      map.set(String(account.id), createEmptyBalance());
     });
 
-    function addMovement(
-      accountId: string | number,
-      debitValue: number,
-      creditValue: number,
-    ) {
-      const balance = balances.get(String(accountId));
+    function addMovement(accountId: string, debit: number, credit: number) {
+      const balance = map.get(String(accountId));
 
       if (!balance) return;
 
-      balance.debit += toNumber(debitValue);
-      balance.credit += toNumber(creditValue);
+      balance.debit += toNumber(debit);
+      balance.credit += toNumber(credit);
     }
 
-    // ========================================
+    // -------------------------------------------------
     // Opening entries
-    // ========================================
+    // -------------------------------------------------
 
     openingEntries.forEach((entry) => {
-      if (!isValidDate(entry.date, asOfDate)) {
-        return;
-      }
+      if (String(entry.companyId) !== companyId) return;
 
-      if (entry.isPosted === false) return;
+      const extra = entry.extra;
 
-      if (entry.status && !isPostedStatus(entry.status)) {
-        return;
-      }
+      if (!extra || typeof extra !== "object") return;
 
-      addMovement(entry.accountId, entry.debit || 0, entry.credit || 0);
+      const accountId = String(extra.accountId || "");
+
+      const date = normalizeDate(extra.date);
+
+      if (!accountId || !date || date > asOfDate) return;
+
+      addMovement(accountId, toNumber(extra.debit), toNumber(extra.credit));
     });
 
-    // ========================================
-    // Posted journal lines
-    // ========================================
+    // -------------------------------------------------
+    // Posted journal entries
+    // -------------------------------------------------
 
     journalLines.forEach((line) => {
-      let journal: Journal | undefined;
+      if (String(line.companyId) !== companyId) return;
 
-      if (line.journalId != null) {
-        journal = journalMap.get(String(line.journalId));
+      const journal = journalMap.get(String(line.journalId));
 
-        if (!journal) return;
+      if (!journal) return;
 
-        if (journal.isPosted === false || !isPostedStatus(journal.status)) {
-          return;
-        }
-      }
+      if (String(journal.companyId) !== companyId) return;
 
-      const lineDate = line.date || journal?.date || "";
+      if (!isPostedJournal(journal)) return;
 
-      if (!isValidDate(lineDate, asOfDate)) {
-        return;
-      }
+      const journalDate = normalizeDate(journal.date);
 
-      addMovement(line.accountId, line.debit || 0, line.credit || 0);
+      if (!journalDate || journalDate > asOfDate) return;
+
+      addMovement(
+        String(line.accountId),
+        toNumber(line.debit),
+        toNumber(line.credit),
+      );
     });
 
-    // ========================================
-    // Calculate net balance
-    // ========================================
+    // -------------------------------------------------
+    // Net balance
+    // -------------------------------------------------
 
-    accounts.forEach((account) => {
-      const balance = balances.get(String(account.id));
-
-      if (!balance) return;
-
-      balance.net = calculateAccountNet(account, balance.debit, balance.credit);
+    map.forEach((balance) => {
+      balance.net = balance.debit - balance.credit;
     });
 
-    return balances;
-  }, [accounts, openingEntries, journalLines, journalMap, asOfDate]);
+    return map;
+  }, [accounts, openingEntries, journalLines, journalMap, companyId, asOfDate]);
 
-  // ==========================================
-  // Build account tree
-  // ==========================================
+  // =====================================================
+  // BUILD ACCOUNT TREE
+  // =====================================================
 
   const accountTree = useMemo(() => {
     const accountMap = new Map<string, ReportAccount>();
@@ -530,8 +442,7 @@ export default function BalanceSheetPage() {
     accounts.forEach((account) => {
       accountMap.set(String(account.id), {
         ...account,
-        balance:
-          accountBalances.get(String(account.id)) || createEmptyBalance(),
+        balance: balanceMap.get(String(account.id)) || createEmptyBalance(),
         children: [],
       });
     });
@@ -539,10 +450,10 @@ export default function BalanceSheetPage() {
     const roots: ReportAccount[] = [];
 
     accountMap.forEach((account) => {
-      if (account.parentId != null) {
+      if (account.parentId) {
         const parent = accountMap.get(String(account.parentId));
 
-        if (parent) {
+        if (parent && parent.id !== account.id) {
           parent.children.push(account);
         } else {
           roots.push(account);
@@ -564,146 +475,197 @@ export default function BalanceSheetPage() {
 
     sortAccounts(roots);
 
-    // جمع أرصدة الأبناء في الحسابات الرئيسية
-    function aggregate(account: ReportAccount): AccountBalance {
-      let debit = account.balance.debit;
-      let credit = account.balance.credit;
+    // Aggregate child balances into parent accounts.
+    // Prevent cyclic parent references from causing recursion.
+    function aggregate(account: ReportAccount, visited: Set<string>): Balance {
+      const id = String(account.id);
+
+      if (visited.has(id)) {
+        return createEmptyBalance();
+      }
+
+      const nextVisited = new Set(visited);
+      nextVisited.add(id);
+
+      const result = { ...account.balance };
 
       account.children.forEach((child) => {
-        const childBalance = aggregate(child);
+        const childBalance = aggregate(child, nextVisited);
 
-        debit += childBalance.debit;
-        credit += childBalance.credit;
+        result.debit += childBalance.debit;
+        result.credit += childBalance.credit;
+        result.net += childBalance.net;
       });
 
-      const net = calculateAccountNet(account, debit, credit);
+      account.balance = result;
 
-      account.balance = {
-        debit,
-        credit,
-        net,
-      };
-
-      return account.balance;
+      return result;
     }
 
-    roots.forEach(aggregate);
+    roots.forEach((root) => aggregate(root, new Set()));
 
     return roots;
-  }, [accounts, accountBalances]);
+  }, [accounts, balanceMap]);
 
-  // ==========================================
-  // Get leaf accounts only
-  // ==========================================
+  // =====================================================
+  // CURRENT YEAR PROFIT
+  // =====================================================
 
-  const leafAccounts = useMemo(() => {
-    const result: Account[] = [];
+  const currentYearProfit = useMemo(() => {
+    const yearStart = getFirstDayOfYear(asOfDate);
 
-    function walk(account: ReportAccount) {
-      if (account.children.length > 0) {
-        account.children.forEach(walk);
-      } else {
-        result.push(account);
+    let revenue = 0;
+    let expenses = 0;
+
+    accounts
+      .filter((account) => account.isGroup !== true)
+      .forEach((account) => {
+        if (account.type !== "revenue" && account.type !== "expense") {
+          return;
+        }
+
+        const balance = balanceMap.get(String(account.id));
+
+        if (!balance) return;
+
+        // Opening entries and journals before this year
+        // are not part of current-year profit.
+        let debit = 0;
+        let credit = 0;
+
+        openingEntries.forEach((entry) => {
+          const extra = entry.extra;
+
+          if (!extra || typeof extra !== "object") return;
+
+          if (String(extra.accountId) !== String(account.id)) return;
+
+          const date = normalizeDate(extra.date);
+
+          if (date < yearStart || date > asOfDate) return;
+
+          debit += toNumber(extra.debit);
+          credit += toNumber(extra.credit);
+        });
+
+        journalLines.forEach((line) => {
+          if (String(line.accountId) !== String(account.id)) return;
+
+          const journal = journalMap.get(String(line.journalId));
+
+          if (!journal || !isPostedJournal(journal)) return;
+
+          const date = normalizeDate(journal.date);
+
+          if (date < yearStart || date > asOfDate) return;
+
+          if (String(journal.companyId) !== companyId) return;
+
+          debit += toNumber(line.debit);
+          credit += toNumber(line.credit);
+        });
+
+        if (account.type === "revenue") {
+          revenue += credit - debit;
+        }
+
+        if (account.type === "expense") {
+          expenses += debit - credit;
+        }
+      });
+
+    return {
+      revenue,
+      expenses,
+      netProfit: revenue - expenses,
+    };
+  }, [
+    accounts,
+    balanceMap,
+    openingEntries,
+    journalLines,
+    journalMap,
+    companyId,
+    asOfDate,
+  ]);
+
+  // =====================================================
+  // CLASSIFY ACCOUNTS
+  // =====================================================
+
+  const classifiedAccounts = useMemo(() => {
+    const result = {
+      assets: [] as ReportAccount[],
+      liabilities: [] as ReportAccount[],
+      equity: [] as ReportAccount[],
+    };
+
+    accountTree.forEach((account) => {
+      if (account.type === "asset") {
+        result.assets.push(account);
       }
-    }
 
-    accountTree.forEach(walk);
+      if (account.type === "liability") {
+        result.liabilities.push(account);
+      }
+
+      if (account.type === "equity") {
+        result.equity.push(account);
+      }
+    });
 
     return result;
   }, [accountTree]);
 
-  // ==========================================
-  // Financial Sections
-  // ==========================================
+  // =====================================================
+  // CALCULATE SECTION TOTALS
+  // =====================================================
 
-  const financialData = useMemo(() => {
-    const sections = {
-      assets: [] as ReportAccount[],
-      liabilities: [] as ReportAccount[],
-      equity: [] as ReportAccount[],
-      revenues: [] as ReportAccount[],
-      expenses: [] as ReportAccount[],
-    };
+  function calculateSectionTotal(items: ReportAccount[]): number {
+    return items.reduce((total, account) => {
+      return total + account.balance.net;
+    }, 0);
+  }
 
-    leafAccounts.forEach((account) => {
-      const type = normalizeType(account.type);
+  const totalAssets = useMemo(
+    () => calculateSectionTotal(classifiedAccounts.assets),
+    [classifiedAccounts],
+  );
 
-      const reportAccount = accountTree
-        .flatMap(function flatten(item): ReportAccount[] {
-          return [item, ...item.children.flatMap(flatten)];
-        })
-        .find((item) => String(item.id) === String(account.id));
+  const totalLiabilities = useMemo(
+    () => calculateSectionTotal(classifiedAccounts.liabilities),
+    [classifiedAccounts],
+  );
 
-      if (!reportAccount) return;
+  const totalEquityAccounts = useMemo(
+    () => calculateSectionTotal(classifiedAccounts.equity),
+    [classifiedAccounts],
+  );
 
-      if (type === "asset") {
-        sections.assets.push(reportAccount);
-      } else if (type === "liability") {
-        sections.liabilities.push(reportAccount);
-      } else if (type === "equity") {
-        sections.equity.push(reportAccount);
-      } else if (type === "revenue") {
-        sections.revenues.push(reportAccount);
-      } else if (type === "expense") {
-        sections.expenses.push(reportAccount);
-      }
-    });
+  const totalEquity = totalEquityAccounts + currentYearProfit.netProfit;
 
-    const sum = (items: ReportAccount[]) =>
-      items.reduce((total, account) => total + account.balance.net, 0);
+  const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
 
-    const totalAssets = sum(sections.assets);
-    const totalLiabilities = sum(sections.liabilities);
-    const totalEquity = sum(sections.equity);
+  const difference = totalAssets - totalLiabilitiesAndEquity;
 
-    const totalRevenue = sum(sections.revenues);
-    const totalExpenses = sum(sections.expenses);
+  const isBalanced = Math.abs(difference) < 0.01;
 
-    const netProfit = totalRevenue - totalExpenses;
-
-    const equityWithProfit = totalEquity + netProfit;
-
-    const totalLiabilitiesAndEquity = totalLiabilities + equityWithProfit;
-
-    const difference = totalAssets - totalLiabilitiesAndEquity;
-
-    return {
-      sections,
-
-      totalAssets,
-      totalLiabilities,
-      totalEquity,
-
-      totalRevenue,
-      totalExpenses,
-
-      netProfit,
-      equityWithProfit,
-
-      totalLiabilitiesAndEquity,
-      difference,
-
-      isBalanced: Math.abs(difference) < 0.01,
-    };
-  }, [leafAccounts, accountTree]);
-
-  // ==========================================
-  // Search and visible tree
-  // ==========================================
+  // =====================================================
+  // FLATTEN TREE
+  // =====================================================
 
   const visibleAccounts = useMemo(() => {
-    const result: Array<{
-      account: ReportAccount;
-      level: number;
-    }> = [];
+    const result: FlatAccount[] = [];
 
     const query = search.trim().toLowerCase();
 
-    function hasMatch(account: ReportAccount): boolean {
-      return (
+    function hasSearchMatch(account: ReportAccount): boolean {
+      const ownMatch =
         String(account.code).toLowerCase().includes(query) ||
-        account.name.toLowerCase().includes(query) ||
-        account.children.some(hasMatch)
+        account.name.toLowerCase().includes(query);
+
+      return (
+        ownMatch || account.children.some((child) => hasSearchMatch(child))
       );
     }
 
@@ -712,7 +674,7 @@ export default function BalanceSheetPage() {
     }
 
     function walk(account: ReportAccount, level: number) {
-      if (query && !hasMatch(account)) return;
+      if (query && !hasSearchMatch(account)) return;
 
       if (!showZeroBalances && !query && !hasBalance(account)) {
         return;
@@ -722,8 +684,10 @@ export default function BalanceSheetPage() {
 
       const expanded = expandedGroups.includes(String(account.id));
 
-      if (account.children.length > 0 && (expanded || Boolean(query))) {
-        account.children.forEach((child) => walk(child, level + 1));
+      if (account.children.length > 0 && (expanded || query)) {
+        account.children.forEach((child) => {
+          walk(child, level + 1);
+        });
       }
     }
 
@@ -732,9 +696,27 @@ export default function BalanceSheetPage() {
     return result;
   }, [accountTree, search, showZeroBalances, expandedGroups]);
 
-  // ==========================================
-  // Expand / Collapse
-  // ==========================================
+  // =====================================================
+  // ACCOUNT DISPLAY VALUE
+  // =====================================================
+
+  function getDisplayBalance(account: ReportAccount) {
+    const value = account.balance.net;
+
+    return getBalanceSheetNature(
+      account,
+      account.balance.debit,
+      account.balance.credit,
+    ) === 0
+      ? 0
+      : account.nature === "credit"
+        ? -value
+        : value;
+  }
+
+  // =====================================================
+  // TOGGLE GROUP
+  // =====================================================
 
   function toggleGroup(id: string) {
     setExpandedGroups((previous) =>
@@ -744,17 +726,17 @@ export default function BalanceSheetPage() {
     );
   }
 
-  // ==========================================
-  // Print
-  // ==========================================
+  // =====================================================
+  // PRINT
+  // =====================================================
 
   function handlePrint() {
     window.print();
   }
 
-  // ==========================================
-  // Loading
-  // ==========================================
+  // =====================================================
+  // LOADING
+  // =====================================================
 
   if (loading) {
     return (
@@ -767,13 +749,13 @@ export default function BalanceSheetPage() {
     );
   }
 
-  // ==========================================
+  // =====================================================
   // UI
-  // ==========================================
+  // =====================================================
 
   return (
-    <div dir="rtl" className="space-y-6 p-4 md:p-6">
-      {/* Header */}
+    <main dir="rtl" className="space-y-6 p-4 md:p-6">
+      {/* HEADER */}
 
       <div className="flex flex-wrap items-center justify-between gap-4 print:hidden">
         <div>
@@ -782,7 +764,7 @@ export default function BalanceSheetPage() {
           </h1>
 
           <p className="mt-2 text-sm text-gray-500">
-            قائمة المركز المالي للشركة حتى تاريخ محدد.
+            عرض المركز المالي للشركة من الأصول والالتزامات وحقوق الملكية.
           </p>
         </div>
 
@@ -791,7 +773,7 @@ export default function BalanceSheetPage() {
             type="button"
             onClick={() => loadData(true)}
             disabled={refreshing}
-            className="flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
           >
             <FiRefreshCw className={refreshing ? "animate-spin" : ""} />
             تحديث
@@ -800,7 +782,7 @@ export default function BalanceSheetPage() {
           <button
             type="button"
             onClick={handlePrint}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition hover:bg-blue-700"
           >
             <FiPrinter />
             طباعة
@@ -808,25 +790,25 @@ export default function BalanceSheetPage() {
         </div>
       </div>
 
-      {/* Print Header */}
+      {/* PRINT HEADER */}
 
       <div className="hidden text-center print:block">
         <h1 className="text-2xl font-bold">{companyName}</h1>
 
         <h2 className="mt-2 text-xl font-bold">الميزانية العمومية</h2>
 
-        <p className="mt-2 text-sm">كما في تاريخ {asOfDate}</p>
+        <p className="mt-2 text-sm">كما في تاريخ: {asOfDate}</p>
       </div>
 
-      {/* Filters */}
+      {/* FILTERS */}
 
-      <div className="rounded-xl border border-gray-200 bg-white p-5 print:hidden">
+      <section className="rounded-xl border border-gray-200 bg-white p-5 print:hidden">
         <h2 className="mb-4 font-bold text-gray-800">خيارات التقرير</h2>
 
         <div className="grid gap-4 md:grid-cols-3">
           <div>
             <label className="mb-2 block text-sm text-gray-600">
-              كما في تاريخ
+              الميزانية كما في تاريخ
             </label>
 
             <div className="relative">
@@ -836,7 +818,7 @@ export default function BalanceSheetPage() {
                 type="date"
                 value={asOfDate}
                 max={getTodayDate()}
-                onChange={(e) => setAsOfDate(e.target.value)}
+                onChange={(event) => setAsOfDate(event.target.value)}
                 className="w-full rounded-lg border border-gray-300 py-2.5 pr-9 pl-3 outline-none focus:border-blue-500"
               />
             </div>
@@ -853,7 +835,7 @@ export default function BalanceSheetPage() {
               <input
                 type="text"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(event) => setSearch(event.target.value)}
                 placeholder="رقم الحساب أو اسمه"
                 className="w-full rounded-lg border border-gray-300 py-2.5 pr-9 pl-3 outline-none focus:border-blue-500"
               />
@@ -865,19 +847,19 @@ export default function BalanceSheetPage() {
               <input
                 type="checkbox"
                 checked={showZeroBalances}
-                onChange={(e) => setShowZeroBalances(e.target.checked)}
+                onChange={(event) => setShowZeroBalances(event.target.checked)}
                 className="h-4 w-4"
               />
               إظهار الحسابات ذات الرصيد الصفري
             </label>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Company Information */}
+      {/* COMPANY INFORMATION */}
 
-      <div className="rounded-xl border border-gray-200 bg-white p-5">
-        <div className="grid gap-4 sm:grid-cols-3">
+      <section className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <p className="text-xs text-gray-500">الشركة</p>
 
@@ -885,63 +867,55 @@ export default function BalanceSheetPage() {
           </div>
 
           <div>
-            <p className="text-xs text-gray-500">تاريخ التقرير</p>
+            <p className="text-xs text-gray-500">تاريخ الميزانية</p>
 
             <p className="mt-1 font-semibold text-gray-800">{asOfDate}</p>
           </div>
-
-          <div>
-            <p className="text-xs text-gray-500">عدد الحسابات</p>
-
-            <p className="mt-1 font-semibold text-gray-800">
-              {accounts.length}
-            </p>
-          </div>
         </div>
-      </div>
+      </section>
 
-      {/* Summary Cards */}
+      {/* SUMMARY CARDS */}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           title="إجمالي الأصول"
-          value={financialData.totalAssets}
+          value={totalAssets}
+          icon={<FiDollarSign />}
           color="blue"
-          icon={<FiBriefcase />}
         />
 
         <SummaryCard
           title="إجمالي الالتزامات"
-          value={financialData.totalLiabilities}
-          color="orange"
+          value={totalLiabilities}
           icon={<FiTrendingDown />}
+          color="orange"
         />
 
         <SummaryCard
-          title="حقوق الملكية"
-          value={financialData.equityWithProfit}
+          title="إجمالي حقوق الملكية"
+          value={totalEquity}
+          icon={<FiPieChart />}
           color="purple"
-          icon={<FiDollarSign />}
         />
 
         <SummaryCard
-          title="صافي الربح / الخسارة"
-          value={financialData.netProfit}
-          color={financialData.netProfit >= 0 ? "green" : "red"}
+          title="صافي ربح السنة الحالية"
+          value={currentYearProfit.netProfit}
           icon={<FiTrendingUp />}
+          color="green"
         />
-      </div>
+      </section>
 
-      {/* Balance Status */}
+      {/* BALANCE STATUS */}
 
-      <div
+      <section
         className={`flex items-center gap-3 rounded-xl border p-4 ${
-          financialData.isBalanced
+          isBalanced
             ? "border-green-200 bg-green-50"
             : "border-red-200 bg-red-50"
         }`}
       >
-        {financialData.isBalanced ? (
+        {isBalanced ? (
           <FiCheckCircle className="text-2xl text-green-600" />
         ) : (
           <FiAlertCircle className="text-2xl text-red-600" />
@@ -950,142 +924,166 @@ export default function BalanceSheetPage() {
         <div>
           <p
             className={`font-bold ${
-              financialData.isBalanced ? "text-green-800" : "text-red-800"
+              isBalanced ? "text-green-800" : "text-red-800"
             }`}
           >
-            {financialData.isBalanced
+            {isBalanced
               ? "الميزانية العمومية متوازنة"
               : "الميزانية العمومية غير متوازنة"}
           </p>
 
           <p className="mt-1 text-sm text-gray-600">
             الفرق بين الأصول والالتزامات وحقوق الملكية:{" "}
-            {formatMoney(Math.abs(financialData.difference))}
+            <strong>{formatMoney(difference)}</strong>
           </p>
         </div>
+      </section>
+
+      {/* BALANCE SHEET SECTIONS */}
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        {/* ASSETS */}
+
+        <BalanceSection
+          title="الأصول"
+          subtitle="الموارد الاقتصادية التي تمتلكها الشركة"
+          icon={<FiDollarSign />}
+          color="blue"
+          accounts={classifiedAccounts.assets}
+          total={totalAssets}
+          search={search}
+          showZeroBalances={showZeroBalances}
+          expandedGroups={expandedGroups}
+          onToggleGroup={toggleGroup}
+        />
+
+        {/* LIABILITIES */}
+
+        <BalanceSection
+          title="الالتزامات"
+          subtitle="المبالغ والحقوق المستحقة على الشركة"
+          icon={<FiTrendingDown />}
+          color="orange"
+          accounts={classifiedAccounts.liabilities}
+          total={totalLiabilities}
+          search={search}
+          showZeroBalances={showZeroBalances}
+          expandedGroups={expandedGroups}
+          onToggleGroup={toggleGroup}
+        />
+
+        {/* EQUITY */}
+
+        <div className="xl:col-span-2">
+          <BalanceSection
+            title="حقوق الملكية"
+            subtitle="حقوق أصحاب الشركة والأرباح المحتجزة"
+            icon={<FiPieChart />}
+            color="purple"
+            accounts={classifiedAccounts.equity}
+            total={totalEquityAccounts}
+            search={search}
+            showZeroBalances={showZeroBalances}
+            expandedGroups={expandedGroups}
+            onToggleGroup={toggleGroup}
+          />
+
+          <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="flex items-center justify-between gap-3 p-4">
+              <div>
+                <p className="font-semibold text-gray-800">
+                  صافي ربح السنة الحالية
+                </p>
+
+                <p className="mt-1 text-xs text-gray-500">
+                  من {getFirstDayOfYear(asOfDate)} إلى {asOfDate}
+                </p>
+              </div>
+
+              <span
+                className={`font-bold ${
+                  currentYearProfit.netProfit >= 0
+                    ? "text-green-700"
+                    : "text-red-700"
+                }`}
+              >
+                {formatMoney(currentYearProfit.netProfit)}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Assets */}
+      {/* FINAL TOTALS */}
 
-      <FinancialSectionCard
-        title="الأصول"
-        subtitle="الموارد الاقتصادية المملوكة للشركة"
-        accounts={financialData.sections.assets}
-        total={financialData.totalAssets}
-        color="blue"
-        icon={<FiBriefcase />}
-      />
-
-      {/* Liabilities */}
-
-      <FinancialSectionCard
-        title="الالتزامات"
-        subtitle="الالتزامات المالية المستحقة على الشركة"
-        accounts={financialData.sections.liabilities}
-        total={financialData.totalLiabilities}
-        color="orange"
-        icon={<FiTrendingDown />}
-      />
-
-      {/* Equity */}
-
-      <FinancialSectionCard
-        title="حقوق الملكية"
-        subtitle="حقوق المالكين والأرباح المحتجزة"
-        accounts={financialData.sections.equity}
-        total={financialData.totalEquity}
-        color="purple"
-        icon={<FiDollarSign />}
-      />
-
-      {/* Net Profit */}
-
-      <div className="rounded-xl border border-gray-200 bg-white p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <FiTrendingUp className="text-green-600" />
-
-          <h2 className="font-bold text-gray-800">
-            نتيجة النشاط حتى تاريخ التقرير
-          </h2>
+      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <div className="border-b border-gray-200 p-4">
+          <h2 className="font-bold text-gray-800">ملخص المركز المالي</h2>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="rounded-lg bg-green-50 p-4">
-            <p className="text-sm text-green-700">الإيرادات</p>
+        <div className="divide-y divide-gray-100">
+          <TotalRow title="إجمالي الأصول" value={totalAssets} />
 
-            <p className="mt-2 text-xl font-bold text-green-800">
-              {formatMoney(financialData.totalRevenue)}
-            </p>
-          </div>
+          <TotalRow title="إجمالي الالتزامات" value={totalLiabilities} />
 
-          <div className="rounded-lg bg-red-50 p-4">
-            <p className="text-sm text-red-700">المصروفات</p>
+          <TotalRow
+            title="حقوق الملكية قبل صافي ربح السنة"
+            value={totalEquityAccounts}
+          />
 
-            <p className="mt-2 text-xl font-bold text-red-800">
-              {formatMoney(financialData.totalExpenses)}
-            </p>
-          </div>
+          <TotalRow
+            title="صافي ربح السنة الحالية"
+            value={currentYearProfit.netProfit}
+          />
 
-          <div className="rounded-lg bg-blue-50 p-4">
-            <p className="text-sm text-blue-700">صافي النتيجة</p>
+          <TotalRow
+            title="إجمالي الالتزامات وحقوق الملكية"
+            value={totalLiabilitiesAndEquity}
+            strong
+          />
 
-            <p className="mt-2 text-xl font-bold text-blue-800">
-              {formatMoney(financialData.netProfit)}
-            </p>
-          </div>
+          <TotalRow title="الفرق" value={difference} strong />
         </div>
+      </section>
 
-        <p className="mt-4 text-xs leading-6 text-gray-500">
-          يتم احتساب صافي نتيجة النشاط من أرصدة حسابات الإيرادات والمصروفات حتى
-          تاريخ التقرير، ثم إضافته إلى حقوق الملكية لأغراض عرض الميزانية. لا يتم
-          إنشاء قيد إقفال تلقائياً.
-        </p>
-      </div>
+      {/* ACCOUNT DETAILS */}
 
-      {/* Account Tree */}
-
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 p-5">
+      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 p-4">
           <div>
-            <h2 className="font-bold text-gray-800">
-              تفاصيل دليل الحسابات والأرصدة
-            </h2>
+            <h2 className="font-bold text-gray-800">تفاصيل الحسابات</h2>
 
             <p className="mt-1 text-xs text-gray-500">
-              الأرصدة الفعلية للحسابات حتى {asOfDate}
+              عدد الحسابات: {accounts.length}
             </p>
           </div>
-
-          <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
-            {visibleAccounts.length} حساب معروض
-          </span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[850px] border-collapse text-sm">
             <thead>
               <tr className="bg-gray-100 text-gray-700">
-                <th className="border border-gray-200 px-4 py-3 text-right">
+                <th className="border border-gray-200 px-3 py-3 text-right">
                   رقم الحساب
                 </th>
 
-                <th className="border border-gray-200 px-4 py-3 text-right">
+                <th className="border border-gray-200 px-3 py-3 text-right">
                   اسم الحساب
                 </th>
 
-                <th className="border border-gray-200 px-4 py-3 text-right">
+                <th className="border border-gray-200 px-3 py-3 text-center">
                   نوع الحساب
                 </th>
 
-                <th className="border border-gray-200 px-4 py-3 text-center">
+                <th className="border border-gray-200 px-3 py-3 text-center">
                   مدين
                 </th>
 
-                <th className="border border-gray-200 px-4 py-3 text-center">
+                <th className="border border-gray-200 px-3 py-3 text-center">
                   دائن
                 </th>
 
-                <th className="border border-gray-200 px-4 py-3 text-center">
+                <th className="border border-gray-200 px-3 py-3 text-center">
                   الرصيد
                 </th>
               </tr>
@@ -1098,7 +1096,7 @@ export default function BalanceSheetPage() {
                     colSpan={6}
                     className="px-4 py-12 text-center text-gray-500"
                   >
-                    لا توجد حسابات أو أرصدة لعرضها.
+                    لا توجد حسابات لعرضها.
                   </td>
                 </tr>
               ) : (
@@ -1109,6 +1107,8 @@ export default function BalanceSheetPage() {
 
                   const balance = account.balance;
 
+                  const displayBalance = getDisplayBalance(account);
+
                   return (
                     <tr
                       key={account.id}
@@ -1116,14 +1116,14 @@ export default function BalanceSheetPage() {
                         isGroup ? "bg-gray-50 font-semibold" : "bg-white"
                       }`}
                     >
-                      <td className="border-b border-gray-100 px-4 py-3 font-mono text-gray-700">
+                      <td className="border-b border-gray-100 px-3 py-3 font-mono text-gray-700">
                         {account.code}
                       </td>
 
                       <td
-                        className="border-b border-gray-100 px-4 py-3"
+                        className="border-b border-gray-100 px-3 py-3"
                         style={{
-                          paddingRight: `${16 + level * 24}px`,
+                          paddingRight: `${16 + level * 22}px`,
                         }}
                       >
                         <div className="flex items-center gap-2">
@@ -1149,7 +1149,7 @@ export default function BalanceSheetPage() {
                         </div>
                       </td>
 
-                      <td className="border-b border-gray-100 px-4 py-3 text-gray-500">
+                      <td className="border-b border-gray-100 px-3 py-3 text-center text-gray-500">
                         {getAccountTypeName(account.type)}
                       </td>
 
@@ -1157,7 +1157,7 @@ export default function BalanceSheetPage() {
 
                       <MoneyCell value={balance.credit} />
 
-                      <MoneyCell value={Math.abs(balance.net)} />
+                      <MoneyCell value={displayBalance} />
                     </tr>
                   );
                 })
@@ -1165,239 +1165,287 @@ export default function BalanceSheetPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      {/* NOTE */}
+
+      <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-7 text-blue-900">
+        <strong>ملاحظة محاسبية:</strong>
+
+        <p className="mt-1">
+          تعتمد الميزانية على الأرصدة الافتتاحية والقيود اليومية المرحلة حتى
+          التاريخ المحدد. ويُضاف صافي ربح السنة الحالية إلى حقوق الملكية. يجب
+          التأكد من إقفال أرباح السنوات السابقة في حسابات حقوق الملكية قبل
+          الاعتماد على التقرير.
+        </p>
       </div>
+    </main>
+  );
+}
 
-      {/* Final Summary */}
+// =====================================================
+// BALANCE SECTION
+// =====================================================
 
-      <div className="rounded-xl border border-gray-200 bg-white p-5">
-        <h2 className="mb-5 font-bold text-gray-800">
-          ملخص الميزانية العمومية
-        </h2>
+interface BalanceSectionProps {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  color: "blue" | "orange" | "purple";
+  accounts: ReportAccount[];
+  total: number;
+  search: string;
+  showZeroBalances: boolean;
+  expandedGroups: string[];
+  onToggleGroup: (id: string) => void;
+}
 
-        <div className="space-y-4">
-          <FinalRow label="إجمالي الأصول" value={financialData.totalAssets} />
+function BalanceSection({
+  title,
+  subtitle,
+  icon,
+  color,
+  accounts,
+  total,
+  search,
+  showZeroBalances,
+  expandedGroups,
+  onToggleGroup,
+}: BalanceSectionProps) {
+  const colors = {
+    blue: {
+      icon: "bg-blue-100 text-blue-700",
+      header: "text-blue-800",
+      total: "bg-blue-50 text-blue-800",
+    },
+    orange: {
+      icon: "bg-orange-100 text-orange-700",
+      header: "text-orange-800",
+      total: "bg-orange-50 text-orange-800",
+    },
+    purple: {
+      icon: "bg-purple-100 text-purple-700",
+      header: "text-purple-800",
+      total: "bg-purple-50 text-purple-800",
+    },
+  };
 
-          <FinalRow
-            label="إجمالي الالتزامات"
-            value={financialData.totalLiabilities}
-          />
+  const style = colors[color];
 
-          <FinalRow label="حقوق الملكية" value={financialData.totalEquity} />
+  const visibleAccounts = useMemo(() => {
+    const result: FlatAccount[] = [];
 
-          <FinalRow
-            label="صافي الربح / الخسارة"
-            value={financialData.netProfit}
-          />
+    const query = search.trim().toLowerCase();
 
-          <div className="border-t border-gray-200 pt-4">
-            <FinalRow
-              label="إجمالي الالتزامات وحقوق الملكية"
-              value={financialData.totalLiabilitiesAndEquity}
-            />
-          </div>
+    function hasMatch(account: ReportAccount): boolean {
+      return (
+        account.name.toLowerCase().includes(query) ||
+        String(account.code).toLowerCase().includes(query) ||
+        account.children.some(hasMatch)
+      );
+    }
 
-          <div className="rounded-xl bg-slate-900 p-5 text-white">
-            <p className="text-sm text-slate-300">الفرق المحاسبي</p>
+    function walk(account: ReportAccount, level: number) {
+      if (query && !hasMatch(account)) return;
 
-            <p className="mt-2 text-2xl font-bold">
-              {formatMoney(financialData.difference)}
-            </p>
+      if (
+        !showZeroBalances &&
+        !query &&
+        Math.abs(account.balance.net) < 0.000001
+      ) {
+        return;
+      }
 
-            <p className="mt-2 text-xs text-slate-400">
-              يجب أن يساوي الفرق صفراً حتى تكون الميزانية متوازنة.
-            </p>
+      result.push({ account, level });
+
+      const expanded = expandedGroups.includes(String(account.id));
+
+      if (account.children.length > 0 && (expanded || query)) {
+        account.children.forEach((child) => {
+          walk(child, level + 1);
+        });
+      }
+    }
+
+    accounts.forEach((account) => walk(account, 0));
+
+    return result;
+  }, [accounts, search, showZeroBalances, expandedGroups]);
+
+  function displayBalance(account: ReportAccount) {
+    return account.nature === "credit"
+      ? account.balance.credit - account.balance.debit
+      : account.balance.debit - account.balance.credit;
+  }
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <div className="flex items-center justify-between gap-3 border-b border-gray-200 p-4">
+        <div className="flex items-center gap-3">
+          <div className={`rounded-lg p-3 ${style.icon}`}>{icon}</div>
+
+          <div>
+            <h2 className={`font-bold ${style.header}`}>{title}</h2>
+
+            <p className="mt-1 text-xs text-gray-500">{subtitle}</p>
           </div>
         </div>
       </div>
 
-      {/* Footer */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] text-sm">
+          <thead>
+            <tr className="bg-gray-50 text-gray-600">
+              <th className="px-3 py-3 text-right">الحساب</th>
 
-      <div className="flex items-center gap-2 text-xs text-gray-400 print:hidden">
-        <FiFileText />
-        التقرير مبني على الحسابات والأرصدة الافتتاحية والقيود اليومية المرحلة
-        للشركة الحالية.
+              <th className="px-3 py-3 text-center">الرصيد</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {visibleAccounts.length === 0 ? (
+              <tr>
+                <td colSpan={2} className="px-3 py-8 text-center text-gray-400">
+                  لا توجد حسابات لعرضها
+                </td>
+              </tr>
+            ) : (
+              visibleAccounts.map(({ account, level }) => {
+                const isGroup = account.children.length > 0;
+
+                const expanded = expandedGroups.includes(String(account.id));
+
+                return (
+                  <tr
+                    key={account.id}
+                    className={`border-t border-gray-100 hover:bg-gray-50 ${
+                      isGroup ? "bg-gray-50 font-semibold" : ""
+                    }`}
+                  >
+                    <td
+                      className="px-3 py-3"
+                      style={{
+                        paddingRight: `${12 + level * 18}px`,
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        {isGroup && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleGroup(String(account.id))}
+                            className="rounded p-1 text-gray-500 hover:bg-gray-200"
+                          >
+                            {expanded ? <FiChevronDown /> : <FiChevronLeft />}
+                          </button>
+                        )}
+
+                        <span className="text-gray-800">{account.name}</span>
+                      </div>
+
+                      <p className="mt-1 font-mono text-xs text-gray-400">
+                        {account.code}
+                      </p>
+                    </td>
+
+                    <td className="whitespace-nowrap px-3 py-3 text-center font-medium text-gray-700">
+                      {formatMoney(displayBalance(account))}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+
+          <tfoot>
+            <tr className={style.total}>
+              <td className="px-3 py-4 font-bold">الإجمالي</td>
+
+              <td className="px-3 py-4 text-center font-bold">
+                {formatMoney(total)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
-    </div>
+    </section>
   );
 }
 
-// ==========================================
-// Summary Card
-// ==========================================
+// =====================================================
+// SUMMARY CARD
+// =====================================================
 
 function SummaryCard({
   title,
   value,
-  color,
   icon,
+  color,
 }: {
   title: string;
   value: number;
-  color: string;
   icon: React.ReactNode;
+  color: "blue" | "orange" | "purple" | "green";
 }) {
-  const colors: Record<string, string> = {
+  const colors = {
     blue: "bg-blue-50 text-blue-700",
     orange: "bg-orange-50 text-orange-700",
     purple: "bg-purple-50 text-purple-700",
     green: "bg-green-50 text-green-700",
-    red: "bg-red-50 text-red-700",
   };
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <div
-        className={`mb-4 inline-flex rounded-lg p-3 ${
-          colors[color] || colors.blue
-        }`}
-      >
-        {icon}
+    <div className="rounded-xl border border-gray-200 bg-white p-5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-gray-500">{title}</p>
+
+        <div className={`rounded-lg p-3 ${colors[color]}`}>{icon}</div>
       </div>
 
-      <p className="text-sm text-gray-500">{title}</p>
-
-      <p className="mt-2 text-2xl font-bold text-gray-800">
+      <p className="mt-4 text-xl font-bold text-gray-800">
         {formatMoney(value)}
       </p>
     </div>
   );
 }
 
-// ==========================================
-// Financial Section Card
-// ==========================================
-
-function FinancialSectionCard({
-  title,
-  subtitle,
-  accounts,
-  total,
-  color,
-  icon,
-}: {
-  title: string;
-  subtitle: string;
-  accounts: ReportAccount[];
-  total: number;
-  color: string;
-  icon: React.ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(true);
-
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-700",
-    orange: "bg-orange-50 text-orange-700",
-    purple: "bg-purple-50 text-purple-700",
-  };
-
-  return (
-    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between gap-3 p-5 text-right hover:bg-gray-50"
-      >
-        <div className="flex items-center gap-3">
-          <div className={`rounded-lg p-3 ${colors[color] || colors.blue}`}>
-            {icon}
-          </div>
-
-          <div>
-            <h2 className="font-bold text-gray-800">{title}</h2>
-
-            <p className="mt-1 text-xs text-gray-500">{subtitle}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <span className="font-bold text-gray-800">{formatMoney(total)}</span>
-
-          {expanded ? (
-            <FiChevronDown className="text-gray-400" />
-          ) : (
-            <FiChevronLeft className="text-gray-400" />
-          )}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="overflow-x-auto border-t border-gray-100">
-          <table className="w-full min-w-[550px] text-sm">
-            <thead className="bg-gray-50 text-gray-500">
-              <tr>
-                <th className="px-5 py-3 text-right">الحساب</th>
-
-                <th className="px-5 py-3 text-right">الرصيد</th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-gray-100">
-              {accounts.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={2}
-                    className="px-5 py-8 text-center text-gray-400"
-                  >
-                    لا توجد حسابات في هذا القسم.
-                  </td>
-                </tr>
-              ) : (
-                accounts.map((account) => (
-                  <tr key={account.id}>
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-gray-800">
-                        {account.name}
-                      </div>
-
-                      <div className="mt-1 font-mono text-xs text-gray-400">
-                        {account.code}
-                      </div>
-                    </td>
-
-                    <td className="px-5 py-3 font-semibold text-gray-700">
-                      {formatMoney(account.balance.net)}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-
-            <tfoot>
-              <tr className="bg-gray-50 font-bold">
-                <td className="px-5 py-4">الإجمالي</td>
-
-                <td className="px-5 py-4">{formatMoney(total)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ==========================================
-// Money Cell
-// ==========================================
+// =====================================================
+// MONEY CELL
+// =====================================================
 
 function MoneyCell({ value }: { value: number }) {
   return (
-    <td className="border-b border-gray-100 px-4 py-3 text-center font-mono text-gray-700">
+    <td className="border-b border-gray-100 px-3 py-3 text-center font-mono text-gray-700">
       {formatMoney(value)}
     </td>
   );
 }
 
-// ==========================================
-// Final Row
-// ==========================================
+// =====================================================
+// TOTAL ROW
+// =====================================================
 
-function FinalRow({ label, value }: { label: string; value: number }) {
+function TotalRow({
+  title,
+  value,
+  strong = false,
+}: {
+  title: string;
+  value: number;
+  strong?: boolean;
+}) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-sm text-gray-600">{label}</span>
+    <div
+      className={`flex items-center justify-between gap-4 px-4 py-4 ${
+        strong ? "bg-gray-50 font-bold" : ""
+      }`}
+    >
+      <span className="text-gray-700">{title}</span>
 
-      <span className="font-bold text-gray-800">{formatMoney(value)}</span>
+      <span
+        className={`font-mono ${value < 0 ? "text-red-600" : "text-gray-800"}`}
+      >
+        {formatMoney(value)}
+      </span>
     </div>
   );
 }

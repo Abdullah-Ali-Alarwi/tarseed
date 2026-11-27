@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
 import { useRouter } from "next/navigation";
-import axios from "axios";
 
 import {
   FiPlus,
@@ -21,86 +19,74 @@ import {
 
 import { toast } from "sonner";
 
-import { saveActivityLog } from "@/app/(erp)/erp/lib/activity";
+import { getUserByUsername } from "@/lib/api/users";
+import { getJournals, type Journal } from "@/lib/api/journals";
+import { getJournalLines, type JournalLine } from "@/lib/api/journalLines";
 
-// JSON Server
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-// أنواع البيانات
+// ==========================================
+// Types
+// ==========================================
 
 type JournalStatus = "draft" | "posted" | "cancelled";
+type FilterStatus = "all" | JournalStatus;
 
 interface CurrentUser {
-  id: number | string;
+  id?: number | string;
   name: string;
   username: string;
   type: string;
   role: string;
-  companyId?: string;
+  companyId: string;
   companyname?: string;
+  isActive?: boolean;
+  status?: string;
 }
 
-interface Journal {
-  id: number | string;
-  journalNumber: string;
-  date: string;
-  description: string;
+type ExtraData = Record<string, any>;
+
+type JournalRecord = Journal & {
+  extra?: ExtraData;
+
+  journalNumber?: string;
+  entryNumber?: string;
   reference?: string;
-  status: JournalStatus;
+  referenceNumber?: string;
 
-  totalDebit: number;
-  totalCredit: number;
-
-  companyId: string;
+  totalDebit?: number;
+  totalCredit?: number;
+  debitTotal?: number;
+  creditTotal?: number;
 
   createdBy?: string;
   createdById?: string;
   createdByName?: string;
   createdAt?: string;
 
-  updatedBy?: string;
-  updatedById?: string;
-  updatedByName?: string;
-  updatedAt?: string;
-
   postedBy?: string;
   postedById?: string;
   postedByName?: string;
   postedAt?: string;
-}
+};
 
-interface JournalLine {
-  id: number | string;
-  journalId: number | string;
-  accountId: number | string;
-  debit: number;
-  credit: number;
-  companyId: string;
-}
-
-type FilterStatus = "all" | JournalStatus;
+type JournalLineRecord = JournalLine & {
+  extra?: ExtraData;
+};
 
 interface JournalFilters {
   search: string;
   status: FilterStatus;
 }
 
-// تنسيق العملة
-const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat("ar-YE", {
+// ==========================================
+// Helpers
+// ==========================================
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("ar-YE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value || 0);
-};
+  }).format(Number(value) || 0);
 
-// تنسيق التاريخ
 const formatDate = (date?: string) => {
   if (!date) return "-";
 
@@ -115,7 +101,6 @@ const formatDate = (date?: string) => {
   }).format(parsedDate);
 };
 
-// تنسيق الوقت
 const formatDateTime = (date?: string) => {
   if (!date) return "-";
 
@@ -132,7 +117,6 @@ const formatDateTime = (date?: string) => {
   }).format(parsedDate);
 };
 
-// قراءة Cookie
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
 
@@ -142,45 +126,115 @@ function getCookie(name: string): string | null {
 
   if (!cookie) return null;
 
-  return decodeURIComponent(cookie.substring(name.length + 1));
+  const value = cookie.substring(name.length + 1);
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
+
+function getExtra(record: any): ExtraData {
+  return record?.extra && typeof record.extra === "object" ? record.extra : {};
+}
+
+function getValue(record: any, key: string) {
+  return record?.[key] ?? getExtra(record)?.[key];
+}
+
+function getNumber(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function normalizeStatus(value: unknown): JournalStatus {
+  const status = String(value || "").toLowerCase();
+
+  if (["posted", "approved", "مُرحّل", "مرحّل"].includes(status)) {
+    return "posted";
+  }
+
+  if (["cancelled", "canceled", "rejected", "ملغي", "مرفوض"].includes(status)) {
+    return "cancelled";
+  }
+
+  return "draft";
+}
+
+function normalizeJournal(record: any): JournalRecord {
+  const extra = getExtra(record);
+
+  return {
+    ...record,
+    journalNumber:
+      record.journalNumber ?? extra.journalNumber ?? extra.entryNumber ?? "",
+    entryNumber:
+      record.entryNumber ?? extra.entryNumber ?? extra.journalNumber ?? "",
+    date: record.date ?? extra.date,
+    description: record.description ?? extra.description ?? "",
+    reference:
+      record.reference ??
+      extra.reference ??
+      extra.referenceNumber ??
+      extra.referenceId ??
+      "",
+    totalDebit: record.totalDebit ?? extra.totalDebit ?? extra.debitTotal,
+    totalCredit: record.totalCredit ?? extra.totalCredit ?? extra.creditTotal,
+    createdBy: record.createdBy ?? extra.createdBy,
+    createdById: record.createdById ?? extra.createdById,
+    createdByName: record.createdByName ?? extra.createdByName,
+    createdAt: record.createdAt ?? extra.createdAt,
+    status: normalizeStatus(record.status ?? extra.status),
+  } as JournalRecord;
+}
+
+function normalizeJournalLine(record: any): JournalLineRecord {
+  const extra = getExtra(record);
+
+  return {
+    ...record,
+    journalId: record.journalId ?? extra.journalId,
+    debit: record.debit ?? extra.debit ?? 0,
+    credit: record.credit ?? extra.credit ?? 0,
+    companyId: record.companyId ?? extra.companyId,
+  } as JournalLineRecord;
+}
+
+// ==========================================
+// Page
+// ==========================================
 
 export default function JournalsPage() {
   const router = useRouter();
 
-  // المستخدم الحالي
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-
   const [companyId, setCompanyId] = useState("");
 
   const [userLoading, setUserLoading] = useState(true);
-
   const [userError, setUserError] = useState("");
 
-  // القيود
-  const [journals, setJournals] = useState<Journal[]>([]);
-
-  // تفاصيل القيود
-  const [journalLines, setJournalLines] = useState<JournalLine[]>([]);
+  const [journals, setJournals] = useState<JournalRecord[]>([]);
+  const [journalLines, setJournalLines] = useState<JournalLineRecord[]>([]);
 
   const [loading, setLoading] = useState(false);
-
   const [error, setError] = useState("");
 
-  // الفلاتر
   const [filters, setFilters] = useState<JournalFilters>({
     search: "",
     status: "all",
   });
 
-  // منع تكرار تسجيل مشاهدة الصفحة
-  const activityLogged = useRef(false);
+  const requestId = useRef(0);
 
-  // تحديد المستخدم والشركة
+  // ========================================
+  // Load Current User From Cookie
+  // ========================================
+
   useEffect(() => {
-    let mounted = true;
+    let ignore = false;
 
-    const getCurrentUser = async () => {
+    const loadCurrentUser = async () => {
       try {
         setUserLoading(true);
         setUserError("");
@@ -191,14 +245,14 @@ export default function JournalsPage() {
           throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
         }
 
-        const response = await api.get<CurrentUser[]>("/users", {
-          params: { username },
-        });
-
-        const user = response.data.find((item) => item.username === username);
+        const user = await getUserByUsername(username);
 
         if (!user) {
           throw new Error("المستخدم غير موجود");
+        }
+
+        if (user.username !== username) {
+          throw new Error("بيانات المستخدم غير صحيحة");
         }
 
         if (user.type === "platform") {
@@ -209,140 +263,214 @@ export default function JournalsPage() {
           throw new Error("المستخدم غير مرتبط بأي شركة");
         }
 
-        if (!mounted) return;
+        if (user.isActive === false || user.status === "inactive") {
+          throw new Error("هذا الحساب غير نشط");
+        }
 
-        setCurrentUser(user);
+        if (ignore) return;
+
+        const normalizedUser: CurrentUser = {
+          id: user.id,
+          name: user.name || "",
+          username: user.username,
+          type: user.type,
+          role: user.role,
+          companyId: String(user.companyId),
+          companyname: user.companyname,
+          isActive: user.isActive,
+          status: user.status,
+        };
+
+        setCurrentUser(normalizedUser);
         setCompanyId(String(user.companyId));
       } catch (err) {
-        const message = axios.isAxiosError(err)
-          ? err.response?.data?.message || "تعذر الاتصال بـ JSON Server"
-          : err instanceof Error
-            ? err.message
-            : "حدث خطأ غير متوقع";
+        console.error("Load Current User Error:", err);
 
-        if (mounted) {
-          setUserError(message);
+        if (!ignore) {
+          setUserError(
+            err instanceof Error
+              ? err.message
+              : "حدث خطأ أثناء تحميل بيانات المستخدم",
+          );
         }
       } finally {
-        if (mounted) {
+        if (!ignore) {
           setUserLoading(false);
         }
       }
     };
 
-    void getCurrentUser();
+    void loadCurrentUser();
 
     return () => {
-      mounted = false;
+      ignore = true;
     };
   }, []);
 
-  // تسجيل مشاهدة صفحة القيود
-  useEffect(() => {
-    if (!currentUser || !companyId || activityLogged.current) {
-      return;
-    }
+  // ========================================
+  // Fetch Journals And Journal Lines
+  // ========================================
 
-    activityLogged.current = true;
-
-    void saveActivityLog({
-      action: "view",
-      module: "accounting.journals",
-      description: "عرض صفحة القيود اليومية",
-      recordName: "القيود اليومية",
-    });
-  }, [currentUser, companyId]);
-
-  // جلب القيود وتفاصيلها
   const fetchJournals = useCallback(async () => {
     if (!companyId) return;
+
+    const currentRequestId = ++requestId.current;
+
+    const isCurrentRequest = () => currentRequestId === requestId.current;
 
     try {
       setLoading(true);
       setError("");
 
-      const [journalsResponse, linesResponse] = await Promise.all([
-        api.get<Journal[]>("/journals", {
-          params: { companyId },
-        }),
-
-        api.get<JournalLine[]>("/journalLines", {
-          params: { companyId },
-        }),
+      const [journalsData, journalLinesData] = await Promise.all([
+        getJournals(companyId),
+        getJournalLines(companyId),
       ]);
 
-      // التأكد من الشركة الحالية
-      const companyJournals = journalsResponse.data.filter(
+      if (!isCurrentRequest()) return;
+
+      const normalizedJournals = (journalsData || []).map(normalizeJournal);
+
+      const normalizedLines = (journalLinesData || []).map(
+        normalizeJournalLine,
+      );
+
+      const companyJournals = normalizedJournals.filter(
         (journal) => String(journal.companyId) === companyId,
       );
 
-      const companyLines = linesResponse.data.filter(
+      const companyLines = normalizedLines.filter(
         (line) => String(line.companyId) === companyId,
       );
+
+      if (!isCurrentRequest()) return;
 
       setJournals(companyJournals);
       setJournalLines(companyLines);
     } catch (err) {
       console.error("Fetch Journals Error:", err);
 
+      if (!isCurrentRequest()) return;
+
       setError(
-        axios.isAxiosError(err)
-          ? err.response?.data?.message || "تعذر تحميل القيود اليومية"
-          : "حدث خطأ أثناء تحميل القيود",
+        err instanceof Error
+          ? err.message
+          : "تعذر تحميل القيود اليومية من قاعدة البيانات",
       );
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) {
+        setLoading(false);
+      }
     }
   }, [companyId]);
 
   useEffect(() => {
-    if (companyId) {
-      void fetchJournals();
-    }
+    if (!companyId) return;
+
+    void fetchJournals();
+
+    return () => {
+      requestId.current += 1;
+    };
   }, [companyId, fetchJournals]);
 
-  // قيود الشركة الحالية
-  const companyJournals = useMemo(() => {
-    return journals.filter(
-      (journal) => String(journal.companyId) === companyId,
-    );
-  }, [journals, companyId]);
+  // ========================================
+  // Company Journals
+  // ========================================
 
-  // القيود المرحلة فقط
-  const postedJournals = useMemo(() => {
-    return companyJournals.filter((journal) => journal.status === "posted");
-  }, [companyJournals]);
+  const companyJournals = useMemo(
+    () => journals.filter((journal) => String(journal.companyId) === companyId),
+    [journals, companyId],
+  );
 
-  // حساب الإحصائيات من سطور القيود المرحلة
-  // حتى تتوافق مع البيانات المستخدمة في القوائم المالية
+  // ========================================
+  // Posted Journals
+  // ========================================
+
+  const postedJournals = useMemo(
+    () =>
+      companyJournals.filter(
+        (journal) => normalizeStatus(journal.status) === "posted",
+      ),
+    [companyJournals],
+  );
+
+  // ========================================
+  // Journal Lines By Journal
+  // ========================================
+
+  const getLinesForJournal = useCallback(
+    (journalId: number | string) =>
+      journalLines.filter(
+        (line) =>
+          String(line.companyId) === companyId &&
+          String(line.journalId) === String(journalId),
+      ),
+    [journalLines, companyId],
+  );
+
+  // ========================================
+  // Journal Amounts
+  // ========================================
+
+  const getJournalDebit = useCallback(
+    (journal: JournalRecord) => {
+      const savedTotal =
+        getValue(journal, "totalDebit") ?? getValue(journal, "debitTotal");
+
+      if (savedTotal != null) {
+        return getNumber(savedTotal);
+      }
+
+      return getLinesForJournal(journal.id).reduce(
+        (sum, line) => sum + getNumber(getValue(line, "debit")),
+        0,
+      );
+    },
+    [getLinesForJournal],
+  );
+
+  const getJournalCredit = useCallback(
+    (journal: JournalRecord) => {
+      const savedTotal =
+        getValue(journal, "totalCredit") ?? getValue(journal, "creditTotal");
+
+      if (savedTotal != null) {
+        return getNumber(savedTotal);
+      }
+
+      return getLinesForJournal(journal.id).reduce(
+        (sum, line) => sum + getNumber(getValue(line, "credit")),
+        0,
+      );
+    },
+    [getLinesForJournal],
+  );
+
+  // ========================================
+  // Statistics
+  // ========================================
+
   const stats = useMemo(() => {
     const total = companyJournals.length;
 
     const drafts = companyJournals.filter(
-      (journal) => journal.status === "draft",
+      (journal) => normalizeStatus(journal.status) === "draft",
     ).length;
 
     const posted = postedJournals.length;
 
     const cancelled = companyJournals.filter(
-      (journal) => journal.status === "cancelled",
+      (journal) => normalizeStatus(journal.status) === "cancelled",
     ).length;
 
-    const postedIds = new Set(
-      postedJournals.map((journal) => String(journal.id)),
-    );
-
-    const postedLines = journalLines.filter((line) =>
-      postedIds.has(String(line.journalId)),
-    );
-
-    const totalDebit = postedLines.reduce(
-      (sum, line) => sum + Number(line.debit || 0),
+    const totalDebit = postedJournals.reduce(
+      (sum, journal) => sum + getJournalDebit(journal),
       0,
     );
 
-    const totalCredit = postedLines.reduce(
-      (sum, line) => sum + Number(line.credit || 0),
+    const totalCredit = postedJournals.reduce(
+      (sum, journal) => sum + getJournalCredit(journal),
       0,
     );
 
@@ -354,50 +482,83 @@ export default function JournalsPage() {
       totalDebit,
       totalCredit,
     };
-  }, [companyJournals, postedJournals, journalLines]);
+  }, [companyJournals, postedJournals, getJournalDebit, getJournalCredit]);
 
-  // البحث والتصفية
+  // ========================================
+  // Search And Filters
+  // ========================================
+
   const filteredJournals = useMemo(() => {
     return companyJournals.filter((journal) => {
       const search = filters.search.trim().toLowerCase();
 
+      const journalNumber =
+        getValue(journal, "journalNumber") ??
+        getValue(journal, "entryNumber") ??
+        "";
+
+      const reference =
+        getValue(journal, "reference") ??
+        getValue(journal, "referenceNumber") ??
+        "";
+
+      const description = getValue(journal, "description") ?? "";
+
+      const creator =
+        getValue(journal, "createdByName") ??
+        getValue(journal, "createdBy") ??
+        "";
+
       const searchMatch =
-        String(journal.journalNumber || "")
-          .toLowerCase()
-          .includes(search) ||
-        String(journal.description || "")
-          .toLowerCase()
-          .includes(search) ||
-        String(journal.reference || "")
-          .toLowerCase()
-          .includes(search) ||
-        String(journal.createdByName || "")
-          .toLowerCase()
-          .includes(search) ||
-        String(journal.createdBy || "")
-          .toLowerCase()
-          .includes(search);
+        String(journalNumber).toLowerCase().includes(search) ||
+        String(description).toLowerCase().includes(search) ||
+        String(reference).toLowerCase().includes(search) ||
+        String(creator).toLowerCase().includes(search);
 
       const statusMatch =
-        filters.status === "all" || journal.status === filters.status;
+        filters.status === "all" ||
+        normalizeStatus(journal.status) === filters.status;
 
       return searchMatch && statusMatch;
     });
   }, [companyJournals, filters]);
 
-  // عدد السطور لكل قيد
+  // ========================================
+  // Journal Lines Count
+  // ========================================
+
   const getJournalLinesCount = (journalId: number | string) => {
-    return journalLines.filter(
-      (line) => String(line.journalId) === String(journalId),
-    ).length;
+    return getLinesForJournal(journalId).length;
   };
 
-  // معلومات منشئ القيد
-  const getCreatorName = (journal: Journal) => {
-    return journal.createdByName || journal.createdBy || "غير محدد";
+  // ========================================
+  // Creator
+  // ========================================
+
+  const getCreatorName = (journal: JournalRecord) => {
+    return (
+      getValue(journal, "createdByName") ||
+      getValue(journal, "createdBy") ||
+      "غير محدد"
+    );
   };
 
-  // حالة القيد
+  // ========================================
+  // Journal Number
+  // ========================================
+
+  const getJournalNumber = (journal: JournalRecord) => {
+    return (
+      getValue(journal, "journalNumber") ||
+      getValue(journal, "entryNumber") ||
+      String(journal.id)
+    );
+  };
+
+  // ========================================
+  // Status
+  // ========================================
+
   const getStatusInfo = (status: JournalStatus) => {
     switch (status) {
       case "posted":
@@ -420,13 +581,19 @@ export default function JournalsPage() {
     }
   };
 
-  // إنشاء قيد
+  // ========================================
+  // Create Journal
+  // ========================================
+
   const handleCreate = () => {
     router.push("/erp/accounting/journals/create");
   };
 
-  // عرض القيد
-  const handleView = (journal: Journal) => {
+  // ========================================
+  // View Journal
+  // ========================================
+
+  const handleView = (journal: JournalRecord) => {
     if (String(journal.companyId) !== companyId) {
       toast.error("لا يمكنك عرض قيد تابع لشركة أخرى");
       return;
@@ -435,14 +602,17 @@ export default function JournalsPage() {
     router.push(`/erp/accounting/journals/${journal.id}`);
   };
 
-  // تعديل القيد
-  const handleEdit = (journal: Journal) => {
+  // ========================================
+  // Edit Journal
+  // ========================================
+
+  const handleEdit = (journal: JournalRecord) => {
     if (String(journal.companyId) !== companyId) {
       toast.error("لا يمكنك تعديل قيد تابع لشركة أخرى");
       return;
     }
 
-    if (journal.status !== "draft") {
+    if (normalizeStatus(journal.status) !== "draft") {
       toast.error("يمكن تعديل القيود غير المرحلة فقط");
       return;
     }
@@ -450,7 +620,10 @@ export default function JournalsPage() {
     router.push(`/erp/accounting/journals/${journal.id}/edit`);
   };
 
-  // تحميل المستخدم
+  // ========================================
+  // User Loading
+  // ========================================
+
   if (userLoading) {
     return (
       <div
@@ -468,7 +641,10 @@ export default function JournalsPage() {
     );
   }
 
-  // خطأ المستخدم
+  // ========================================
+  // User Error
+  // ========================================
+
   if (userError || !companyId) {
     return (
       <div
@@ -493,12 +669,17 @@ export default function JournalsPage() {
     );
   }
 
+  // ========================================
+  // UI
+  // ========================================
+
   return (
     <div
       dir="rtl"
       className="min-h-screen space-y-6 bg-slate-50 p-5 pb-10 text-slate-800"
     >
       {/* العنوان */}
+
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">القيود اليومية</h1>
@@ -525,12 +706,12 @@ export default function JournalsPage() {
       </div>
 
       {/* الإحصائيات */}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-500">إجمالي القيود</p>
-
               <h3 className="mt-2 text-2xl font-bold text-slate-900">
                 {stats.total}
               </h3>
@@ -546,7 +727,6 @@ export default function JournalsPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-500">القيود المرحلة</p>
-
               <h3 className="mt-2 text-2xl font-bold text-green-600">
                 {stats.posted}
               </h3>
@@ -562,7 +742,6 @@ export default function JournalsPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-500">القيود المسودة</p>
-
               <h3 className="mt-2 text-2xl font-bold text-amber-600">
                 {stats.drafts}
               </h3>
@@ -592,6 +771,7 @@ export default function JournalsPage() {
       </div>
 
       {/* ملخص التوازن */}
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm text-slate-500">إجمالي المدين المرحّل</p>
@@ -625,6 +805,7 @@ export default function JournalsPage() {
       </div>
 
       {/* البحث والتصفية */}
+
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="relative">
@@ -657,17 +838,15 @@ export default function JournalsPage() {
             className="rounded-lg border border-slate-300 bg-white p-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
             <option value="all">جميع حالات القيود</option>
-
             <option value="draft">مسودة</option>
-
             <option value="posted">مرحّل</option>
-
             <option value="cancelled">ملغي</option>
           </select>
         </div>
       </div>
 
       {/* جدول القيود */}
+
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 p-5">
           <div>
@@ -728,23 +907,14 @@ export default function JournalsPage() {
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
                   <th className="px-5 py-4 font-semibold">رقم القيد</th>
-
                   <th className="px-5 py-4 font-semibold">التاريخ</th>
-
                   <th className="px-5 py-4 font-semibold">البيان</th>
-
                   <th className="px-5 py-4 font-semibold">عدد السطور</th>
-
                   <th className="px-5 py-4 font-semibold">المدين</th>
-
                   <th className="px-5 py-4 font-semibold">الدائن</th>
-
                   <th className="px-5 py-4 font-semibold">منشئ القيد</th>
-
                   <th className="px-5 py-4 font-semibold">تاريخ الإنشاء</th>
-
                   <th className="px-5 py-4 font-semibold">الحالة</th>
-
                   <th className="px-5 py-4 text-center font-semibold">
                     الإجراءات
                   </th>
@@ -753,7 +923,7 @@ export default function JournalsPage() {
 
               <tbody className="divide-y divide-slate-100">
                 {filteredJournals.map((journal) => {
-                  const status = getStatusInfo(journal.status);
+                  const status = getStatusInfo(normalizeStatus(journal.status));
 
                   return (
                     <tr
@@ -761,21 +931,24 @@ export default function JournalsPage() {
                       className="transition hover:bg-slate-50"
                     >
                       <td className="px-5 py-4 font-semibold text-blue-700">
-                        {journal.journalNumber}
+                        {getJournalNumber(journal)}
                       </td>
 
                       <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                        {formatDate(journal.date)}
+                        {formatDate(getValue(journal, "date"))}
                       </td>
 
                       <td className="max-w-[250px] px-5 py-4">
                         <p className="truncate font-medium text-slate-800">
-                          {journal.description}
+                          {getValue(journal, "description") || "-"}
                         </p>
 
-                        {journal.reference && (
+                        {(getValue(journal, "reference") ||
+                          getValue(journal, "referenceNumber")) && (
                           <p className="mt-1 text-xs text-slate-400">
-                            المرجع: {journal.reference}
+                            المرجع:{" "}
+                            {getValue(journal, "reference") ||
+                              getValue(journal, "referenceNumber")}
                           </p>
                         )}
                       </td>
@@ -785,11 +958,11 @@ export default function JournalsPage() {
                       </td>
 
                       <td className="px-5 py-4 font-medium text-slate-800">
-                        {formatCurrency(journal.totalDebit)}
+                        {formatCurrency(getJournalDebit(journal))}
                       </td>
 
                       <td className="px-5 py-4 font-medium text-slate-800">
-                        {formatCurrency(journal.totalCredit)}
+                        {formatCurrency(getJournalCredit(journal))}
                       </td>
 
                       <td className="px-5 py-4">
@@ -804,7 +977,7 @@ export default function JournalsPage() {
                         <div className="flex items-center gap-2">
                           <FiCalendar className="text-slate-400" size={14} />
 
-                          {formatDateTime(journal.createdAt)}
+                          {formatDateTime(getValue(journal, "createdAt"))}
                         </div>
                       </td>
 
@@ -826,7 +999,7 @@ export default function JournalsPage() {
                             <FiEye size={17} />
                           </button>
 
-                          {journal.status === "draft" && (
+                          {normalizeStatus(journal.status) === "draft" && (
                             <button
                               onClick={() => handleEdit(journal)}
                               title="تعديل القيد"

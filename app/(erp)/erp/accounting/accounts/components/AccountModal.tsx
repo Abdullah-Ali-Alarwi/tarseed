@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { Account, AccountFormData } from "../types";
+import type { Account, AccountFormData } from "../types";
 
 import AccountForm from "./AccountForm";
 
@@ -21,19 +21,14 @@ export default function AccountModal({
   onClose,
   onSubmit,
 }: Props) {
-  // إغلاق النافذة باستخدام Escape
   useEffect(() => {
     if (!isOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
+      if (event.key === "Escape") onClose();
     };
 
-    // منع تمرير الصفحة الخلفية
     document.body.style.overflow = "hidden";
-
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
@@ -48,9 +43,7 @@ export default function AccountModal({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) {
-          onClose();
-        }
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
@@ -59,7 +52,6 @@ export default function AccountModal({
         aria-labelledby="account-modal-title"
         className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
       >
-        {/* رأس النافذة */}
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-5">
           <div>
             <h2
@@ -86,7 +78,6 @@ export default function AccountModal({
           </button>
         </div>
 
-        {/* محتوى النافذة */}
         <div className="overflow-y-auto p-6">
           <AccountForm
             accounts={accounts}

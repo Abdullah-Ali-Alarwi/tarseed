@@ -1,1289 +1,597 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import axios from "axios";
-import type { ReactNode } from "react";
-import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
 
-import {
-  FiArrowRight,
-  FiRefreshCw,
-  FiPackage,
-  FiDollarSign,
-  FiShoppingCart,
-  FiShoppingBag,
-  FiTrendingUp,
-  FiCalendar,
-  FiAlertTriangle,
-  FiCheckCircle,
-  FiXCircle,
-  FiMapPin,
-  FiTag,
-  FiHash,
-  FiLayers,
-  FiClock,
-  FiActivity,
-  FiBox,
-  FiArrowDownLeft,
-  FiArrowUpRight,
-  FiInfo,
-} from "react-icons/fi";
-
-/* =========================================================
-   API
-========================================================= */
-
-const api = axios.create({
-  baseURL: "http://localhost:3001",
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-/* =========================================================
-   TYPES
-========================================================= */
-
-interface Product {
-  id: string;
-  companyId: string;
-
-  name: string;
-  sku: string;
-  barcode?: string;
-
-  categoryId?: string;
-  categoryName?: string;
-
-  unitId?: string;
-  unitName?: string;
-
-  warehouseId?: string;
-
-  purchasePrice: number;
-  sellingPrice: number;
-
-  currentStock: number;
-  minStock: number;
-
-  trackInventory?: boolean;
-
-  description?: string;
-
-  status: "active" | "inactive";
-
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-interface Warehouse {
+type Product = {
   id: string;
   companyId: string;
   name: string;
-}
-
-interface DocumentItem {
-  productId: string;
-  warehouseId?: string;
-
-  quantity: number;
-
-  price?: number;
-  purchasePrice?: number;
-  sellingPrice?: number;
-
-  total?: number;
-}
-
-interface Document {
-  id: string;
-  companyId: string;
-
-  warehouseId?: string;
-
-  status: string;
-  date: string;
-
-  total?: number;
-
-  items?: DocumentItem[];
-}
-
-interface InventoryMovement {
-  id: string;
-  companyId: string;
-
-  warehouseId?: string;
-
-  fromWarehouseId?: string;
-  toWarehouseId?: string;
-
-  productId: string;
-  productName?: string;
-
-  type: string;
-  quantity: number;
-
-  reference?: string;
-
-  date?: string;
-  createdAt?: string;
-}
-
-type ExpiryStatus = "expired" | "near" | "valid";
-
-/* =========================================================
-   HELPERS
-========================================================= */
-
-const number = (value: unknown): number => {
-  const result = Number(value);
-
-  return Number.isFinite(result) ? result : 0;
+  sku: string | null;
+  barcode: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  unitId: string | null;
+  unitName: string | null;
+  warehouseId: string | null;
+  purchasePrice: number | string | null;
+  sellingPrice: number | string | null;
+  currentStock: number | string | null;
+  minStock: number | string | null;
+  description: string | null;
+  status: string | null;
+  createdAt: string | null;
+  trackInventory: boolean | null;
+  itemId: string | null;
+  extra: Record<string, unknown> | null;
+  updatedAt: string | null;
 };
 
-const money = (value: number) =>
-  new Intl.NumberFormat("ar-YE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+const formatNumber = (value: number | string | null | undefined) => {
+  const number = Number(value ?? 0);
 
-const quantityFormat = (value: number) =>
-  new Intl.NumberFormat("ar-YE", {
+  return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(Number.isFinite(number) ? number : 0);
+};
 
-const dateFormat = (value?: string) => {
-  if (!value) return "-";
+const formatCurrency = (value: number | string | null | undefined) =>
+  `${formatNumber(value)} ر.ي`;
+
+const formatDate = (value: string | null) => {
+  if (!value) return "—";
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "-";
+  if (Number.isNaN(date.getTime())) return "—";
 
-  return date.toLocaleDateString("ar-YE");
+  return new Intl.DateTimeFormat("ar-YE", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 };
-
-const getCookie = (name: string) => {
-  const cookie = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith(`${name}=`));
-
-  return cookie ? decodeURIComponent(cookie.split("=").slice(1).join("=")) : "";
-};
-
-const isCompleted = (status?: string) =>
-  ["completed", "paid", "approved", "confirmed"].includes(
-    String(status || "").toLowerCase(),
-  );
-
-const getExpiryDate = (purchaseDate: string) => {
-  const date = new Date(purchaseDate);
-
-  if (Number.isNaN(date.getTime())) return "";
-
-  date.setFullYear(date.getFullYear() + 1);
-
-  return date.toISOString();
-};
-
-const getExpiryStatus = (expiryDate: string): ExpiryStatus => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const expiry = new Date(expiryDate);
-  expiry.setHours(0, 0, 0, 0);
-
-  const difference = Math.ceil(
-    (expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
-  );
-
-  if (difference < 0) return "expired";
-
-  if (difference <= 30) return "near";
-
-  return "valid";
-};
-
-const getDaysRemaining = (expiryDate: string) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const expiry = new Date(expiryDate);
-  expiry.setHours(0, 0, 0, 0);
-
-  return Math.ceil(
-    (expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
-  );
-};
-
-/* =========================================================
-   COMPONENT
-========================================================= */
 
 export default function ProductDetailsPage() {
   const params = useParams();
   const router = useRouter();
 
-  const productId = String(params.id);
-
-  const [loading, setLoading] = useState(true);
+  const productId = params.id as string;
 
   const [product, setProduct] = useState<Product | null>(null);
-  const [warehouse, setWarehouse] = useState<Warehouse | null>(null);
+  const [warehouseName, setWarehouseName] = useState("—");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [sales, setSales] = useState<Document[]>([]);
-  const [purchases, setPurchases] = useState<Document[]>([]);
+  const loadProduct = useCallback(async () => {
+    if (!productId) return;
 
-  const [movements, setMovements] = useState<InventoryMovement[]>([]);
+    setLoading(true);
+    setError("");
 
-  const [movementFilter, setMovementFilter] = useState("all");
-
-  /* =========================================================
-     LOAD DATA
-  ========================================================= */
-
-  const loadData = useCallback(async () => {
     try {
-      setLoading(true);
+      const storedUser = localStorage.getItem("authUser");
 
-      const type = getCookie("type");
-      const companyId = getCookie("companyId");
-
-      if (!["owner", "erp"].includes(type)) {
-        toast.error("ليس لديك صلاحية الوصول");
-        router.replace("/login");
+      if (!storedUser) {
+        setError("يرجى تسجيل الدخول أولاً.");
         return;
       }
 
-      if (!companyId) {
-        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
-        router.replace("/login");
+      const user = JSON.parse(storedUser);
+
+      if (!user.companyId || user.type === "platform") {
+        setError("لا يمكن الوصول إلى بيانات هذا الصنف.");
         return;
       }
 
-      const [productRes, warehousesRes, salesRes, purchasesRes, movementsRes] =
-        await Promise.all([
-          api.get("/products", {
-            params: {
-              id: productId,
-              companyId,
-            },
-          }),
+      const { data, error: fetchError } = await supabase
+        .from("products")
+        .select("*")
+        .eq("id", productId)
+        .eq("companyId", user.companyId)
+        .maybeSingle();
 
-          api.get("/warehouses", {
-            params: {
-              companyId,
-            },
-          }),
+      if (fetchError) throw fetchError;
 
-          api.get("/sales", {
-            params: {
-              companyId,
-            },
-          }),
-
-          api.get("/purchases", {
-            params: {
-              companyId,
-            },
-          }),
-
-          api.get("/inventoryMovements", {
-            params: {
-              companyId,
-            },
-          }),
-        ]);
-
-      const foundProduct = productRes.data.find(
-        (item: Product) =>
-          String(item.id) === productId &&
-          String(item.companyId) === String(companyId),
-      );
-
-      if (!foundProduct) {
-        toast.error("المنتج غير موجود");
-        router.replace("/erp/inventory");
+      if (!data) {
+        setProduct(null);
         return;
       }
 
-      setProduct(foundProduct);
+      setProduct(data as Product);
 
-      const foundWarehouse = warehousesRes.data.find(
-        (item: Warehouse) =>
-          String(item.id) === String(foundProduct.warehouseId) &&
-          String(item.companyId) === String(companyId),
-      );
+      if (data.warehouseId) {
+        const { data: warehouse, error: warehouseError } = await supabase
+          .from("warehouses")
+          .select("id, name")
+          .eq("id", data.warehouseId)
+          .eq("companyId", user.companyId)
+          .maybeSingle();
 
-      setWarehouse(foundWarehouse || null);
+        if (warehouseError) throw warehouseError;
 
-      setSales(salesRes.data || []);
-      setPurchases(purchasesRes.data || []);
-      setMovements(movementsRes.data || []);
-    } catch (error) {
-      console.error(error);
-
-      toast.error("حدث خطأ أثناء تحميل بيانات المنتج");
+        setWarehouseName(warehouse?.name ?? "غير محدد");
+      } else {
+        setWarehouseName("غير محدد");
+      }
+    } catch (err) {
+      console.error("Product details error:", err);
+      setError("حدث خطأ أثناء تحميل بيانات الصنف.");
     } finally {
       setLoading(false);
     }
-  }, [productId, router]);
+  }, [productId]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    loadProduct();
+  }, [loadProduct]);
 
-  /* =========================================================
-     FILTER DOCUMENTS
-  ========================================================= */
-
-  const productSales = useMemo(() => {
-    if (!product) return [];
-
-    return sales.filter((sale) => {
-      if (!isCompleted(sale.status)) return false;
-
-      return (sale.items || []).some(
-        (item) =>
-          String(item.productId) === String(product.id) &&
-          (!item.warehouseId ||
-            String(item.warehouseId) === String(product.warehouseId)),
-      );
-    });
-  }, [sales, product]);
-
-  const productPurchases = useMemo(() => {
-    if (!product) return [];
-
-    return purchases.filter((purchase) => {
-      if (!isCompleted(purchase.status)) return false;
-
-      return (purchase.items || []).some(
-        (item) =>
-          String(item.productId) === String(product.id) &&
-          (!item.warehouseId ||
-            String(item.warehouseId) === String(product.warehouseId)),
-      );
-    });
-  }, [purchases, product]);
-
-  /* =========================================================
-     PRODUCT DOCUMENT ITEMS
-  ========================================================= */
-
-  const salesItems = useMemo(() => {
-    if (!product) return [];
-
-    return productSales.flatMap((sale) =>
-      (sale.items || [])
-        .filter(
-          (item) =>
-            String(item.productId) === String(product.id) &&
-            (!item.warehouseId ||
-              String(item.warehouseId) === String(product.warehouseId)),
-        )
-        .map((item) => ({
-          ...item,
-          documentDate: sale.date,
-        })),
-    );
-  }, [productSales, product]);
-
-  const purchaseItems = useMemo(() => {
-    if (!product) return [];
-
-    return productPurchases.flatMap((purchase) =>
-      (purchase.items || [])
-        .filter(
-          (item) =>
-            String(item.productId) === String(product.id) &&
-            (!item.warehouseId ||
-              String(item.warehouseId) === String(product.warehouseId)),
-        )
-        .map((item) => ({
-          ...item,
-          documentDate: purchase.date,
-        })),
-    );
-  }, [productPurchases, product]);
-
-  /* =========================================================
-     MOVEMENTS
-  ========================================================= */
-
-  const productMovements = useMemo(() => {
-    if (!product) return [];
-
-    return movements.filter(
-      (movement) =>
-        String(movement.productId) === String(product.id) &&
-        (String(movement.warehouseId || "") ===
-          String(product.warehouseId || "") ||
-          String(movement.fromWarehouseId || "") ===
-            String(product.warehouseId || "") ||
-          String(movement.toWarehouseId || "") ===
-            String(product.warehouseId || "")),
-    );
-  }, [movements, product]);
-
-  const filteredMovements = useMemo(() => {
-    if (movementFilter === "all") return productMovements;
-
-    return productMovements.filter((movement) => {
-      const type = movement.type.toLowerCase();
-
-      if (movementFilter === "incoming") {
-        return (
-          type.includes("in") ||
-          type.includes("purchase") ||
-          type.includes("opening")
-        );
-      }
-
-      if (movementFilter === "outgoing") {
-        return type.includes("out") || type.includes("sale");
-      }
-
-      if (movementFilter === "transfer") {
-        return type.includes("transfer");
-      }
-
-      if (movementFilter === "adjustment") {
-        return type.includes("adjustment");
-      }
-
-      return true;
-    });
-  }, [productMovements, movementFilter]);
-
-  /* =========================================================
-     CALCULATIONS
-  ========================================================= */
-
-  const stats = useMemo(() => {
+  const getStockStatus = () => {
     if (!product) return null;
 
-    const currentStock = number(product.currentStock);
-
-    const purchasePrice = number(product.purchasePrice);
-    const sellingPrice = number(product.sellingPrice);
-
-    const stockCost = currentStock * purchasePrice;
-
-    const stockSellingValue = currentStock * sellingPrice;
-
-    const expectedProfit = stockSellingValue - stockCost;
-
-    const totalSalesQuantity = salesItems.reduce(
-      (sum, item) => sum + number(item.quantity),
-      0,
-    );
-
-    const totalPurchasesQuantity = purchaseItems.reduce(
-      (sum, item) => sum + number(item.quantity),
-      0,
-    );
-
-    const totalSalesAmount = salesItems.reduce(
-      (sum, item) =>
-        sum +
-        number(
-          item.total ??
-            number(item.quantity) *
-              number(item.sellingPrice ?? item.price ?? sellingPrice),
-        ),
-      0,
-    );
-
-    const totalPurchasesAmount = purchaseItems.reduce(
-      (sum, item) =>
-        sum +
-        number(
-          item.total ??
-            number(item.quantity) *
-              number(item.purchasePrice ?? item.price ?? purchasePrice),
-        ),
-      0,
-    );
-
-    const lowStock = currentStock <= number(product.minStock);
-
-    const outOfStock = currentStock <= 0;
-
-    const profitPerUnit = sellingPrice - purchasePrice;
-
-    const profitMargin =
-      sellingPrice > 0 ? (profitPerUnit / sellingPrice) * 100 : 0;
-
-    return {
-      currentStock,
-      purchasePrice,
-      sellingPrice,
-
-      stockCost,
-      stockSellingValue,
-      expectedProfit,
-
-      totalSalesQuantity,
-      totalPurchasesQuantity,
-
-      totalSalesAmount,
-      totalPurchasesAmount,
-
-      lowStock,
-      outOfStock,
-
-      profitPerUnit,
-      profitMargin,
-
-      movementCount: productMovements.length,
-    };
-  }, [product, salesItems, purchaseItems, productMovements]);
-
-  /* =========================================================
-     EXPIRY ESTIMATION
-  ========================================================= */
-
-  const expiryLots = useMemo(() => {
-    if (!product) return [];
-
-    /*
-      كل عملية شراء تعتبر دفعة مؤقتة.
-
-      تاريخ الإنتاج = تاريخ الشراء.
-      تاريخ الانتهاء = تاريخ الشراء + سنة.
-
-      هذه الحسابات تقديرية وليست نظام دفعات حقيقيًا.
-    */
-
-    const lots = purchaseItems
-      .filter((item) => number(item.quantity) > 0)
-      .map((item, index) => {
-        const purchaseDate =
-          item.documentDate || product.createdAt || new Date().toISOString();
-
-        const expiryDate = getExpiryDate(purchaseDate);
-
-        return {
-          id: `${product.id}-${index}`,
-          purchaseDate,
-          expiryDate,
-          quantity: number(item.quantity),
-          status: getExpiryStatus(expiryDate),
-          daysRemaining: getDaysRemaining(expiryDate),
-        };
-      })
-      .sort(
-        (a, b) =>
-          new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime(),
-      );
-
-    /*
-      عند عدم وجود مشتريات، نستخدم تاريخ إنشاء المنتج
-      كتاريخ إنتاج افتراضي للرصيد الحالي.
-    */
-
-    if (lots.length === 0 && number(product.currentStock) > 0) {
-      const purchaseDate = product.createdAt || new Date().toISOString();
-
-      const expiryDate = getExpiryDate(purchaseDate);
-
-      lots.push({
-        id: `${product.id}-default`,
-        purchaseDate,
-        expiryDate,
-        quantity: number(product.currentStock),
-        status: getExpiryStatus(expiryDate),
-        daysRemaining: getDaysRemaining(expiryDate),
-      });
+    if (product.trackInventory === false) {
+      return {
+        label: "غير متتبع",
+        className: "bg-slate-100 text-slate-600",
+      };
     }
 
-    return lots;
-  }, [product, purchaseItems]);
+    const stock = Number(product.currentStock ?? 0);
+    const minStock = Number(product.minStock ?? 0);
 
-  const expiryStats = useMemo(() => {
-    const expired = expiryLots
-      .filter((lot) => lot.status === "expired")
-      .reduce((sum, lot) => sum + lot.quantity, 0);
+    if (stock <= 0) {
+      return {
+        label: "نفد المخزون",
+        className: "bg-red-50 text-red-600",
+      };
+    }
 
-    const near = expiryLots
-      .filter((lot) => lot.status === "near")
-      .reduce((sum, lot) => sum + lot.quantity, 0);
-
-    const valid = expiryLots
-      .filter((lot) => lot.status === "valid")
-      .reduce((sum, lot) => sum + lot.quantity, 0);
+    if (stock <= minStock) {
+      return {
+        label: "مخزون منخفض",
+        className: "bg-amber-50 text-amber-700",
+      };
+    }
 
     return {
-      expired,
-      near,
-      valid,
+      label: "متوفر",
+      className: "bg-emerald-50 text-emerald-700",
     };
-  }, [expiryLots]);
+  };
 
-  /* =========================================================
-     LOADING
-  ========================================================= */
+  const getProductStatus = () => {
+    if (product?.status === "active") {
+      return {
+        label: "نشط",
+        className: "bg-emerald-50 text-emerald-700",
+      };
+    }
+
+    return {
+      label: "غير نشط",
+      className: "bg-slate-100 text-slate-600",
+    };
+  };
 
   if (loading) {
     return (
-      <div dir="rtl" className="flex min-h-[300px] items-center justify-center">
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <FiRefreshCw className="animate-spin text-base" />
-          جاري تحميل بيانات المنتج...
+      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-slate-500">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
+          <p className="text-sm">جاري تحميل بيانات الصنف...</p>
         </div>
       </div>
     );
   }
 
-  if (!product || !stats) {
+  if (error || !product) {
     return (
-      <div dir="rtl" className="p-6 text-center text-sm text-gray-500">
-        لم يتم العثور على المنتج.
-      </div>
-    );
-  }
-
-  /* =========================================================
-     RENDER
-  ========================================================= */
-
-  return (
-    <div dir="rtl" className="space-y-4 p-3 text-xs md:p-4">
-      {/* HEADER */}
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-400">
-            <Link href="/erp/inventory" className="hover:text-blue-600">
-              المخزون
-            </Link>
-
-            <span>/</span>
-
-            <Link
-              href="/erp/inventory/warehouses"
-              className="hover:text-blue-600"
-            >
-              المستودعات
-            </Link>
-
-            <span>/</span>
-
-            <span>{product.name}</span>
-          </div>
-
-          <h1 className="text-lg font-bold text-gray-800 md:text-xl">
-            {product.name}
-          </h1>
-
-          <p className="mt-1 text-[10px] text-gray-400">
-            تفاصيل المنتج وتحليل المخزون والأرباح والصلاحية
-          </p>
+      <div
+        dir="rtl"
+        className="flex min-h-[400px] flex-col items-center justify-center p-6 text-center"
+      >
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-2xl text-slate-400">
+          !
         </div>
 
-        <div className="flex items-center gap-2">
+        <h2 className="mt-4 text-xl font-bold text-slate-800">
+          {error ? "تعذر تحميل الصنف" : "الصنف غير موجود"}
+        </h2>
+
+        <p className="mt-2 text-sm text-slate-500">
+          {error || "لم يتم العثور على الصنف المطلوب ضمن أصناف الشركة الحالية."}
+        </p>
+
+        <div className="mt-5 flex gap-2">
           <button
-            onClick={loadData}
-            className="flex items-center gap-1.5 rounded-md border bg-white px-3 py-2 text-[11px] text-gray-600 hover:bg-gray-50"
+            onClick={loadProduct}
+            className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
           >
-            <FiRefreshCw />
-            تحديث
+            إعادة المحاولة
           </button>
 
           <Link
-            href={`/erp/inventory/warehouses/${product.warehouseId}`}
-            className="flex items-center gap-1.5 rounded-md bg-gray-800 px-3 py-2 text-[11px] text-white hover:bg-gray-700"
+            href="/erp/products"
+            className="rounded-lg bg-[#0E1F33] px-5 py-2.5 text-sm font-medium text-white"
           >
-            <FiArrowRight />
-            المستودع
+            العودة للأصناف
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const stockStatus = getStockStatus();
+  const productStatus = getProductStatus();
+
+  const profit =
+    Number(product.sellingPrice ?? 0) - Number(product.purchasePrice ?? 0);
+
+  const profitMargin =
+    Number(product.sellingPrice ?? 0) > 0
+      ? (profit / Number(product.sellingPrice)) * 100
+      : 0;
+
+  return (
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
+      {/* رأس الصفحة */}
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div>
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+            <Link href="/erp/products" className="hover:text-slate-700">
+              الأصناف
+            </Link>
+
+            <span>/</span>
+
+            <span className="text-slate-600">تفاصيل الصنف</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold text-slate-800">
+              {product.name}
+            </h1>
+
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-medium ${productStatus.className}`}
+            >
+              {productStatus.label}
+            </span>
+          </div>
+
+          <p className="mt-2 text-sm text-slate-500">
+            تفاصيل ومعلومات الصنف وإعدادات المخزون
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={loadProduct}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          >
+            ↻ تحديث
+          </button>
+
+          <Link
+            href={`/erp/products/${product.id}/edit`}
+            className="rounded-lg bg-[#0E1F33] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+          >
+            تعديل الصنف
           </Link>
         </div>
       </div>
 
-      {/* PRODUCT INFORMATION */}
-
-      <div className="rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-gray-800">
-            <FiPackage className="text-blue-600" />
-            المعلومات الأساسية
-          </h2>
-
-          <div className="flex items-center gap-2">
-            <span
-              className={`rounded-full px-2 py-1 text-[10px] ${
-                product.status === "active"
-                  ? "bg-green-50 text-green-700"
-                  : "bg-red-50 text-red-700"
-              }`}
-            >
-              {product.status === "active" ? "نشط" : "غير نشط"}
-            </span>
-
-            <span
-              className={`rounded-full px-2 py-1 text-[10px] ${
-                stats.outOfStock
-                  ? "bg-red-50 text-red-700"
-                  : stats.lowStock
-                    ? "bg-orange-50 text-orange-700"
-                    : "bg-green-50 text-green-700"
-              }`}
-            >
-              {stats.outOfStock
-                ? "نفد المخزون"
-                : stats.lowStock
-                  ? "مخزون منخفض"
-                  : "متوفر"}
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          <InfoItem
-            icon={<FiPackage />}
-            label="اسم المنتج"
-            value={product.name}
-          />
-
-          <InfoItem
-            icon={<FiHash />}
-            label="رمز المنتج"
-            value={product.sku || "-"}
-          />
-
-          <InfoItem
-            icon={<FiTag />}
-            label="الباركود"
-            value={product.barcode || "-"}
-          />
-
-          <InfoItem
-            icon={<FiLayers />}
-            label="التصنيف"
-            value={product.categoryName || "-"}
-          />
-
-          <InfoItem
-            icon={<FiBox />}
-            label="الوحدة"
-            value={product.unitName || "-"}
-          />
-
-          <InfoItem
-            icon={<FiMapPin />}
-            label="المستودع"
-            value={warehouse?.name || "-"}
-          />
-
-          <InfoItem icon={<FiHash />} label="رقم المنتج" value={product.id} />
-
-          <InfoItem
-            icon={<FiCalendar />}
-            label="تاريخ الإنشاء"
-            value={dateFormat(product.createdAt)}
-          />
-        </div>
-
-        {product.description && (
-          <p className="mt-3 border-t pt-3 text-[11px] leading-5 text-gray-500">
-            {product.description}
-          </p>
-        )}
-      </div>
-
-      {/* PRICES */}
-
-      <SectionTitle title="الأسعار والربحية" />
-
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        <StatCard
+      {/* بطاقات الأسعار والمخزون */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <InfoCard
           title="سعر الشراء"
-          value={money(stats.purchasePrice)}
-          icon={<FiShoppingBag />}
+          value={formatCurrency(product.purchasePrice)}
+          icon="↓"
           color="blue"
         />
 
-        <StatCard
+        <InfoCard
           title="سعر البيع"
-          value={money(stats.sellingPrice)}
-          icon={<FiShoppingCart />}
+          value={formatCurrency(product.sellingPrice)}
+          icon="↑"
           color="green"
         />
 
-        <StatCard
-          title="الربح للوحدة"
-          value={money(stats.profitPerUnit)}
-          icon={<FiTrendingUp />}
+        <InfoCard
+          title="الرصيد الحالي"
+          value={
+            product.trackInventory === false
+              ? "غير متتبع"
+              : `${formatNumber(product.currentStock)} ${product.unitName || ""}`
+          }
+          icon="▦"
           color="purple"
         />
 
-        <StatCard
-          title="هامش الربح"
-          value={`${money(stats.profitMargin)}%`}
-          icon={<FiDollarSign />}
-          color="indigo"
+        <InfoCard
+          title="الحد الأدنى للمخزون"
+          value={
+            product.trackInventory === false
+              ? "—"
+              : `${formatNumber(product.minStock)} ${product.unitName || ""}`
+          }
+          icon="!"
+          color="amber"
         />
       </div>
 
-      {/* STOCK */}
-
-      <SectionTitle title="الرصيد وقيمة المخزون" />
-
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        <StatCard
-          title="الرصيد الافتتاحي"
-          value="غير مسجل"
-          icon={<FiInfo />}
-          color="orange"
+      {/* معلومات الصنف */}
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <SectionTitle
+          title="المعلومات الأساسية"
+          description="البيانات التعريفية للصنف"
         />
 
-        <StatCard
-          title="الكمية المتوفرة"
-          value={quantityFormat(stats.currentStock)}
-          icon={<FiPackage />}
-          color="blue"
+        <div className="grid grid-cols-1 gap-x-8 gap-y-6 p-5 sm:grid-cols-2 xl:grid-cols-3">
+          <Detail label="اسم الصنف" value={product.name} />
+
+          <Detail label="كود الصنف" value={product.sku || "—"} />
+
+          <Detail label="الباركود" value={product.barcode || "—"} />
+
+          <Detail
+            label="التصنيف"
+            value={product.categoryName || "بدون تصنيف"}
+          />
+
+          <Detail label="وحدة القياس" value={product.unitName || "—"} />
+
+          <Detail
+            label="المستودع"
+            value={
+              product.trackInventory === false ? "غير مرتبط" : warehouseName
+            }
+          />
+
+          <Detail
+            label="معرف الصنف الداخلي"
+            value={product.itemId || "—"}
+            direction="ltr"
+          />
+
+          <Detail label="تاريخ الإنشاء" value={formatDate(product.createdAt)} />
+
+          <Detail label="آخر تحديث" value={formatDate(product.updatedAt)} />
+        </div>
+      </section>
+
+      {/* معلومات الأسعار */}
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <SectionTitle
+          title="تفاصيل الأسعار"
+          description="معلومات التكلفة وسعر البيع"
         />
 
-        <StatCard
-          title="الحد الأدنى"
-          value={quantityFormat(number(product.minStock))}
-          icon={<FiAlertTriangle />}
-          color="orange"
-        />
-
-        <StatCard
-          title="تكلفة المخزون"
-          value={money(stats.stockCost)}
-          icon={<FiDollarSign />}
-          color="blue"
-        />
-
-        <StatCard
-          title="القيمة بسعر البيع"
-          value={money(stats.stockSellingValue)}
-          icon={<FiTrendingUp />}
-          color="green"
-        />
-
-        <StatCard
-          title="الربح المتوقع"
-          value={money(stats.expectedProfit)}
-          icon={<FiTrendingUp />}
-          color="purple"
-        />
-      </div>
-
-      {/* SALES & PURCHASES */}
-
-      <SectionTitle title="المبيعات والمشتريات" />
-
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <FinancialCard
-          title="إجمالي المبيعات"
-          amount={stats.totalSalesAmount}
-          quantity={stats.totalSalesQuantity}
-          icon={<FiShoppingCart />}
-          color="green"
-        />
-
-        <FinancialCard
-          title="إجمالي المشتريات"
-          amount={stats.totalPurchasesAmount}
-          quantity={stats.totalPurchasesQuantity}
-          icon={<FiShoppingBag />}
-          color="blue"
-        />
-      </div>
-
-      {/* EXPIRY */}
-
-      <SectionTitle title="صلاحية المنتج" />
-
-      <div className="rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-bold text-gray-800">
-              متابعة تواريخ الصلاحية
-            </h2>
-
-            <p className="mt-1 text-[10px] text-gray-400">
-              تاريخ الإنتاج الافتراضي هو تاريخ الشراء، والانتهاء بعد سنة.
+        <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-3">
+          <div className="rounded-lg bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">سعر الشراء</p>
+            <p className="mt-2 text-xl font-bold text-slate-800">
+              {formatCurrency(product.purchasePrice)}
             </p>
           </div>
 
-          <span className="rounded-md bg-orange-50 px-2 py-1 text-[10px] text-orange-700">
-            صلاحية تقديرية
-          </span>
-        </div>
-
-        <div className="mb-4 grid grid-cols-3 gap-2">
-          <MiniStat
-            title="صالح"
-            value={quantityFormat(expiryStats.valid)}
-            color="green"
-          />
-
-          <MiniStat
-            title="قارب على الانتهاء"
-            value={quantityFormat(expiryStats.near)}
-            color="orange"
-          />
-
-          <MiniStat
-            title="منتهي"
-            value={quantityFormat(expiryStats.expired)}
-            color="red"
-          />
-        </div>
-
-        {expiryLots.length === 0 ? (
-          <div className="py-6 text-center text-xs text-gray-400">
-            لا توجد بيانات صلاحية.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[650px] text-right text-[11px]">
-              <thead className="bg-gray-50 text-[10px] text-gray-500">
-                <tr>
-                  <th className="px-3 py-2.5">رقم الدفعة</th>
-                  <th className="px-3 py-2.5">تاريخ الإنتاج</th>
-                  <th className="px-3 py-2.5">تاريخ الانتهاء</th>
-                  <th className="px-3 py-2.5">الكمية المسجلة</th>
-                  <th className="px-3 py-2.5">الأيام المتبقية</th>
-                  <th className="px-3 py-2.5">الحالة</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-gray-100">
-                {expiryLots.map((lot, index) => (
-                  <tr key={lot.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2.5 font-medium">{index + 1}</td>
-
-                    <td className="px-3 py-2.5">
-                      {dateFormat(lot.purchaseDate)}
-                    </td>
-
-                    <td className="px-3 py-2.5">
-                      {dateFormat(lot.expiryDate)}
-                    </td>
-
-                    <td className="px-3 py-2.5 font-semibold">
-                      {quantityFormat(lot.quantity)}
-                    </td>
-
-                    <td className="px-3 py-2.5">
-                      {lot.daysRemaining < 0
-                        ? `منذ ${Math.abs(lot.daysRemaining)} يوم`
-                        : `${lot.daysRemaining} يوم`}
-                    </td>
-
-                    <td className="px-3 py-2.5">
-                      <ExpiryBadge status={lot.status} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-50 p-2.5 text-[10px] leading-5 text-amber-800">
-          <FiInfo className="mt-0.5 shrink-0" />
-
-          <p>
-            هذه البيانات تقديرية. الكميات المعروضة تمثل كميات الشراء المسجلة لكل
-            دفعة، وليست بالضرورة الكميات المتبقية منها. لا يتم حاليًا توزيع
-            المبيعات على الدفعات أو خصم الكميات المنتهية من الرصيد.
-          </p>
-        </div>
-      </div>
-
-      {/* MOVEMENTS */}
-
-      <div className="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-3">
-          <div>
-            <h2 className="text-sm font-bold text-gray-800">
-              سجل حركات المنتج
-            </h2>
-
-            <p className="mt-1 text-[10px] text-gray-400">
-              جميع الحركات المسجلة لهذا المنتج
+          <div className="rounded-lg bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">سعر البيع</p>
+            <p className="mt-2 text-xl font-bold text-slate-800">
+              {formatCurrency(product.sellingPrice)}
             </p>
           </div>
 
-          <select
-            value={movementFilter}
-            onChange={(e) => setMovementFilter(e.target.value)}
-            className="rounded-md border bg-white px-2 py-2 text-[10px] outline-none"
-          >
-            <option value="all">جميع الحركات</option>
-            <option value="incoming">الوارد</option>
-            <option value="outgoing">الصادر</option>
-            <option value="transfer">التحويلات</option>
-            <option value="adjustment">التسويات</option>
-          </select>
-        </div>
+          <div className="rounded-lg bg-emerald-50 p-4">
+            <p className="text-sm text-emerald-700">
+              فرق السعر بين البيع والشراء
+            </p>
 
-        {filteredMovements.length === 0 ? (
-          <div className="p-8 text-center text-xs text-gray-400">
-            <FiActivity className="mx-auto mb-2 text-2xl" />
-            لا توجد حركات مسجلة.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[650px] text-right text-[11px]">
-              <thead className="bg-gray-50 text-[10px] text-gray-500">
-                <tr>
-                  <th className="px-3 py-2.5">نوع الحركة</th>
-                  <th className="px-3 py-2.5">الكمية</th>
-                  <th className="px-3 py-2.5">المرجع</th>
-                  <th className="px-3 py-2.5">التاريخ</th>
-                </tr>
-              </thead>
+            <p
+              className={`mt-2 text-xl font-bold ${
+                profit >= 0 ? "text-emerald-700" : "text-red-600"
+              }`}
+            >
+              {formatCurrency(profit)}
+            </p>
 
-              <tbody className="divide-y divide-gray-100">
-                {[...filteredMovements]
-                  .sort(
-                    (a, b) =>
-                      new Date(b.date || b.createdAt || 0).getTime() -
-                      new Date(a.date || a.createdAt || 0).getTime(),
-                  )
-                  .map((movement) => (
-                    <tr key={movement.id} className="hover:bg-gray-50">
-                      <td className="px-3 py-2.5 font-medium text-gray-700">
-                        {movement.type}
-                      </td>
-
-                      <td className="px-3 py-2.5 font-bold">
-                        {quantityFormat(number(movement.quantity))}
-                      </td>
-
-                      <td className="px-3 py-2.5 text-gray-500">
-                        {movement.reference || "-"}
-                      </td>
-
-                      <td className="px-3 py-2.5 text-gray-500">
-                        {dateFormat(movement.date || movement.createdAt)}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* FOOTER */}
-
-      <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
-        <div className="flex items-start gap-2 text-blue-800">
-          <FiInfo className="mt-0.5 shrink-0" />
-
-          <div>
-            <h3 className="text-xs font-bold">ملاحظة حول الحسابات</h3>
-
-            <p className="mt-1 text-[10px] leading-5">
-              تكلفة المخزون الحالية محسوبة باستخدام الكمية الحالية مضروبة في سعر
-              الشراء الموجود في بطاقة المنتج. والربح المتوقع هو الفرق بين القيمة
-              البيعية وتكلفة المخزون، وليس صافي الربح المحاسبي الفعلي.
+            <p className="mt-1 text-xs text-emerald-700">
+              هامش الربح التقريبي: {formatNumber(profitMargin)}%
             </p>
           </div>
         </div>
+      </section>
+
+      {/* حالة المخزون */}
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <SectionTitle
+          title="حالة المخزون"
+          description="إعدادات متابعة الكميات"
+        />
+
+        <div className="space-y-5 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold text-slate-700">تتبع المخزون</p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                {product.trackInventory
+                  ? "هذا الصنف يخضع لمتابعة المخزون"
+                  : "هذا الصنف لا يخضع لمتابعة المخزون"}
+              </p>
+            </div>
+
+            <span
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                product.trackInventory
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {product.trackInventory ? "مفعل" : "غير مفعل"}
+            </span>
+          </div>
+
+          {product.trackInventory !== false && (
+            <>
+              <div className="h-px bg-slate-100" />
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-700">
+                    حالة توفر المخزون
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    بناءً على الرصيد الحالي والحد الأدنى
+                  </p>
+                </div>
+
+                <span
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium ${stockStatus?.className}`}
+                >
+                  {stockStatus?.label}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="rounded-lg bg-slate-50 p-4">
+                  <p className="text-xs text-slate-500">الرصيد الحالي</p>
+
+                  <p className="mt-2 text-xl font-bold text-slate-800">
+                    {formatNumber(product.currentStock)}
+                  </p>
+                </div>
+
+                <div className="rounded-lg bg-slate-50 p-4">
+                  <p className="text-xs text-slate-500">الحد الأدنى</p>
+
+                  <p className="mt-2 text-xl font-bold text-slate-800">
+                    {formatNumber(product.minStock)}
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* الوصف */}
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <SectionTitle
+          title="الوصف والملاحظات"
+          description="الوصف الإضافي للصنف"
+        />
+
+        <div className="p-5">
+          {product.description ? (
+            <p className="whitespace-pre-wrap text-sm leading-7 text-slate-600">
+              {product.description}
+            </p>
+          ) : (
+            <p className="text-sm text-slate-400">لا يوجد وصف لهذا الصنف.</p>
+          )}
+        </div>
+      </section>
+
+      {/* الأزرار السفلية */}
+      <div className="flex flex-col-reverse justify-between gap-3 sm:flex-row">
+        <Link
+          href="/erp/products"
+          className="rounded-lg border border-slate-200 bg-white px-6 py-3 text-center text-sm font-medium text-slate-600 hover:bg-slate-50"
+        >
+          العودة إلى قائمة الأصناف
+        </Link>
+
+        <button
+          onClick={() => router.push(`/erp/products/${product.id}/edit`)}
+          className="rounded-lg bg-[#0E1F33] px-8 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+        >
+          تعديل بيانات الصنف
+        </button>
       </div>
     </div>
   );
 }
 
-/* =========================================================
-   INFO ITEM
-========================================================= */
-
-function InfoItem({
+// بطاقة معلومات
+function InfoCard({
+  title,
+  value,
   icon,
+  color,
+}: {
+  title: string;
+  value: string;
+  icon: string;
+  color: "blue" | "green" | "purple" | "amber";
+}) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600",
+    green: "bg-emerald-50 text-emerald-600",
+    purple: "bg-purple-50 text-purple-600",
+    amber: "bg-amber-50 text-amber-600",
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm text-slate-500">{title}</p>
+
+        <div
+          className={`flex h-10 w-10 items-center justify-center rounded-xl text-lg font-bold ${colors[color]}`}
+        >
+          {icon}
+        </div>
+      </div>
+
+      <p className="mt-4 break-words text-xl font-bold text-slate-800">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+// عنوان القسم
+function SectionTitle({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="border-b border-slate-100 px-5 py-4">
+      <h2 className="font-bold text-slate-800">{title}</h2>
+      <p className="mt-1 text-xs text-slate-400">{description}</p>
+    </div>
+  );
+}
+
+// حقل تفاصيل
+function Detail({
   label,
   value,
+  direction,
 }: {
-  icon: ReactNode;
   label: string;
   value: string;
+  direction?: "ltr";
 }) {
   return (
-    <div className="flex min-w-0 items-start gap-2">
-      <div className="shrink-0 rounded-md bg-gray-50 p-2 text-sm text-gray-500">
-        {icon}
-      </div>
+    <div>
+      <p className="text-xs text-slate-400">{label}</p>
 
-      <div className="min-w-0">
-        <p className="text-[10px] text-gray-400">{label}</p>
-
-        <p className="mt-1 truncate text-xs font-semibold text-gray-800">
-          {value}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   SECTION TITLE
-========================================================= */
-
-function SectionTitle({ title }: { title: string }) {
-  return (
-    <h2 className="border-r-[3px] border-blue-600 pr-2 text-sm font-bold text-gray-800">
-      {title}
-    </h2>
-  );
-}
-
-/* =========================================================
-   STAT CARD
-========================================================= */
-
-function StatCard({
-  title,
-  value,
-  icon,
-  color,
-}: {
-  title: string;
-  value: string | number;
-  icon: ReactNode;
-  color: string;
-}) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600",
-    green: "bg-green-50 text-green-600",
-    red: "bg-red-50 text-red-600",
-    orange: "bg-orange-50 text-orange-600",
-    purple: "bg-purple-50 text-purple-600",
-    indigo: "bg-indigo-50 text-indigo-600",
-  };
-
-  return (
-    <div className="min-w-0 rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[10px] text-gray-500 sm:text-xs">{title}</p>
-
-        <div className={`shrink-0 rounded-md p-2 text-sm ${colors[color]}`}>
-          {icon}
-        </div>
-      </div>
-
-      <h3 className="mt-2 break-words text-base font-bold text-gray-800 sm:text-lg">
+      <p
+        dir={direction}
+        className="mt-2 break-words text-sm font-semibold text-slate-700"
+      >
         {value}
-      </h3>
+      </p>
     </div>
-  );
-}
-
-/* =========================================================
-   FINANCIAL CARD
-========================================================= */
-
-function FinancialCard({
-  title,
-  amount,
-  quantity,
-  icon,
-  color,
-}: {
-  title: string;
-  amount: number;
-  quantity: number;
-  icon: ReactNode;
-  color: string;
-}) {
-  const styles: Record<string, string> = {
-    green: "bg-green-50 text-green-700",
-    blue: "bg-blue-50 text-blue-700",
-  };
-
-  return (
-    <div className="rounded-lg border border-gray-100 bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-xs font-bold text-gray-800">
-          {icon}
-          {title}
-        </h3>
-
-        <span className={`rounded-md p-2 ${styles[color]}`}>{icon}</span>
-      </div>
-
-      <p className="mt-3 text-[10px] text-gray-400">إجمالي القيمة</p>
-
-      <h2 className="mt-1 text-lg font-bold text-gray-800">{money(amount)}</h2>
-
-      <div className="mt-3 flex items-center justify-between border-t pt-2">
-        <span className="text-[10px] text-gray-400">إجمالي الكمية</span>
-
-        <span className="text-xs font-bold text-gray-800">
-          {quantityFormat(quantity)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   MINI STAT
-========================================================= */
-
-function MiniStat({
-  title,
-  value,
-  color,
-}: {
-  title: string;
-  value: string;
-  color: string;
-}) {
-  const styles: Record<string, string> = {
-    green: "bg-green-50 text-green-700",
-    orange: "bg-orange-50 text-orange-700",
-    red: "bg-red-50 text-red-700",
-  };
-
-  return (
-    <div className={`rounded-md p-3 ${styles[color]}`}>
-      <p className="text-[10px] opacity-80">{title}</p>
-
-      <p className="mt-1 text-sm font-bold">{value}</p>
-    </div>
-  );
-}
-
-/* =========================================================
-   EXPIRY BADGE
-========================================================= */
-
-function ExpiryBadge({ status }: { status: ExpiryStatus }) {
-  if (status === "expired") {
-    return (
-      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-red-50 px-2 py-1 text-[9px] text-red-700">
-        <FiXCircle />
-        منتهي
-      </span>
-    );
-  }
-
-  if (status === "near") {
-    return (
-      <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-orange-50 px-2 py-1 text-[9px] text-orange-700">
-        <FiAlertTriangle />
-        قريب الانتهاء
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-green-50 px-2 py-1 text-[9px] text-green-700">
-      <FiCheckCircle />
-      صالح
-    </span>
   );
 }

@@ -1,91 +1,98 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import { useRouter } from "next/navigation";
-import axios from "axios";
 
 import {
   FiArrowRight,
   FiPlus,
   FiTrash2,
   FiSave,
-  FiCheckCircle,
+  FiRefreshCw,
+  FiBookOpen,
   FiCalendar,
   FiFileText,
-  FiBookOpen,
+  FiDollarSign,
+  FiCheckCircle,
   FiAlertCircle,
-  FiRefreshCw,
 } from "react-icons/fi";
 
 import { toast } from "sonner";
 
-import { logCreate } from "@/app/(erp)/erp/lib/activity";
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
-// ============================================
-// API
-// ============================================
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-// ============================================
+// ==========================================
 // Types
-// ============================================
-
-type JournalStatus = "draft" | "posted";
+// ==========================================
 
 interface CurrentUser {
-  id: number | string;
-  name: string;
+  id: string;
   username: string;
+  name: string;
   type: string;
   role: string;
-  companyId?: string;
-  companyname?: string;
+  companyId: string;
+  isActive?: boolean;
+  status?: string;
 }
 
 interface Account {
-  id: number | string;
+  id: string;
   companyId: string;
-
-  code?: string;
-  accountCode?: string;
-
-  name?: string;
-  accountName?: string;
-
+  code: string;
+  name: string;
   type?: string;
   nature?: string;
-
-  allowPosting?: boolean;
-  isActive?: boolean;
+  parentId?: string | null;
   isGroup?: boolean;
-}
-
-interface Journal {
-  id: number | string;
-  journalNumber: string;
-  companyId: string;
-  status: JournalStatus | "cancelled";
+  isActive?: boolean;
+  status?: string;
+  extra?: Record<string, any>;
 }
 
 interface JournalLineForm {
-  tempId: string;
+  rowId: string;
   accountId: string;
   debit: string;
   credit: string;
   description: string;
 }
 
-// ============================================
+interface JournalPayload {
+  id: string;
+  journalNumber: string;
+  date: string;
+  description: string;
+  reference: string;
+  status: string;
+  totalDebit: number;
+  totalCredit: number;
+  companyId: string;
+  createdBy: string;
+  createdById: string;
+  createdByName: string;
+  createdAt: string;
+}
+
+interface JournalLinePayload {
+  id: string;
+  journalId: string;
+  accountId: string;
+  debit: number;
+  credit: number;
+  description: string;
+  companyId: string;
+  createdBy: string;
+  createdById: string;
+  createdByName: string;
+  createdAt: string;
+}
+
+// ==========================================
 // Helpers
-// ============================================
+// ==========================================
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -96,37 +103,59 @@ function getCookie(name: string): string | null {
 
   if (!cookie) return null;
 
-  return decodeURIComponent(cookie.substring(name.length + 1));
-}
+  const value = cookie.substring(name.length + 1);
 
-function getLocalDate() {
-  const date = new Date();
-
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("ar-YE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value || 0);
+  }).format(Number(value) || 0);
 }
 
-function getAccountCode(account: Account) {
-  return account.code || account.accountCode || "";
+function getToday() {
+  const now = new Date();
+
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
-function getAccountName(account: Account) {
-  return account.name || account.accountName || "";
+function getAccountExtra(account: Account) {
+  return account.extra || {};
+}
+
+function canPostAccount(account: Account) {
+  const extra = getAccountExtra(account);
+
+  const allowPosting =
+    extra.allowPosting === true || extra.allowPosting === "true";
+
+  const isActive = account.isActive === true || account.status === "active";
+
+  return (
+    account.isGroup !== true &&
+    account.parentId !== undefined &&
+    isActive &&
+    allowPosting
+  );
+}
+
+function getAccountDisplayName(account: Account) {
+  return `${account.code || ""} - ${account.name || ""}`;
 }
 
 function createEmptyLine(): JournalLineForm {
   return {
-    tempId: `${Date.now()}-${Math.random()}`,
+    rowId: crypto.randomUUID(),
     accountId: "",
     debit: "",
     credit: "",
@@ -134,15 +163,23 @@ function createEmptyLine(): JournalLineForm {
   };
 }
 
-// ============================================
+function getNumericValue(value: string) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+// ==========================================
 // Page
-// ============================================
+// ==========================================
 
 export default function CreateJournalPage() {
   const router = useRouter();
 
+  // ========================================
   // User
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  // ========================================
+
+  const [user, setUser] = useState<CurrentUser | null>(null);
 
   const [companyId, setCompanyId] = useState("");
 
@@ -150,16 +187,19 @@ export default function CreateJournalPage() {
 
   const [userError, setUserError] = useState("");
 
+  // ========================================
   // Accounts
+  // ========================================
+
   const [accounts, setAccounts] = useState<Account[]>([]);
 
   const [accountsLoading, setAccountsLoading] = useState(false);
 
-  // Existing journals
-  const [journals, setJournals] = useState<Journal[]>([]);
-
+  // ========================================
   // Form
-  const [journalDate, setJournalDate] = useState(getLocalDate());
+  // ========================================
+
+  const [date, setDate] = useState(getToday());
 
   const [description, setDescription] = useState("");
 
@@ -170,15 +210,16 @@ export default function CreateJournalPage() {
     createEmptyLine(),
   ]);
 
-  // Save
   const [saving, setSaving] = useState(false);
 
-  // ============================================
-  // Load current user
-  // ============================================
+  const [formError, setFormError] = useState("");
+
+  // ========================================
+  // Load User
+  // ========================================
 
   useEffect(() => {
-    let mounted = true;
+    let ignore = false;
 
     async function loadUser() {
       try {
@@ -188,43 +229,58 @@ export default function CreateJournalPage() {
         const username = getCookie("username");
 
         if (!username) {
-          throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
+          throw new Error("يرجى تسجيل الدخول مجدداً");
         }
 
-        const response = await api.get<CurrentUser[]>("/users", {
-          params: { username },
-        });
+        const userData = await getUserByUsername(username);
 
-        const user = response.data.find((item) => item.username === username);
-
-        if (!user) {
+        if (!userData) {
           throw new Error("المستخدم غير موجود");
         }
 
-        if (user.type === "platform") {
-          throw new Error("مستخدم المنصة لا يستطيع إنشاء قيود الشركة");
+        if (userData.username !== username) {
+          throw new Error("بيانات المستخدم غير صحيحة");
         }
 
-        if (!user.companyId) {
-          throw new Error("المستخدم غير مرتبط بأي شركة");
+        if (userData.type === "platform") {
+          throw new Error("مستخدم المنصة لا يمكنه إنشاء قيود الشركة");
         }
 
-        if (!mounted) return;
+        if (!userData.companyId) {
+          throw new Error("المستخدم غير مرتبط بشركة");
+        }
 
-        setCurrentUser(user);
-        setCompanyId(String(user.companyId));
+        if (userData.isActive === false || userData.status === "inactive") {
+          throw new Error("هذا الحساب غير نشط");
+        }
+
+        if (ignore) return;
+
+        const normalizedUser: CurrentUser = {
+          id: String(userData.id),
+          username: userData.username,
+          name: userData.name || userData.username,
+          type: userData.type,
+          role: userData.role,
+          companyId: String(userData.companyId),
+          isActive: userData.isActive,
+          status: userData.status,
+        };
+
+        setUser(normalizedUser);
+        setCompanyId(String(userData.companyId));
       } catch (error) {
-        const message = axios.isAxiosError(error)
-          ? error.response?.data?.message || "تعذر الاتصال بالخادم"
-          : error instanceof Error
-            ? error.message
-            : "حدث خطأ غير متوقع";
+        console.error("Load User Error:", error);
 
-        if (mounted) {
-          setUserError(message);
+        if (!ignore) {
+          setUserError(
+            error instanceof Error
+              ? error.message
+              : "تعذر تحميل بيانات المستخدم",
+          );
         }
       } finally {
-        if (mounted) {
+        if (!ignore) {
           setUserLoading(false);
         }
       }
@@ -233,419 +289,348 @@ export default function CreateJournalPage() {
     void loadUser();
 
     return () => {
-      mounted = false;
+      ignore = true;
     };
   }, []);
 
-  // ============================================
-  // Load company accounts and journals
-  // ============================================
+  // ========================================
+  // Load Accounts
+  // ========================================
 
-  useEffect(() => {
+  const fetchAccounts = useCallback(async () => {
     if (!companyId) return;
 
-    let mounted = true;
+    try {
+      setAccountsLoading(true);
 
-    async function loadData() {
-      try {
-        setAccountsLoading(true);
+      const { data, error } = await supabase
+        .from("accounts")
+        .select("*")
+        .eq("companyId", companyId);
 
-        const [accountsResponse, journalsResponse] = await Promise.all([
-          api.get<Account[]>("/accounts", {
-            params: { companyId },
-          }),
+      if (error) throw error;
 
-          api.get<Journal[]>("/journals", {
-            params: { companyId },
-          }),
-        ]);
+      const normalizedAccounts = (data || []) as Account[];
 
-        if (!mounted) return;
+      const companyAccounts = normalizedAccounts.filter(
+        (account) =>
+          String(account.companyId) === companyId && canPostAccount(account),
+      );
 
-        const companyAccounts = accountsResponse.data.filter(
-          (account) =>
-            String(account.companyId) === companyId &&
-            account.allowPosting === true &&
-            account.isActive === true &&
-            account.isGroup !== true,
-        );
+      setAccounts(companyAccounts);
+    } catch (error) {
+      console.error("Fetch Accounts Error:", error);
 
-        const companyJournals = journalsResponse.data.filter(
-          (journal) => String(journal.companyId) === companyId,
-        );
-
-        setAccounts(companyAccounts);
-        setJournals(companyJournals);
-      } catch (error) {
-        console.error("Load Journal Data:", error);
-
-        toast.error("تعذر تحميل الحسابات المحاسبية");
-      } finally {
-        if (mounted) {
-          setAccountsLoading(false);
-        }
-      }
+      toast.error(
+        error instanceof Error ? error.message : "تعذر تحميل الحسابات",
+      );
+    } finally {
+      setAccountsLoading(false);
     }
-
-    void loadData();
-
-    return () => {
-      mounted = false;
-    };
   }, [companyId]);
 
-  // ============================================
-  // Totals
-  // ============================================
+  useEffect(() => {
+    if (companyId) {
+      void fetchAccounts();
+    }
+  }, [companyId, fetchAccounts]);
+
+  // ========================================
+  // Update Line
+  // ========================================
+
+  const updateLine = (
+    rowId: string,
+    field: keyof JournalLineForm,
+    value: string,
+  ) => {
+    setLines((previous) =>
+      previous.map((line) => {
+        if (line.rowId !== rowId) return line;
+
+        const updated = {
+          ...line,
+          [field]: value,
+        };
+
+        if (field === "debit" && value !== "") {
+          updated.credit = "";
+        }
+
+        if (field === "credit" && value !== "") {
+          updated.debit = "";
+        }
+
+        return updated;
+      }),
+    );
+
+    setFormError("");
+  };
+
+  // ========================================
+  // Add Line
+  // ========================================
+
+  const addLine = () => {
+    setLines((previous) => [...previous, createEmptyLine()]);
+  };
+
+  // ========================================
+  // Remove Line
+  // ========================================
+
+  const removeLine = (rowId: string) => {
+    if (lines.length <= 2) {
+      toast.error("يجب أن يحتوي القيد على سطرين على الأقل");
+      return;
+    }
+
+    setLines((previous) => previous.filter((line) => line.rowId !== rowId));
+  };
+
+  // ========================================
+  // Calculations
+  // ========================================
 
   const totalDebit = useMemo(() => {
-    return lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
+    return lines.reduce((sum, line) => sum + getNumericValue(line.debit), 0);
   }, [lines]);
 
   const totalCredit = useMemo(() => {
-    return lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+    return lines.reduce((sum, line) => sum + getNumericValue(line.credit), 0);
   }, [lines]);
 
   const difference = totalDebit - totalCredit;
 
   const isBalanced = Math.abs(difference) < 0.01;
 
-  // ============================================
-  // Journal number
-  // ============================================
+  // ========================================
+  // Validate Form
+  // ========================================
 
-  const journalNumber = useMemo(() => {
-    const currentYear = new Date(journalDate).getFullYear();
-
-    const prefix = `JV-${currentYear}-`;
-
-    const numbers = journals
-      .filter((journal) => journal.journalNumber?.startsWith(prefix))
-      .map((journal) => {
-        const number = Number(journal.journalNumber.substring(prefix.length));
-
-        return Number.isFinite(number) ? number : 0;
-      });
-
-    const nextNumber = Math.max(0, ...numbers) + 1;
-
-    return `${prefix}${String(nextNumber).padStart(4, "0")}`;
-  }, [journals, journalDate]);
-
-  // ============================================
-  // Line handlers
-  // ============================================
-
-  function handleAddLine() {
-    setLines((prev) => [...prev, createEmptyLine()]);
-  }
-
-  function handleRemoveLine(tempId: string) {
-    if (lines.length <= 2) {
-      toast.error("يجب أن يحتوي القيد على سطرين على الأقل");
-      return;
-    }
-
-    setLines((prev) => prev.filter((line) => line.tempId !== tempId));
-  }
-
-  function handleLineChange(
-    tempId: string,
-    field: keyof JournalLineForm,
-    value: string,
-  ) {
-    setLines((prev) =>
-      prev.map((line) => {
-        if (line.tempId !== tempId) return line;
-
-        if (field === "debit" || field === "credit") {
-          if (value !== "" && Number(value) < 0) {
-            return line;
-          }
-
-          return {
-            ...line,
-            [field]: value,
-
-            // لا نسمح بإدخال مدين ودائن في السطر نفسه
-            [field === "debit" ? "credit" : "debit"]:
-              value !== "" && Number(value) > 0
-                ? ""
-                : line[field === "debit" ? "credit" : "debit"],
-          };
-        }
-
-        return {
-          ...line,
-          [field]: value,
-        };
-      }),
-    );
-  }
-
-  // ============================================
-  // Validate
-  // ============================================
-
-  function validateForm(status: JournalStatus) {
-    if (!journalDate) {
-      toast.error("يرجى تحديد تاريخ القيد");
-      return false;
+  const validateForm = () => {
+    if (!date) {
+      return "يرجى تحديد تاريخ القيد";
     }
 
     if (!description.trim()) {
-      toast.error("يرجى إدخال بيان القيد");
-      return false;
+      return "يرجى إدخال بيان القيد";
     }
 
     if (lines.length < 2) {
-      toast.error("يجب إضافة سطرين على الأقل");
-      return false;
+      return "يجب إضافة سطرين على الأقل";
     }
 
-    const validLines = lines.filter(
-      (line) =>
-        line.accountId &&
-        (Number(line.debit || 0) > 0 || Number(line.credit || 0) > 0),
-    );
+    const selectedAccounts = new Set<string>();
 
-    if (validLines.length < 2) {
-      toast.error("يجب تحديد حسابين على الأقل مع إدخال المبالغ");
-      return false;
-    }
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index];
 
-    for (const line of lines) {
-      const debit = Number(line.debit || 0);
-      const credit = Number(line.credit || 0);
+      if (!line.accountId) {
+        return `يرجى اختيار الحساب في السطر رقم ${index + 1}`;
+      }
+
+      if (selectedAccounts.has(line.accountId)) {
+        return `الحساب مكرر في السطر رقم ${index + 1}`;
+      }
+
+      selectedAccounts.add(line.accountId);
+
+      const debit = getNumericValue(line.debit);
+      const credit = getNumericValue(line.credit);
 
       if (debit < 0 || credit < 0) {
-        toast.error("لا يمكن إدخال مبالغ سالبة");
-        return false;
+        return `لا يمكن إدخال مبلغ سالب في السطر رقم ${index + 1}`;
       }
 
       if (debit > 0 && credit > 0) {
-        toast.error("لا يمكن أن يكون السطر مدينًا ودائنًا في الوقت نفسه");
-        return false;
+        return `لا يمكن إدخال مدين ودائن معاً في السطر رقم ${index + 1}`;
       }
 
-      if ((debit > 0 || credit > 0) && !line.accountId) {
-        toast.error("يرجى اختيار الحساب لكل سطر يحتوي على مبلغ");
-        return false;
+      if (debit === 0 && credit === 0) {
+        return `يرجى إدخال مبلغ مدين أو دائن في السطر رقم ${index + 1}`;
       }
 
-      if (
-        line.accountId &&
-        !accounts.some(
-          (account) => String(account.id) === String(line.accountId),
-        )
-      ) {
-        toast.error("يوجد حساب غير صالح أو لا يتبع الشركة الحالية");
-        return false;
+      const account = accounts.find(
+        (item) => String(item.id) === line.accountId,
+      );
+
+      if (!account) {
+        return `الحساب المحدد في السطر رقم ${index + 1} غير صالح`;
       }
     }
 
     if (totalDebit <= 0 || totalCredit <= 0) {
-      toast.error("يجب إدخال مبالغ مدينة ودائنة");
-      return false;
+      return "يجب إدخال مبالغ في جانبي المدين والدائن";
     }
 
-    if (status === "posted" && !isBalanced) {
-      toast.error(
-        `القيد غير متوازن. الفرق: ${formatCurrency(Math.abs(difference))}`,
-      );
-      return false;
+    if (!isBalanced) {
+      return "القيد غير متوازن، يجب أن يتساوى المدين مع الدائن";
     }
 
-    return true;
-  }
+    return "";
+  };
 
-  // ============================================
+  // ========================================
+  // Generate Journal Number
+  // ========================================
+
+  const generateJournalNumber = async () => {
+    const year = new Date(date).getFullYear();
+
+    const { data, error } = await supabase
+      .from("journals")
+      .select("journalNumber")
+      .eq("companyId", companyId);
+
+    if (error) throw error;
+
+    let maxNumber = 0;
+
+    (data || []).forEach((journal: any) => {
+      const number = String(journal.journalNumber || "");
+
+      const match = number.match(new RegExp(`^JV-${year}-(\\d+)$`));
+
+      if (match) {
+        maxNumber = Math.max(maxNumber, Number(match[1]));
+      }
+    });
+
+    const nextNumber = String(maxNumber + 1).padStart(4, "0");
+
+    return `JV-${year}-${nextNumber}`;
+  };
+
+  // ========================================
   // Save Journal
-  // ============================================
+  // ========================================
 
-  async function handleSave(status: JournalStatus) {
+  const handleSubmit = async () => {
     if (saving) return;
 
-    if (!currentUser || !companyId) {
-      toast.error("بيانات المستخدم أو الشركة غير مكتملة");
+    setFormError("");
+
+    const validationError = validateForm();
+
+    if (validationError) {
+      setFormError(validationError);
+      toast.error(validationError);
       return;
     }
 
-    if (!validateForm(status)) return;
+    if (!user || !companyId) {
+      toast.error("بيانات المستخدم أو الشركة غير متوفرة");
+      return;
+    }
 
-    const confirmed =
-      status === "posted"
-        ? window.confirm(
-            "هل تريد حفظ القيد وترحيله؟ بعد الترحيل سيؤثر في القوائم المالية.",
-          )
-        : true;
-
-    if (!confirmed) return;
+    let createdJournalId = "";
 
     try {
       setSaving(true);
 
+      const journalId = crypto.randomUUID();
+
+      createdJournalId = journalId;
+
       const now = new Date().toISOString();
 
-      const validLines = lines.filter(
-        (line) =>
-          line.accountId &&
-          (Number(line.debit || 0) > 0 || Number(line.credit || 0) > 0),
-      );
+      const journalNumber = await generateJournalNumber();
 
-      // ========================================
-      // Create Journal
-      // ========================================
+      // ====================================
+      // Prepare Journal Header
+      // ====================================
 
-      const journalData = {
+      const journalPayload: JournalPayload = {
+        id: journalId,
         journalNumber,
-
-        date: journalDate,
-
+        date,
         description: description.trim(),
-
         reference: reference.trim(),
-
-        status,
-
+        status: "draft",
         totalDebit,
-
         totalCredit,
-
         companyId,
-
-        // بيانات المنشئ
-        createdBy: String(currentUser.id),
-
-        createdById: String(currentUser.id),
-
-        createdByName: currentUser.name || currentUser.username,
-
+        createdBy: user.username,
+        createdById: user.id,
+        createdByName: user.name,
         createdAt: now,
-
-        // بيانات الترحيل
-        ...(status === "posted"
-          ? {
-              postedBy: String(currentUser.id),
-              postedById: String(currentUser.id),
-              postedByName: currentUser.name || currentUser.username,
-              postedAt: now,
-            }
-          : {}),
       };
 
-      const journalResponse = await api.post("/journals", journalData);
+      // ====================================
+      // Insert Journal
+      // ====================================
 
-      const createdJournal = journalResponse.data;
+      const { error: journalError } = await supabase
+        .from("journals")
+        .insert(journalPayload);
 
-      // ========================================
-      // Create Journal Lines
-      // ========================================
+      if (journalError) throw journalError;
 
-      const createdLineIds: string[] = [];
+      // ====================================
+      // Prepare Journal Lines
+      // ====================================
 
-      try {
-        for (const line of validLines) {
-          const account = accounts.find(
-            (item) => String(item.id) === String(line.accountId),
-          );
+      const journalLinesPayload: JournalLinePayload[] = lines.map((line) => ({
+        id: crypto.randomUUID(),
+        journalId,
+        accountId: line.accountId,
+        debit: getNumericValue(line.debit),
+        credit: getNumericValue(line.credit),
+        description: line.description.trim(),
+        companyId,
+        createdBy: user.username,
+        createdById: user.id,
+        createdByName: user.name,
+        createdAt: now,
+      }));
 
-          if (!account) {
-            throw new Error("الحساب المحدد غير موجود");
-          }
+      // ====================================
+      // Insert Journal Lines
+      // ====================================
 
-          const lineData = {
-            journalId: createdJournal.id,
+      const { error: linesError } = await supabase
+        .from("journalLines")
+        .insert(journalLinesPayload);
 
-            accountId: line.accountId,
-
-            debit: Number(line.debit || 0),
-
-            credit: Number(line.credit || 0),
-
-            description: line.description.trim() || description.trim(),
-
-            companyId,
-
-            createdBy: String(currentUser.id),
-
-            createdById: String(currentUser.id),
-
-            createdByName: currentUser.name || currentUser.username,
-
-            createdAt: now,
-          };
-
-          const lineResponse = await api.post("/journalLines", lineData);
-
-          createdLineIds.push(String(lineResponse.data.id));
-        }
-      } catch (lineError) {
-        // محاولة التراجع عند فشل حفظ أحد السطور
-        for (const lineId of createdLineIds) {
-          try {
-            await api.delete(`/journalLines/${lineId}`);
-          } catch (rollbackError) {
-            console.error("Rollback Line Error:", rollbackError);
-          }
-        }
-
-        try {
-          await api.delete(`/journals/${createdJournal.id}`);
-        } catch (rollbackError) {
-          console.error("Rollback Journal Error:", rollbackError);
-        }
-
-        throw lineError;
+      if (linesError) {
+        throw linesError;
       }
 
-      // ========================================
-      // Activity Log
-      // ========================================
-
-      await logCreate(
-        "accounting.journals",
-        status === "posted"
-          ? `إنشاء وترحيل القيد رقم ${journalNumber}`
-          : `إنشاء مسودة القيد رقم ${journalNumber}`,
-        createdJournal.id,
-        journalNumber,
-        {
-          ...journalData,
-          lines: validLines.map((line) => ({
-            accountId: line.accountId,
-            debit: Number(line.debit || 0),
-            credit: Number(line.credit || 0),
-          })),
-        },
-      );
-
-      toast.success(
-        status === "posted"
-          ? "تم إنشاء القيد وترحيله بنجاح"
-          : "تم حفظ القيد كمسودة بنجاح",
-      );
+      toast.success(`تم إنشاء القيد ${journalNumber} بنجاح`);
 
       router.push("/erp/accounting/journals");
       router.refresh();
     } catch (error) {
-      console.error("Save Journal Error:", error);
+      console.error("Create Journal Error:", error);
 
-      toast.error(
-        axios.isAxiosError(error)
-          ? error.response?.data?.message || "تعذر حفظ القيد اليومي"
-          : error instanceof Error
-            ? error.message
-            : "حدث خطأ أثناء حفظ القيد",
-      );
+      // إذا فشل حفظ السطور، نحاول حذف رأس القيد
+      if (createdJournalId) {
+        const { error: rollbackError } = await supabase
+          .from("journals")
+          .delete()
+          .eq("id", createdJournalId)
+          .eq("companyId", companyId);
+
+        if (rollbackError) {
+          console.error("Journal Rollback Error:", rollbackError);
+        }
+      }
+
+      const message =
+        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ القيد";
+
+      setFormError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  // ============================================
-  // Loading
-  // ============================================
+  // ========================================
+  // Loading User
+  // ========================================
 
   if (userLoading) {
     return (
@@ -664,9 +649,9 @@ export default function CreateJournalPage() {
     );
   }
 
-  // ============================================
+  // ========================================
   // User Error
-  // ============================================
+  // ========================================
 
   if (userError || !companyId) {
     return (
@@ -675,6 +660,8 @@ export default function CreateJournalPage() {
         className="flex min-h-screen items-center justify-center bg-slate-50 p-5"
       >
         <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-8 text-center shadow-sm">
+          <FiAlertCircle size={35} className="mx-auto mb-3 text-red-500" />
+
           <h2 className="font-bold text-red-600">تعذر فتح صفحة إنشاء القيد</h2>
 
           <p className="mt-3 text-sm text-slate-600">
@@ -692,9 +679,9 @@ export default function CreateJournalPage() {
     );
   }
 
-  // ============================================
+  // ========================================
   // UI
-  // ============================================
+  // ========================================
 
   return (
     <div
@@ -705,30 +692,27 @@ export default function CreateJournalPage() {
 
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => router.push("/erp/accounting/journals")}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-              title="العودة إلى القيود اليومية"
-            >
-              <FiArrowRight size={18} />
-            </button>
+          <button
+            onClick={() => router.push("/erp/accounting/journals")}
+            className="mb-3 inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-blue-600"
+          >
+            <FiArrowRight />
+            العودة إلى القيود اليومية
+          </button>
 
-            <h1 className="text-2xl font-bold text-slate-900">
-              إنشاء قيد يومي
-            </h1>
-          </div>
+          <h1 className="text-2xl font-bold text-slate-900">إنشاء قيد يومي</h1>
 
-          <p className="mt-3 text-sm text-slate-500">
-            تسجيل عملية مالية جديدة في الحسابات المحاسبية
+          <p className="mt-2 text-sm text-slate-500">
+            تسجيل عملية مالية جديدة في دفتر القيود اليومية
           </p>
+        </div>
 
-          <p className="mt-2 text-sm text-blue-700">
-            الشركة:{" "}
-            <span className="font-semibold">
-              {currentUser?.companyname || "الشركة الحالية"}
-            </span>
-          </p>
+        <div className="flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+          <FiBookOpen size={18} />
+
+          <span>
+            الشركة: <strong>{user?.name ? user.name : "الشركة الحالية"}</strong>
+          </span>
         </div>
       </div>
 
@@ -741,39 +725,25 @@ export default function CreateJournalPage() {
           <h2 className="font-bold text-slate-800">بيانات القيد</h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-          {/* Journal Number */}
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-slate-700">
-              رقم القيد
-            </label>
-
-            <input
-              value={journalNumber}
-              readOnly
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-semibold text-blue-700 outline-none"
-            />
-          </div>
-
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           {/* Date */}
 
           <div>
-            <label className="mb-2 block text-sm font-semibold text-slate-700">
-              تاريخ القيد
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              تاريخ القيد <span className="text-red-500">*</span>
             </label>
 
             <div className="relative">
               <FiCalendar
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                size={17}
+                size={18}
               />
 
               <input
                 type="date"
-                value={journalDate}
-                onChange={(e) => setJournalDate(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-3 pr-10 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-3 pl-3 pr-10 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
           </div>
@@ -781,45 +751,32 @@ export default function CreateJournalPage() {
           {/* Reference */}
 
           <div>
-            <label className="mb-2 block text-sm font-semibold text-slate-700">
+            <label className="mb-2 block text-sm font-medium text-slate-700">
               المرجع
             </label>
 
             <input
+              type="text"
               value={reference}
               onChange={(e) => setReference(e.target.value)}
-              placeholder="رقم الفاتورة أو المرجع"
-              className="w-full rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-
-          {/* Created By */}
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-slate-700">
-              منشئ القيد
-            </label>
-
-            <input
-              value={currentUser?.name || currentUser?.username || ""}
-              readOnly
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600 outline-none"
+              placeholder="رقم المرجع أو المستند"
+              className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </div>
 
           {/* Description */}
 
-          <div className="md:col-span-2 xl:col-span-4">
-            <label className="mb-2 block text-sm font-semibold text-slate-700">
-              بيان القيد *
+          <div className="md:col-span-2">
+            <label className="mb-2 block text-sm font-medium text-slate-700">
+              بيان القيد <span className="text-red-500">*</span>
             </label>
 
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              placeholder="اكتب وصفًا واضحًا للعملية المالية..."
-              className="w-full resize-none rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              placeholder="اكتب وصفاً واضحاً للعملية المالية..."
+              className="w-full resize-y rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </div>
         </div>
@@ -830,23 +787,17 @@ export default function CreateJournalPage() {
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <FiBookOpen className="text-blue-600" size={20} />
-
-              <h2 className="font-bold text-slate-800">
-                تفاصيل القيد المحاسبي
-              </h2>
-            </div>
+            <h2 className="font-bold text-slate-800">تفاصيل القيد</h2>
 
             <p className="mt-1 text-xs text-slate-500">
-              اختر الحسابات وأدخل المبالغ المدينة والدائنة
+              أضف الحسابات والمبالغ المدينة والدائنة
             </p>
           </div>
 
           <button
             type="button"
-            onClick={handleAddLine}
-            className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+            onClick={addLine}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
           >
             <FiPlus size={17} />
             إضافة سطر
@@ -854,7 +805,7 @@ export default function CreateJournalPage() {
         </div>
 
         {accountsLoading ? (
-          <div className="py-14 text-center text-slate-500">
+          <div className="py-12 text-center text-sm text-slate-500">
             جارٍ تحميل الحسابات...
           </div>
         ) : accounts.length === 0 ? (
@@ -866,124 +817,118 @@ export default function CreateJournalPage() {
             </h3>
 
             <p className="mt-2 text-sm text-slate-500">
-              تأكد من وجود حسابات نشطة ومسموح لها بالترحيل في دليل الحسابات.
+              يرجى التأكد من إعداد شجرة الحسابات وتفعيل الحسابات القابلة
+              للترحيل.
             </p>
+
+            <button
+              type="button"
+              onClick={() => router.push("/erp/accounting/accounts")}
+              className="mt-4 text-sm font-medium text-blue-600 hover:underline"
+            >
+              الانتقال إلى شجرة الحسابات
+            </button>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[950px] text-right text-sm">
+            <table className="w-full min-w-[1050px] text-right text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
-                  <th className="w-16 px-4 py-4 text-center">#</th>
+                  <th className="w-12 px-4 py-4 text-center">#</th>
 
-                  <th className="px-4 py-4">الحساب المحاسبي</th>
+                  <th className="px-4 py-4">الحساب</th>
 
                   <th className="px-4 py-4">البيان</th>
 
-                  <th className="w-48 px-4 py-4">مدين</th>
+                  <th className="w-44 px-4 py-4">مدين</th>
 
-                  <th className="w-48 px-4 py-4">دائن</th>
+                  <th className="w-44 px-4 py-4">دائن</th>
 
-                  <th className="w-20 px-4 py-4 text-center">حذف</th>
+                  <th className="w-16 px-4 py-4 text-center">حذف</th>
                 </tr>
               </thead>
 
               <tbody className="divide-y divide-slate-100">
                 {lines.map((line, index) => (
-                  <tr
-                    key={line.tempId}
-                    className="transition hover:bg-slate-50"
-                  >
-                    <td className="px-4 py-4 text-center font-semibold text-slate-500">
+                  <tr key={line.rowId} className="transition hover:bg-slate-50">
+                    <td className="px-4 py-4 text-center text-slate-500">
                       {index + 1}
                     </td>
 
                     {/* Account */}
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-4">
                       <select
                         value={line.accountId}
                         onChange={(e) =>
-                          handleLineChange(
-                            line.tempId,
-                            "accountId",
-                            e.target.value,
-                          )
+                          updateLine(line.rowId, "accountId", e.target.value)
                         }
-                        className="w-full min-w-[250px] rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-blue-500"
+                        className="w-full min-w-[230px] rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       >
                         <option value="">اختر الحساب</option>
 
                         {accounts.map((account) => (
-                          <option key={account.id} value={String(account.id)}>
-                            {getAccountCode(account)} -{" "}
-                            {getAccountName(account)}
+                          <option key={account.id} value={account.id}>
+                            {getAccountDisplayName(account)}
                           </option>
                         ))}
                       </select>
                     </td>
 
-                    {/* Line Description */}
+                    {/* Description */}
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-4">
                       <input
+                        type="text"
                         value={line.description}
                         onChange={(e) =>
-                          handleLineChange(
-                            line.tempId,
-                            "description",
-                            e.target.value,
-                          )
+                          updateLine(line.rowId, "description", e.target.value)
                         }
                         placeholder="بيان السطر"
-                        className="w-full min-w-[160px] rounded-lg border border-slate-300 px-3 py-3 text-sm outline-none focus:border-blue-500"
+                        className="w-full min-w-[180px] rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
                       />
                     </td>
 
                     {/* Debit */}
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-4">
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         value={line.debit}
                         onChange={(e) =>
-                          handleLineChange(line.tempId, "debit", e.target.value)
+                          updateLine(line.rowId, "debit", e.target.value)
                         }
                         placeholder="0.00"
-                        className="w-full rounded-lg border border-slate-300 px-3 py-3 text-left text-sm outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-left text-sm outline-none focus:border-blue-500"
                       />
                     </td>
 
                     {/* Credit */}
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-4">
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         value={line.credit}
                         onChange={(e) =>
-                          handleLineChange(
-                            line.tempId,
-                            "credit",
-                            e.target.value,
-                          )
+                          updateLine(line.rowId, "credit", e.target.value)
                         }
                         placeholder="0.00"
-                        className="w-full rounded-lg border border-slate-300 px-3 py-3 text-left text-sm outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-left text-sm outline-none focus:border-blue-500"
                       />
                     </td>
 
                     {/* Delete */}
 
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-4 text-center">
                       <button
                         type="button"
-                        onClick={() => handleRemoveLine(line.tempId)}
+                        onClick={() => removeLine(line.rowId)}
                         title="حذف السطر"
-                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-50 text-red-600 transition hover:bg-red-100"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-red-50 text-red-600 transition hover:bg-red-100"
                       >
                         <FiTrash2 size={16} />
                       </button>
@@ -992,11 +937,13 @@ export default function CreateJournalPage() {
                 ))}
               </tbody>
 
-              <tfoot className="border-t border-slate-200 bg-slate-50">
+              {/* Totals */}
+
+              <tfoot className="border-t-2 border-slate-200 bg-slate-50">
                 <tr>
                   <td
                     colSpan={3}
-                    className="px-4 py-4 text-left font-bold text-slate-700"
+                    className="px-4 py-4 font-bold text-slate-800"
                   >
                     الإجمالي
                   </td>
@@ -1017,110 +964,104 @@ export default function CreateJournalPage() {
         )}
       </div>
 
-      {/* Balance Status */}
+      {/* Balance Summary */}
 
-      <div
-        className={`rounded-xl border p-5 shadow-sm ${
-          isBalanced
-            ? "border-green-200 bg-green-50"
-            : "border-amber-200 bg-amber-50"
-        }`}
-      >
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+          <div className="flex items-center gap-2 text-sm text-blue-700">
+            <FiDollarSign size={18} />
+            إجمالي المدين
+          </div>
+
+          <p className="mt-3 text-xl font-bold text-blue-800">
+            {formatCurrency(totalDebit)}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-green-100 bg-green-50 p-5">
+          <div className="flex items-center gap-2 text-sm text-green-700">
+            <FiDollarSign size={18} />
+            إجمالي الدائن
+          </div>
+
+          <p className="mt-3 text-xl font-bold text-green-800">
+            {formatCurrency(totalCredit)}
+          </p>
+        </div>
+
+        <div
+          className={`rounded-xl border p-5 ${
+            isBalanced
+              ? "border-green-100 bg-green-50"
+              : "border-red-100 bg-red-50"
+          }`}
+        >
+          <div
+            className={`flex items-center gap-2 text-sm ${
+              isBalanced ? "text-green-700" : "text-red-700"
+            }`}
+          >
             {isBalanced ? (
-              <FiCheckCircle size={25} className="text-green-600" />
+              <FiCheckCircle size={18} />
             ) : (
-              <FiAlertCircle size={25} className="text-amber-600" />
+              <FiAlertCircle size={18} />
             )}
-
-            <div>
-              <h3
-                className={`font-bold ${
-                  isBalanced ? "text-green-800" : "text-amber-800"
-                }`}
-              >
-                {isBalanced ? "القيد متوازن" : "القيد غير متوازن"}
-              </h3>
-
-              <p className="mt-1 text-sm text-slate-600">
-                {isBalanced
-                  ? "إجمالي المدين يساوي إجمالي الدائن"
-                  : "يمكن حفظه كمسودة، لكن لا يمكن ترحيله قبل تحقيق التوازن"}
-              </p>
-            </div>
+            حالة التوازن
           </div>
 
-          <div className="text-left">
-            <p className="text-xs text-slate-500">الفرق</p>
-
-            <p
-              className={`mt-1 text-xl font-bold ${
-                isBalanced ? "text-green-700" : "text-amber-700"
-              }`}
-            >
-              {formatCurrency(Math.abs(difference))}
-            </p>
-          </div>
+          <p
+            className={`mt-3 text-xl font-bold ${
+              isBalanced ? "text-green-800" : "text-red-700"
+            }`}
+          >
+            {isBalanced
+              ? "القيد متوازن"
+              : `الفرق: ${formatCurrency(Math.abs(difference))}`}
+          </p>
         </div>
       </div>
 
-      {/* Save Buttons */}
+      {/* Error */}
 
-      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {formError && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <FiAlertCircle className="mt-0.5 shrink-0" size={18} />
+
+          <p>{formError}</p>
+        </div>
+      )}
+
+      {/* Actions */}
+
+      <div className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
         <button
           type="button"
           onClick={() => router.push("/erp/accounting/journals")}
           disabled={saving}
-          className="rounded-xl border border-slate-300 bg-white px-6 py-3 font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+          className="rounded-lg border border-slate-300 bg-white px-6 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
         >
           إلغاء
         </button>
 
-        <div className="flex flex-col gap-3 sm:flex-row">
-          {/* Save Draft */}
-
-          <button
-            type="button"
-            onClick={() => void handleSave("draft")}
-            disabled={saving || accountsLoading}
-            className="flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-6 py-3 font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {saving ? (
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={saving || accountsLoading || accounts.length === 0}
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving ? (
+            <>
               <FiRefreshCw className="animate-spin" />
-            ) : (
+              جارٍ حفظ القيد...
+            </>
+          ) : (
+            <>
               <FiSave size={18} />
-            )}
-            حفظ كمسودة
-          </button>
-
-          {/* Save and Post */}
-
-          <button
-            type="button"
-            onClick={() => void handleSave("posted")}
-            disabled={
-              saving || accountsLoading || !isBalanced || accounts.length === 0
-            }
-            className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {saving ? (
-              <FiRefreshCw className="animate-spin" />
-            ) : (
-              <FiCheckCircle size={18} />
-            )}
-            حفظ وترحيل
-          </button>
-        </div>
+              حفظ القيد كمسودة
+            </>
+          )}
+        </button>
       </div>
-
-      {/* Saving Message */}
-
-      {saving && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-center text-sm text-blue-700">
-          جارٍ حفظ القيد وتسجيل بيانات المستخدم...
-        </div>
-      )}
     </div>
   );
 }

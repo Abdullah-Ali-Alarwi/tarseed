@@ -1,42 +1,47 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { toast } from "sonner";
+
 import {
   FiArrowRight,
   FiPlus,
   FiTrash2,
   FiSave,
   FiRefreshCw,
+  FiAlertCircle,
 } from "react-icons/fi";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+import { supabase } from "@/lib/supabase";
 
-// =========================
+// =====================================
 // Types
-// =========================
+// =====================================
 
 interface CurrentUser {
-  id: number | string;
-  name: string;
+  id: string;
   username: string;
+  name?: string;
   type: string;
-  companyId?: string | number;
+  role?: string;
+  companyId: string;
+  isActive: boolean;
+  status: string;
 }
 
 interface Account {
-  id: number | string;
+  id: string;
   code: string;
   name: string;
   type: string;
-  nature?: "debit" | "credit";
-  parentId?: number | string | null;
+  nature?: string;
   isGroup: boolean;
   allowPosting: boolean;
-  isActive?: boolean;
-  companyId: string | number;
+  isActive: boolean;
+  status: string;
+  companyId: string;
 }
 
 interface OpeningEntryLine {
@@ -46,51 +51,164 @@ interface OpeningEntryLine {
 }
 
 interface OpeningEntryPayload {
-  accountId: string;
-  date: string;
-  debit: number;
-  credit: number;
-  description: string;
-  reference: string;
+  id: string;
   companyId: string;
-  createdBy: number | string;
+  extra: {
+    accountId: string;
+    date: string;
+    debit: number;
+    credit: number;
+    description: string;
+    reference: string;
+    createdBy: string;
+    createdByName: string;
+    createdAt: string;
+  };
   createdAt: string;
+  updatedAt: string;
 }
 
-// =========================
+// =====================================
 // Helpers
-// =========================
+// =====================================
 
 function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
+  if (typeof document === "undefined") {
+    return null;
+  }
 
   const cookie = document.cookie
     .split("; ")
     .find((item) => item.startsWith(`${name}=`));
 
-  if (!cookie) return null;
+  if (!cookie) {
+    return null;
+  }
 
-  return decodeURIComponent(cookie.substring(name.length + 1));
+  try {
+    return decodeURIComponent(cookie.substring(name.length + 1));
+  } catch {
+    return cookie.substring(name.length + 1);
+  }
 }
 
-function getTodayDate() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+function getTodayDate(): string {
+  const today = new Date();
+
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
 }
 
-const createEmptyLine = (): OpeningEntryLine => ({
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object") {
+    const err = error as {
+      message?: string;
+      details?: string;
+      hint?: string;
+    };
+
+    return err.message || err.details || err.hint || "حدث خطأ غير معروف";
+  }
+
+  return "حدث خطأ غير معروف";
+}
+
+function normalizeAccount(row: any): Account {
+  const extra = row.extra && typeof row.extra === "object" ? row.extra : {};
+
+  return {
+    id: String(row.id),
+    code: String(row.code ?? ""),
+    name: String(row.name ?? ""),
+    type: String(row.type ?? ""),
+    nature: row.nature ?? "",
+    isGroup: row.isGroup === true,
+
+    // allowPosting موجود داخل extra في بنية قاعدة البيانات.
+    allowPosting: extra.allowPosting === true || row.allowPosting === true,
+
+    isActive: row.isActive === true,
+    status: String(row.status ?? ""),
+    companyId: String(row.companyId ?? ""),
+  };
+}
+
+const emptyLine: OpeningEntryLine = {
   accountId: "",
   debit: "",
   credit: "",
-});
+};
 
-// =========================
-// Page
-// =========================
+// =====================================
+// Get Current User From Cookie
+// =====================================
+
+async function getCurrentUserFromCookie(): Promise<CurrentUser> {
+  // نبدأ بقراءة اسم المستخدم من Cookie.
+  const username = getCookie("username");
+
+  if (!username) {
+    throw new Error(
+      "لم يتم العثور على اسم المستخدم في ملفات تعريف الارتباط. يرجى تسجيل الدخول مجدداً.",
+    );
+  }
+
+  // جلب المستخدم من Supabase باستخدام username.
+  const { data, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("username", username)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Get Current User Error:", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+
+    throw new Error(error.message || "تعذر جلب بيانات المستخدم");
+  }
+
+  if (!data) {
+    throw new Error("المستخدم غير موجود في قاعدة البيانات");
+  }
+
+  if (data.type === "platform") {
+    throw new Error("لا يمكن لمستخدم المنصة إنشاء أرصدة افتتاحية للشركة");
+  }
+
+  if (data.isActive !== true || data.status !== "active") {
+    throw new Error("حساب المستخدم غير نشط");
+  }
+
+  if (!data.companyId) {
+    throw new Error("المستخدم غير مرتبط بأي شركة");
+  }
+
+  return {
+    id: String(data.id),
+    username: String(data.username),
+    name: String(data.name ?? ""),
+    type: String(data.type ?? ""),
+    role: String(data.role ?? ""),
+    companyId: String(data.companyId),
+    isActive: data.isActive === true,
+    status: String(data.status ?? ""),
+  };
+}
+
+// =====================================
+// Component
+// =====================================
 
 export default function CreateOpeningEntriesPage() {
   const router = useRouter();
@@ -98,143 +216,115 @@ export default function CreateOpeningEntriesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [companyId, setCompanyId] = useState("");
 
-  const [accounts, setAccounts] = useState<Account[]>([]);
-
   const [date, setDate] = useState(getTodayDate());
+
   const [reference, setReference] = useState("");
   const [description, setDescription] = useState("");
 
-  const [lines, setLines] = useState<OpeningEntryLine[]>([createEmptyLine()]);
+  const [lines, setLines] = useState<OpeningEntryLine[]>([
+    { ...emptyLine },
+    { ...emptyLine },
+  ]);
 
-  // =========================
-  // Load user and accounts
-  // =========================
+  // =====================================
+  // Load User and Accounts
+  // =====================================
 
   useEffect(() => {
+    let mounted = true;
+
     async function loadData() {
       try {
         setLoading(true);
 
-        const username = getCookie("username");
+        // المستخدم يؤخذ من Cookie أولاً.
+        const user = await getCurrentUserFromCookie();
 
-        if (!username) {
-          toast.error("انتهت جلسة الدخول، يرجى تسجيل الدخول");
-          router.replace("/login");
-          return;
-        }
+        if (!mounted) return;
 
-        const usersResponse = await axios.get<CurrentUser[]>(
-          `${API_URL}/users`,
-          {
-            params: { username },
-          },
-        );
+        const currentCompanyId = user.companyId;
 
-        const currentUser = usersResponse.data.find(
-          (item) => item.username === username,
-        );
-
-        if (!currentUser) {
-          toast.error("تعذر العثور على بيانات المستخدم");
-          return;
-        }
-
-        if (currentUser.type === "platform") {
-          toast.error("مستخدم المنصة لا يستطيع الوصول إلى نظام المحاسبة");
-          router.replace("/wazan/dashboard");
-          return;
-        }
-
-        if (!currentUser.companyId) {
-          toast.error("المستخدم غير مرتبط بشركة");
-          return;
-        }
-
-        const currentCompanyId = String(currentUser.companyId);
-
-        setUser(currentUser);
         setCompanyId(currentCompanyId);
 
-        const accountsResponse = await axios.get<Account[]>(
-          `${API_URL}/accounts`,
-          {
-            params: {
-              companyId: currentCompanyId,
-            },
-          },
+        // جلب حسابات الشركة.
+        const { data, error } = await supabase
+          .from("accounts")
+          .select("*")
+          .eq("companyId", currentCompanyId)
+          .order("code", { ascending: true });
+
+        if (error) {
+          console.error("Get Accounts Error:", {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          });
+
+          throw new Error(error.message || "تعذر تحميل الحسابات");
+        }
+
+        const normalizedAccounts = (data ?? []).map(normalizeAccount);
+
+        // الحسابات النهائية القابلة للترحيل فقط.
+        const finalAccounts = normalizedAccounts.filter(
+          (account) =>
+            account.companyId === currentCompanyId &&
+            account.isActive === true &&
+            account.status !== "inactive" &&
+            account.isGroup === false &&
+            account.allowPosting === true,
         );
 
-        // الحسابات النهائية النشطة والقابلة للترحيل
-        // الحساب الذي لا يحتوي isActive يعتبر نشطاً
-        const eligibleAccounts = accountsResponse.data
-          .filter((account) => {
-            const belongsToCompany =
-              String(account.companyId) === currentCompanyId;
+        if (!mounted) return;
 
-            const isActive = account.isActive !== false;
-
-            const isFinalAccount = account.isGroup === false;
-
-            const allowsPosting = account.allowPosting === true;
-
-            return (
-              belongsToCompany && isActive && isFinalAccount && allowsPosting
-            );
-          })
-          .sort((a, b) =>
-            a.code.localeCompare(b.code, undefined, {
-              numeric: true,
-            }),
-          );
-
-        setAccounts(eligibleAccounts);
+        setAccounts(finalAccounts);
       } catch (error) {
-        console.error("Load error:", error);
-        toast.error("حدث خطأ أثناء تحميل بيانات الصفحة");
+        console.error("Load Opening Entries Error:", error);
+
+        if (mounted) {
+          toast.error(getErrorMessage(error));
+          setCompanyId("");
+        }
       } finally {
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     }
 
     loadData();
-  }, [router]);
 
-  // =========================
-  // Calculations
-  // =========================
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
-  const totalDebit = useMemo(() => {
-    return lines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
-  }, [lines]);
+  // =====================================
+  // Totals
+  // =====================================
 
-  const totalCredit = useMemo(() => {
-    return lines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
-  }, [lines]);
+  const totalDebit = useMemo(
+    () => lines.reduce((total, line) => total + (Number(line.debit) || 0), 0),
+    [lines],
+  );
+
+  const totalCredit = useMemo(
+    () => lines.reduce((total, line) => total + (Number(line.credit) || 0), 0),
+    [lines],
+  );
 
   const difference = totalDebit - totalCredit;
 
   const isBalanced =
     totalDebit > 0 && totalCredit > 0 && Math.abs(difference) < 0.000001;
 
-  // =========================
-  // Lines handlers
-  // =========================
-
-  function addLine() {
-    setLines((previous) => [...previous, createEmptyLine()]);
-  }
-
-  function removeLine(index: number) {
-    if (lines.length === 1) {
-      toast.error("يجب أن يحتوي القيد على سطر واحد على الأقل");
-      return;
-    }
-
-    setLines((previous) => previous.filter((_, i) => i !== index));
-  }
+  // =====================================
+  // Lines Management
+  // =====================================
 
   function updateLine(
     index: number,
@@ -242,250 +332,365 @@ export default function CreateOpeningEntriesPage() {
     value: string,
   ) {
     setLines((previous) =>
-      previous.map((line, i) =>
-        i === index
-          ? {
-              ...line,
-              [field]: value,
-              ...(field === "debit" && value ? { credit: "" } : {}),
-              ...(field === "credit" && value ? { debit: "" } : {}),
-            }
-          : line,
-      ),
+      previous.map((line, i) => {
+        if (i !== index) return line;
+
+        const updated = {
+          ...line,
+          [field]: value,
+        };
+
+        // لا نسمح بإدخال مدين ودائن في السطر نفسه.
+        if (field === "debit" && Number(value) > 0) {
+          updated.credit = "";
+        }
+
+        if (field === "credit" && Number(value) > 0) {
+          updated.debit = "";
+        }
+
+        return updated;
+      }),
     );
   }
 
-  // =========================
+  function addLine() {
+    setLines((previous) => [...previous, { ...emptyLine }]);
+  }
+
+  function removeLine(index: number) {
+    if (lines.length <= 2) {
+      toast.error("يجب أن يحتوي المستند على سطرين على الأقل");
+
+      return;
+    }
+
+    setLines((previous) => previous.filter((_, i) => i !== index));
+  }
+
+  // =====================================
   // Validation
-  // =========================
+  // =====================================
 
   function validateForm(): boolean {
-    if (!user || !companyId) {
-      toast.error("بيانات المستخدم أو الشركة غير مكتملة");
+    if (!companyId) {
+      toast.error("لم يتم تحديد الشركة");
       return false;
     }
 
     if (!date) {
-      toast.error("يرجى تحديد تاريخ الرصيد الافتتاحي");
+      toast.error("يرجى تحديد تاريخ الأرصدة الافتتاحية");
+
       return false;
     }
 
-    if (accounts.length === 0) {
-      toast.error("لا توجد حسابات قابلة للترحيل لهذه الشركة");
+    if (lines.length < 2) {
+      toast.error("يجب إدخال حسابين على الأقل");
       return false;
     }
 
-    if (lines.length === 0) {
-      toast.error("أضف حساباً واحداً على الأقل");
-      return false;
-    }
+    const selectedAccounts = lines.map((line) => line.accountId);
 
-    const selectedAccountIds = lines.map((line) => line.accountId);
-
-    if (selectedAccountIds.some((id) => !id)) {
+    if (selectedAccounts.some((id) => !id)) {
       toast.error("يرجى اختيار حساب لكل سطر");
       return false;
     }
 
-    if (new Set(selectedAccountIds).size !== selectedAccountIds.length) {
-      toast.error("لا يمكن تكرار الحساب في نفس الرصيد الافتتاحي");
+    // منع تكرار الحساب.
+    if (new Set(selectedAccounts).size !== selectedAccounts.length) {
+      toast.error("لا يمكن اختيار الحساب نفسه أكثر من مرة");
+
       return false;
     }
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
       const debit = Number(line.debit) || 0;
       const credit = Number(line.credit) || 0;
 
-      if (debit < 0 || credit < 0) {
-        toast.error("لا يمكن إدخال مبالغ سالبة");
+      if (!Number.isFinite(debit) || !Number.isFinite(credit)) {
+        toast.error(`المبلغ في السطر ${i + 1} غير صحيح`);
+
         return false;
       }
 
-      if (debit > 0 && credit > 0) {
-        toast.error("لا يمكن إدخال مدين ودائن في نفس السطر");
+      if (debit < 0 || credit < 0) {
+        toast.error(`القيم في السطر ${i + 1} لا يمكن أن تكون سالبة`);
+
         return false;
       }
 
       if (debit === 0 && credit === 0) {
-        toast.error("يرجى إدخال مبلغ مدين أو دائن لكل حساب");
+        toast.error(`يرجى إدخال مبلغ في السطر ${i + 1}`);
+
         return false;
       }
 
-      const selectedAccount = accounts.find(
-        (account) => String(account.id) === line.accountId,
-      );
+      if (debit > 0 && credit > 0) {
+        toast.error(`لا يمكن إدخال مدين ودائن في السطر ${i + 1}`);
 
-      if (!selectedAccount) {
-        toast.error("يوجد حساب غير صالح أو لا يتبع الشركة الحالية");
         return false;
       }
 
-      if (
-        String(selectedAccount.companyId) !== companyId ||
-        selectedAccount.isGroup !== false ||
-        selectedAccount.allowPosting !== true ||
-        selectedAccount.isActive === false
-      ) {
-        toast.error("أحد الحسابات غير مؤهل لإجراء القيد");
+      const account = accounts.find((item) => item.id === line.accountId);
+
+      if (!account) {
+        toast.error(`الحساب المحدد في السطر ${i + 1} غير صالح`);
+
+        return false;
+      }
+
+      if (account.companyId !== companyId) {
+        toast.error("يوجد حساب لا يتبع الشركة الحالية");
+
+        return false;
+      }
+
+      if (account.isGroup || !account.allowPosting || !account.isActive) {
+        toast.error(`الحساب المحدد في السطر ${i + 1} غير قابل للترحيل`);
+
         return false;
       }
     }
 
     if (!isBalanced) {
-      toast.error("القيد غير متوازن، يجب أن يتساوى المدين والدائن");
+      toast.error("الأرصدة الافتتاحية غير متوازنة");
       return false;
     }
 
     return true;
   }
 
-  // =========================
+  // =====================================
   // Save
-  // =========================
+  // =====================================
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
     if (saving) return;
 
     if (!validateForm()) return;
 
-    if (!user) return;
+    setSaving(true);
 
     try {
-      setSaving(true);
+      // إعادة التحقق من المستخدم من Cookie قبل الحفظ.
+      // هذه الدالة لا تعيد null؛ إما مستخدم صحيح أو ترمي خطأ.
+      const user = await getCurrentUserFromCookie();
+
+      if (user.companyId !== companyId) {
+        throw new Error("الشركة المرتبطة بالمستخدم لا تطابق الشركة الحالية");
+      }
 
       const createdAt = new Date().toISOString();
 
+      // التحقق مجدداً من أن الحسابات المختارة موجودة ضمن حسابات الشركة.
+      const selectedAccountIds = lines.map((line) => line.accountId);
+
+      const validAccountIds = new Set(
+        accounts
+          .filter(
+            (account) =>
+              account.companyId === user.companyId &&
+              account.isActive &&
+              !account.isGroup &&
+              account.allowPosting,
+          )
+          .map((account) => account.id),
+      );
+
+      for (const accountId of selectedAccountIds) {
+        if (!validAccountIds.has(accountId)) {
+          throw new Error("أحد الحسابات المختارة غير صالح أو غير قابل للترحيل");
+        }
+      }
+
+      // =====================================
+      // Payload
+      // =====================================
+      // جدول openingEntries يحتوي على:
+      // id, companyId, extra, createdAt, updatedAt
+      //
+      // لذلك جميع تفاصيل السطر توضع داخل extra.
+      // لا ترسل accountId كعمود مستقل.
+
       const payload: OpeningEntryPayload[] = lines.map((line) => ({
-        accountId: line.accountId,
-        date,
-        debit: Number(line.debit) || 0,
-        credit: Number(line.credit) || 0,
-        description: description.trim(),
-        reference: reference.trim(),
-        companyId,
-        createdBy: user.id,
+        id: crypto.randomUUID(),
+
+        companyId: user.companyId,
+
+        extra: {
+          accountId: line.accountId,
+
+          date,
+
+          debit: Number(line.debit) || 0,
+
+          credit: Number(line.credit) || 0,
+
+          description: description.trim(),
+
+          reference: reference.trim(),
+
+          createdBy: user.id,
+
+          createdByName: user.name || user.username,
+
+          createdAt,
+        },
+
         createdAt,
+
+        updatedAt: createdAt,
       }));
 
-      // حفظ السطور في JSON Server
-      const savedEntries: Array<{ id: number | string }> = [];
+      console.log("Opening Entries Payload:", payload);
 
-      try {
-        for (const entry of payload) {
-          const response = await axios.post(`${API_URL}/openingEntries`, entry);
+      // =====================================
+      // Supabase Insert
+      // =====================================
 
-          savedEntries.push(response.data);
-        }
-      } catch (saveError) {
-        console.error("Save error:", saveError);
+      const { data, error } = await supabase
+        .from("openingEntries")
+        .insert(payload)
+        .select();
 
-        // محاولة حذف السطور التي تم حفظها إذا فشل أحد الطلبات
-        for (const savedEntry of savedEntries) {
-          try {
-            await axios.delete(`${API_URL}/openingEntries/${savedEntry.id}`);
-          } catch (rollbackError) {
-            console.error("Rollback error:", rollbackError);
-          }
-        }
+      if (error) {
+        console.error("Supabase Insert Error:", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        });
 
-        throw saveError;
+        throw error;
       }
+
+      console.log("Opening Entries Saved Successfully:", data);
 
       toast.success("تم حفظ الأرصدة الافتتاحية بنجاح");
 
       router.push("/erp/accounting/opening-entries");
       router.refresh();
     } catch (error) {
-      console.error("Submit error:", error);
-      toast.error("تعذر حفظ الأرصدة الافتتاحية");
+      console.error("Submit Error:", error);
+
+      toast.error(getErrorMessage(error));
     } finally {
       setSaving(false);
     }
   }
 
-  // =========================
+  // =====================================
   // Loading
-  // =========================
+  // =====================================
 
   if (loading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center" dir="rtl">
-        <div className="flex items-center gap-3 text-gray-600">
-          <FiRefreshCw className="animate-spin text-xl" />
+      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
+        <div className="flex items-center gap-3 text-gray-500">
+          <FiRefreshCw className="animate-spin" size={20} />
+
           <span>جاري تحميل البيانات...</span>
         </div>
       </div>
     );
   }
 
-  // =========================
+  // =====================================
+  // User / Company Error
+  // =====================================
+
+  if (!companyId) {
+    return (
+      <div
+        dir="rtl"
+        className="m-6 rounded-xl border border-red-200 bg-red-50 p-6 text-red-700"
+      >
+        <div className="flex items-center gap-2">
+          <FiAlertCircle size={22} />
+
+          <h2 className="font-bold">تعذر فتح صفحة الأرصدة الافتتاحية</h2>
+        </div>
+
+        <p className="mt-2 text-sm">
+          تحقق من تسجيل الدخول وربط المستخدم بالشركة.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm text-white"
+        >
+          رجوع
+        </button>
+      </div>
+    );
+  }
+
+  // =====================================
   // UI
-  // =========================
+  // =====================================
 
   return (
-    <div className="space-y-6 p-4 md:p-6" dir="rtl">
+    <div dir="rtl" className="space-y-6 p-4 md:p-6">
       {/* Header */}
 
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <span>المحاسبة</span>
+
+            <span>/</span>
+
+            <span>الأرصدة الافتتاحية</span>
+
+            <span>/</span>
+
+            <span className="text-blue-600">إضافة أرصدة</span>
+          </div>
+
+          <h1 className="mt-3 text-2xl font-bold text-gray-800">
             إضافة الأرصدة الافتتاحية
           </h1>
 
-          <p className="mt-2 text-sm text-gray-500">
-            إدخال أرصدة الحسابات عند بداية العمل بالنظام المحاسبي.
+          <p className="mt-1 text-sm text-gray-500">
+            إدخال الأرصدة الافتتاحية لحسابات الشركة
           </p>
         </div>
 
         <button
           type="button"
           onClick={() => router.push("/erp/accounting/opening-entries")}
-          className="flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
+          className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
         >
           <FiArrowRight />
-          العودة
+          العودة للقائمة
         </button>
       </div>
 
-      {/* Company information */}
-
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <p className="text-xs text-gray-500">المستخدم الحالي</p>
-            <p className="mt-1 font-semibold text-gray-800">{user?.name}</p>
-          </div>
-
-          <div>
-            <p className="text-xs text-gray-500">معرف الشركة</p>
-            <p className="mt-1 break-all font-mono text-sm text-gray-700">
-              {companyId}
-            </p>
-          </div>
-        </div>
-      </div>
-
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Basic information */}
+        {/* Basic Information */}
 
-        <div className="rounded-xl border border-gray-200 bg-white p-5">
-          <h2 className="mb-5 text-lg font-bold text-gray-800">
-            البيانات الأساسية
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-5 border-b border-gray-100 pb-3 text-lg font-bold text-gray-800">
+            بيانات المستند
           </h2>
 
-          <div className="grid gap-5 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
             <div>
               <label className="mb-2 block text-sm font-medium text-gray-700">
-                تاريخ الرصيد الافتتاحي
+                تاريخ الأرصدة الافتتاحية
+                <span className="text-red-500"> *</span>
               </label>
 
               <input
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 required
               />
             </div>
@@ -500,118 +705,93 @@ export default function CreateOpeningEntriesPage() {
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
                 placeholder="مثال: OPEN-001"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
 
-            <div className="md:col-span-2">
+            <div>
               <label className="mb-2 block text-sm font-medium text-gray-700">
-                البيان
+                وصف المستند
               </label>
 
-              <textarea
+              <input
+                type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                placeholder="وصف الرصيد الافتتاحي..."
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-blue-500"
+                placeholder="الأرصدة الافتتاحية للشركة"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Accounts lines */}
+        {/* Opening Entry Lines */}
 
-        <div className="rounded-xl border border-gray-200 bg-white p-5">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-5">
             <div>
               <h2 className="text-lg font-bold text-gray-800">
                 تفاصيل الأرصدة
               </h2>
 
               <p className="mt-1 text-sm text-gray-500">
-                اختر الحسابات النهائية التي تسمح بالترحيل.
+                اختر الحساب وأدخل رصيده المدين أو الدائن
               </p>
             </div>
 
             <button
               type="button"
               onClick={addLine}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition hover:bg-blue-700"
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
             >
-              <FiPlus />
+              <FiPlus size={17} />
               إضافة حساب
             </button>
           </div>
 
-          {accounts.length === 0 ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-center text-sm text-amber-800">
-              لا توجد حسابات نهائية قابلة للترحيل لهذه الشركة. تأكد من وجود
-              حسابات تسمح بالترحيل وليست حسابات تجميعية.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {lines.map((line, index) => (
-                <div
-                  key={index}
-                  className="rounded-lg border border-gray-200 bg-gray-50 p-4"
-                >
-                  <div className="mb-4 flex items-center justify-between">
-                    <span className="font-semibold text-gray-700">
-                      الحساب رقم {index + 1}
-                    </span>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[750px] text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="w-12 px-4 py-4 text-center">#</th>
 
-                    <button
-                      type="button"
-                      onClick={() => removeLine(index)}
-                      className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-red-600 transition hover:bg-red-50"
-                    >
-                      <FiTrash2 />
-                      حذف
-                    </button>
-                  </div>
+                  <th className="px-4 py-4 text-right">الحساب</th>
 
-                  <div className="grid gap-4 md:grid-cols-3">
-                    {/* Account */}
+                  <th className="w-48 px-4 py-4 text-right">مدين</th>
 
-                    <div className="md:col-span-3">
-                      <label className="mb-2 block text-sm font-medium text-gray-700">
-                        الحساب
-                      </label>
+                  <th className="w-48 px-4 py-4 text-right">دائن</th>
 
+                  <th className="w-16 px-4 py-4 text-center">حذف</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-gray-100">
+                {lines.map((line, index) => (
+                  <tr key={index} className="hover:bg-gray-50/70">
+                    <td className="px-4 py-3 text-center text-gray-500">
+                      {index + 1}
+                    </td>
+
+                    <td className="px-4 py-3">
                       <select
                         value={line.accountId}
                         onChange={(e) =>
                           updateLine(index, "accountId", e.target.value)
                         }
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
                         required
                       >
                         <option value="">اختر الحساب</option>
 
                         {accounts.map((account) => (
-                          <option
-                            key={account.id}
-                            value={String(account.id)}
-                            disabled={lines.some(
-                              (otherLine, otherIndex) =>
-                                otherIndex !== index &&
-                                otherLine.accountId === String(account.id),
-                            )}
-                          >
+                          <option key={account.id} value={account.id}>
                             {account.code} - {account.name}
                           </option>
                         ))}
                       </select>
-                    </div>
+                    </td>
 
-                    {/* Debit */}
-
-                    <div>
-                      <label className="mb-2 block text-sm font-medium text-gray-700">
-                        مدين
-                      </label>
-
+                    <td className="px-4 py-3">
                       <input
                         type="number"
                         min="0"
@@ -621,17 +801,12 @@ export default function CreateOpeningEntriesPage() {
                           updateLine(index, "debit", e.target.value)
                         }
                         placeholder="0.00"
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-left outline-none focus:border-blue-500"
+                        dir="ltr"
                       />
-                    </div>
+                    </td>
 
-                    {/* Credit */}
-
-                    <div>
-                      <label className="mb-2 block text-sm font-medium text-gray-700">
-                        دائن
-                      </label>
-
+                    <td className="px-4 py-3">
                       <input
                         type="number"
                         min="0"
@@ -641,40 +816,79 @@ export default function CreateOpeningEntriesPage() {
                           updateLine(index, "credit", e.target.value)
                         }
                         placeholder="0.00"
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 outline-none focus:border-blue-500"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-left outline-none focus:border-blue-500"
+                        dir="ltr"
                       />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                    </td>
+
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => removeLine(index)}
+                        title="حذف السطر"
+                        className="rounded-lg p-2 text-red-500 transition hover:bg-red-50"
+                      >
+                        <FiTrash2 size={17} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+
+              <tfoot className="border-t-2 border-gray-200 bg-gray-50 font-bold">
+                <tr>
+                  <td colSpan={2} className="px-4 py-4 text-left">
+                    الإجمالي
+                  </td>
+
+                  <td className="px-4 py-4 text-left text-blue-700" dir="ltr">
+                    {totalDebit.toLocaleString("en-US", {
+                      minimumFractionDigits: 2,
+                    })}
+                  </td>
+
+                  <td className="px-4 py-4 text-left text-green-700" dir="ltr">
+                    {totalCredit.toLocaleString("en-US", {
+                      minimumFractionDigits: 2,
+                    })}
+                  </td>
+
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {accounts.length === 0 && (
+            <div className="border-t border-gray-100 p-6 text-center text-sm text-amber-700">
+              لا توجد حسابات نهائية قابلة للترحيل. أضف الحسابات أولاً من دليل
+              الحسابات.
             </div>
           )}
-        </div>
+        </section>
 
-        {/* Totals */}
+        {/* Balance Summary */}
 
-        <div className="rounded-xl border border-gray-200 bg-white p-5">
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-lg font-bold text-gray-800">ملخص الأرصدة</h2>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="rounded-lg bg-blue-50 p-4">
-              <p className="text-sm text-blue-700">إجمالي المدين</p>
+              <p className="text-sm text-gray-600">إجمالي المدين</p>
 
-              <p className="mt-2 text-xl font-bold text-blue-800">
+              <p className="mt-2 text-xl font-bold text-blue-700" dir="ltr">
                 {totalDebit.toLocaleString("en-US", {
                   minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
                 })}
               </p>
             </div>
 
             <div className="rounded-lg bg-green-50 p-4">
-              <p className="text-sm text-green-700">إجمالي الدائن</p>
+              <p className="text-sm text-gray-600">إجمالي الدائن</p>
 
-              <p className="mt-2 text-xl font-bold text-green-800">
+              <p className="mt-2 text-xl font-bold text-green-700" dir="ltr">
                 {totalCredit.toLocaleString("en-US", {
                   minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
                 })}
               </p>
             </div>
@@ -684,48 +898,44 @@ export default function CreateOpeningEntriesPage() {
                 isBalanced ? "bg-green-50" : "bg-red-50"
               }`}
             >
-              <p
-                className={`text-sm ${
-                  isBalanced ? "text-green-700" : "text-red-700"
-                }`}
-              >
-                الفرق
-              </p>
+              <p className="text-sm text-gray-600">الفرق</p>
 
               <p
                 className={`mt-2 text-xl font-bold ${
-                  isBalanced ? "text-green-800" : "text-red-800"
+                  isBalanced ? "text-green-700" : "text-red-700"
                 }`}
+                dir="ltr"
               >
                 {Math.abs(difference).toLocaleString("en-US", {
                   minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
                 })}
               </p>
             </div>
           </div>
 
-          <div className="mt-4">
-            {isBalanced ? (
-              <p className="text-sm font-medium text-green-700">
-                ✓ القيد متوازن ويمكن حفظه.
-              </p>
-            ) : (
-              <p className="text-sm font-medium text-red-600">
-                القيد غير متوازن. يجب أن يتساوى إجمالي المدين والدائن.
-              </p>
-            )}
+          <div
+            className={`mt-4 flex items-center gap-2 rounded-lg p-3 text-sm ${
+              isBalanced
+                ? "bg-green-50 text-green-700"
+                : "bg-amber-50 text-amber-700"
+            }`}
+          >
+            <FiAlertCircle />
+
+            {isBalanced
+              ? "الأرصدة متوازنة ويمكن حفظها."
+              : "يجب أن يتساوى إجمالي المدين مع إجمالي الدائن قبل الحفظ."}
           </div>
-        </div>
+        </section>
 
         {/* Actions */}
 
-        <div className="flex flex-wrap justify-end gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <button
             type="button"
             onClick={() => router.push("/erp/accounting/opening-entries")}
             disabled={saving}
-            className="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
           >
             إلغاء
           </button>

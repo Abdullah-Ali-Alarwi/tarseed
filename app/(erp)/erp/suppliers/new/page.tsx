@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
+
 import {
   FiArrowRight,
   FiSave,
@@ -15,14 +15,11 @@ import {
   FiAlertCircle,
   FiCheckCircle,
 } from "react-icons/fi";
+
 import { toast } from "sonner";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: { "Content-Type": "application/json" },
-});
+import { supabase } from "@/lib/supabase";
+import { createSupplier, getSuppliers } from "@/lib/api/suppliers";
 
 type AnyRecord = Record<string, any>;
 
@@ -35,18 +32,66 @@ export default function NewSupplierPage() {
   const [companyId, setCompanyId] = useState("");
   const [companyName, setCompanyName] = useState("");
 
-  const [accounts, setAccounts] = useState<AnyRecord[]>([]);
+  const [currentUser, setCurrentUser] = useState<AnyRecord | null>(null);
+
+  const [supplierParentAccount, setSupplierParentAccount] =
+    useState<AnyRecord | null>(null);
 
   const [form, setForm] = useState({
     name: "",
     phone: "",
     address: "",
-    accountCode: "2101",
-    accountName: "",
     notes: "",
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // =====================================
+  // جلب حساب الموردين الرئيسي 2101
+  // =====================================
+
+  const getSupplierParentAccount = async (
+    currentCompanyId: string,
+  ): Promise<AnyRecord> => {
+    const { data: account, error } = await supabase
+      .from("accounts")
+      .select("*")
+      .eq("companyId", currentCompanyId)
+      .eq("code", "2101")
+      .eq("name", "الموردون")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Get supplier parent account error:", error);
+      throw new Error(`تعذر جلب حساب الموردين: ${error.message}`);
+    }
+
+    if (!account) {
+      throw new Error(
+        "حساب الموردين 2101 غير موجود لهذه الشركة. يرجى مراجعة شجرة الحسابات.",
+      );
+    }
+
+    if (account.type !== "liability" || account.nature !== "credit") {
+      throw new Error(
+        "خصائص حساب الموردين غير صحيحة. يجب أن يكون liability و credit.",
+      );
+    }
+
+    if (account.isGroup !== true) {
+      throw new Error("حساب الموردين 2101 يجب أن يكون حسابًا تجميعيًا.");
+    }
+
+    if (account.status !== "active" || account.isActive !== true) {
+      throw new Error("حساب الموردين 2101 غير نشط.");
+    }
+
+    if (account.extra?.allowPosting === true) {
+      throw new Error("حساب الموردين الرئيسي يجب ألا يقبل الترحيل المباشر.");
+    }
+
+    return account;
+  };
 
   // =====================================
   // تحميل بيانات المستخدم والشركة
@@ -72,63 +117,43 @@ export default function NewSupplierPage() {
         return;
       }
 
-      const username = authUser.username;
-
-      const usersResponse = await api.get("/users", {
-        params: { username },
-      });
-
-      const user = usersResponse.data.find(
-        (item: AnyRecord) => item.username === username,
-      );
-
-      if (!user?.companyId) {
-        toast.error("المستخدم غير مرتبط بشركة");
-        return;
+      if (!authUser.companyId) {
+        throw new Error("المستخدم غير مرتبط بشركة");
       }
 
-      const currentCompanyId = String(user.companyId);
+      const currentCompanyId = String(authUser.companyId);
 
+      setCurrentUser(authUser);
       setCompanyId(currentCompanyId);
 
-      const [companiesRes, accountsRes] = await Promise.all([
-        api.get("/companies", {
-          params: { id: currentCompanyId },
-        }),
-        api.get("/accounts", {
-          params: { companyId: currentCompanyId },
-        }),
-      ]);
+      const { data: company, error: companyError } = await supabase
+        .from("companies")
+        .select("id, name")
+        .eq("id", currentCompanyId)
+        .maybeSingle();
 
-      const company = companiesRes.data.find(
-        (item: AnyRecord) => String(item.id) === currentCompanyId,
-      );
-
-      setCompanyName(company?.name || company?.companyName || "");
-
-      const activeAccounts = accountsRes.data.filter(
-        (account: AnyRecord) =>
-          account.isActive !== false &&
-          account.status !== "inactive" &&
-          account.isGroup !== true,
-      );
-
-      setAccounts(activeAccounts);
-
-      const supplierAccount = activeAccounts.find(
-        (account: AnyRecord) => String(account.code) === "2101",
-      );
-
-      if (supplierAccount) {
-        setForm((prev) => ({
-          ...prev,
-          accountCode: String(supplierAccount.code),
-          accountName: supplierAccount.name,
-        }));
+      if (companyError) {
+        console.error("Get company error:", companyError);
+        throw new Error("تعذر جلب بيانات الشركة");
       }
+
+      if (!company) {
+        throw new Error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
+      }
+
+      setCompanyName(company.name || "");
+
+      const parentAccount = await getSupplierParentAccount(currentCompanyId);
+
+      setSupplierParentAccount(parentAccount);
     } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحميل بيانات الشركة والحسابات");
+      console.error("Load supplier form error:", error);
+
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "تعذر تحميل بيانات الشركة والحسابات",
+      );
     } finally {
       setLoading(false);
     }
@@ -155,20 +180,6 @@ export default function NewSupplierPage() {
   };
 
   // =====================================
-  // اختيار الحساب المحاسبي
-  // =====================================
-
-  const handleAccountChange = (accountId: string) => {
-    const account = accounts.find((item) => String(item.id) === accountId);
-
-    setForm((prev) => ({
-      ...prev,
-      accountCode: account ? String(account.code) : "",
-      accountName: account?.name || "",
-    }));
-  };
-
-  // =====================================
   // التحقق من البيانات
   // =====================================
 
@@ -179,12 +190,12 @@ export default function NewSupplierPage() {
       newErrors.name = "اسم المورد مطلوب";
     }
 
-    if (!form.accountCode || !form.accountName) {
-      newErrors.accountCode = "يرجى اختيار الحساب المحاسبي";
-    }
-
     if (!companyId) {
       newErrors.company = "تعذر تحديد الشركة";
+    }
+
+    if (!supplierParentAccount) {
+      newErrors.account = "حساب الموردين الرئيسي غير موجود";
     }
 
     setErrors(newErrors);
@@ -198,7 +209,125 @@ export default function NewSupplierPage() {
   };
 
   // =====================================
-  // حفظ المورد
+  // إنشاء كود الحساب الفرعي
+  // النمط: 2101001, 2101002, 2101003
+  // =====================================
+
+  const generateSupplierAccountCode = async (
+    parentAccount: AnyRecord,
+  ): Promise<string> => {
+    const parentCode = String(parentAccount.code);
+
+    const { data: children, error } = await supabase
+      .from("accounts")
+      .select("code")
+      .eq("companyId", companyId)
+      .eq("parentId", String(parentAccount.id));
+
+    if (error) {
+      console.error("Get supplier child accounts error:", error);
+
+      throw new Error("تعذر قراءة الحسابات الفرعية للموردين");
+    }
+
+    let maxNumber = 0;
+
+    (children || []).forEach((account: AnyRecord) => {
+      const code = String(account.code || "");
+
+      if (!code.startsWith(parentCode)) return;
+
+      const suffix = code.substring(parentCode.length);
+
+      // نقبل فقط الأرقام الموجودة بعد 2101
+      if (!/^\d+$/.test(suffix)) return;
+
+      const number = Number(suffix);
+
+      if (Number.isInteger(number) && number > maxNumber) {
+        maxNumber = number;
+      }
+    });
+
+    return `${parentCode}${String(maxNumber + 1).padStart(3, "0")}`;
+  };
+
+  // =====================================
+  // إنشاء الحساب المحاسبي للمورد
+  // =====================================
+
+  const createSupplierAccount = async (
+    supplierId: string,
+    supplierName: string,
+  ): Promise<AnyRecord> => {
+    if (!supplierParentAccount) {
+      throw new Error("حساب الموردين الرئيسي غير موجود");
+    }
+
+    const parentAccount = supplierParentAccount;
+
+    const accountCode = await generateSupplierAccountCode(parentAccount);
+
+    const now = new Date().toISOString();
+
+    const newAccount = {
+      id: crypto.randomUUID(),
+
+      companyId,
+
+      code: accountCode,
+      name: supplierName,
+
+      type: "liability",
+      nature: "credit",
+
+      parentId: String(parentAccount.id),
+
+      isGroup: false,
+      isSystem: false,
+      systemKey: null,
+
+      status: "active",
+      isActive: true,
+
+      extra: {
+        level: Number(parentAccount.extra?.level || 3) + 1,
+
+        balance: 0,
+
+        entityId: supplierId,
+        entityType: "supplier",
+
+        parentCode: "2101",
+
+        accountType: "liability",
+
+        allowPosting: true,
+
+        description: `الحساب المحاسبي الخاص بالمورد: ${supplierName}`,
+      },
+
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const { data, error } = await supabase
+      .from("accounts")
+      .insert(newAccount)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Create supplier account error:", error);
+
+      throw new Error(`تعذر إنشاء الحساب المحاسبي: ${error.message}`);
+    }
+
+    return data;
+  };
+
+  // =====================================
+  // حفظ المورد والحساب المحاسبي
   // =====================================
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -206,18 +335,19 @@ export default function NewSupplierPage() {
 
     if (saving || !validate()) return;
 
+    let createdAccountId = "";
+
     try {
       setSaving(true);
 
-      // التأكد من عدم تكرار اسم المورد داخل الشركة
-      const suppliersResponse = await api.get("/suppliers", {
-        params: { companyId },
-      });
+      const supplierName = form.name.trim();
 
-      const duplicate = suppliersResponse.data.some(
+      // فحص تكرار اسم المورد
+      const existingSuppliers = await getSuppliers(companyId);
+
+      const duplicate = existingSuppliers.some(
         (supplier: AnyRecord) =>
-          supplier.name?.trim().toLowerCase() ===
-          form.name.trim().toLowerCase(),
+          supplier.name?.trim().toLowerCase() === supplierName.toLowerCase(),
       );
 
       if (duplicate) {
@@ -225,21 +355,33 @@ export default function NewSupplierPage() {
         return;
       }
 
+      // إنشاء معرف المورد أولًا
+      const supplierId = crypto.randomUUID();
+
+      // إنشاء الحساب المحاسبي وربطه بمعرف المورد
+      const account = await createSupplierAccount(supplierId, supplierName);
+
+      createdAccountId = String(account.id);
+
       const now = new Date().toISOString();
 
+      // إنشاء سجل المورد
       const supplier = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: supplierId,
+
         companyId,
 
-        name: form.name.trim(),
+        name: supplierName,
         phone: form.phone.trim(),
         address: form.address.trim(),
 
-        // ربط المورد بحساب الموردين
-        accountCode: form.accountCode,
-        accountName: form.accountName,
+        accountId: String(account.id),
+        accountCode: String(account.code),
+        accountName: String(account.name),
 
-        // الرصيد الابتدائي صفر
+        parentAccountId: String(supplierParentAccount.id),
+        parentAccountCode: String(supplierParentAccount.code),
+
         balance: 0,
 
         notes: form.notes.trim(),
@@ -247,29 +389,57 @@ export default function NewSupplierPage() {
         status: "active",
         isActive: true,
 
+        createdBy:
+          currentUser?.name ||
+          currentUser?.fullName ||
+          currentUser?.username ||
+          "",
+
+        createdById: String(currentUser?.id || ""),
+
         createdAt: now,
         updatedAt: now,
       };
 
-      await api.post("/suppliers", supplier);
+      await createSupplier(supplier);
 
-      toast.success("تمت إضافة المورد بنجاح");
+      // نجاح العملية
+      createdAccountId = "";
 
-      router.push("/suppliers");
+      toast.success("تمت إضافة المورد وإنشاء حسابه المحاسبي بنجاح");
+
+      router.push("/erp/suppliers");
       router.refresh();
     } catch (error: any) {
       console.error("Create supplier error:", error);
 
-      toast.error(
-        error?.response?.data?.message || "حدث خطأ أثناء إضافة المورد",
-      );
+      // محاولة التراجع عن الحساب إذا فشل إنشاء المورد
+      if (createdAccountId) {
+        const { error: deleteError } = await supabase
+          .from("accounts")
+          .delete()
+          .eq("id", createdAccountId)
+          .eq("companyId", companyId);
+
+        if (deleteError) {
+          console.error("Rollback supplier account error:", deleteError);
+
+          toast.error(
+            "فشل إنشاء المورد، وتعذر حذف الحساب الذي أُنشئ. يرجى مراجعة شجرة الحسابات.",
+          );
+
+          return;
+        }
+      }
+
+      toast.error(error?.message || "حدث خطأ أثناء إضافة المورد");
     } finally {
       setSaving(false);
     }
   };
 
   // =====================================
-  // التحميل
+  // شاشة التحميل
   // =====================================
 
   if (loading) {
@@ -292,25 +462,21 @@ export default function NewSupplierPage() {
       {/* رأس الصفحة */}
 
       <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push("/suppliers")}
-              className="rounded-lg border border-gray-200 bg-white p-2 hover:bg-gray-100"
-            >
-              <FiArrowRight size={17} />
-            </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.push("/erp/suppliers")}
+            className="rounded-lg border border-gray-200 bg-white p-2 hover:bg-gray-100"
+          >
+            <FiArrowRight size={17} />
+          </button>
 
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">
-                إضافة مورد جديد
-              </h1>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">إضافة مورد جديد</h1>
 
-              <p className="mt-1 text-xs text-gray-500">
-                تسجيل بيانات المورد وربطه بالحسابات المحاسبية
-              </p>
-            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              تسجيل بيانات المورد وإنشاء حسابه في شجرة الحسابات
+            </p>
           </div>
         </div>
 
@@ -386,7 +552,7 @@ export default function NewSupplierPage() {
               </div>
             </section>
 
-            {/* الحساب المحاسبي */}
+            {/* الربط المحاسبي */}
 
             <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <h2 className="mb-5 flex items-center gap-2 font-bold text-gray-900">
@@ -394,53 +560,37 @@ export default function NewSupplierPage() {
                 الربط المحاسبي
               </h2>
 
-              <div>
-                <label className="mb-2 block text-xs font-semibold text-gray-600">
-                  حساب المورد
-                  <span className="mr-1 text-red-500">*</span>
-                </label>
+              <div className="rounded-lg border border-gray-200 p-4">
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <FiCheckCircle className="text-green-600" />
+                  الحساب الرئيسي
+                </div>
 
-                <select
-                  value={
-                    accounts.find(
-                      (account) => String(account.code) === form.accountCode,
-                    )?.id || ""
-                  }
-                  onChange={(e) => handleAccountChange(e.target.value)}
-                  className={`h-11 w-full rounded-lg border bg-white px-3 outline-none focus:border-[#0E1F33] ${
-                    errors.accountCode ? "border-red-400" : "border-gray-200"
-                  }`}
-                >
-                  <option value="">اختر الحساب المحاسبي</option>
+                <p className="mt-2 font-bold text-[#0E1F33]">
+                  {supplierParentAccount?.code} - {supplierParentAccount?.name}
+                </p>
 
-                  {accounts
-                    .filter((account) => String(account.code).startsWith("21"))
-                    .map((account) => (
-                      <option key={account.id} value={account.id}>
-                        {account.code} - {account.name}
-                      </option>
-                    ))}
-                </select>
+                <div className="my-3 border-t border-dashed border-gray-200" />
 
-                {errors.accountCode && (
-                  <p className="mt-1 text-xs text-red-500">
-                    {errors.accountCode}
-                  </p>
-                )}
+                <div className="text-xs text-gray-500">
+                  الحساب الفرعي الذي سيتم إنشاؤه
+                </div>
 
-                {form.accountCode && (
-                  <div className="mt-3 flex items-center gap-2 rounded-lg bg-green-50 p-3 text-xs text-green-800">
-                    <FiCheckCircle />
-                    الحساب المحدد: {form.accountCode} - {form.accountName}
-                  </div>
-                )}
+                <p className="mt-2 font-semibold text-gray-800">
+                  {form.name || "اسم المورد"}
+                </p>
+
+                <p className="mt-1 text-xs text-gray-500">
+                  سيتم إنشاء كود الحساب تلقائيًا مثل 2101001.
+                </p>
               </div>
 
-              <div className="mt-4 rounded-lg bg-blue-50 p-3 text-xs leading-6 text-blue-900">
+              <div className="mt-4 rounded-lg bg-green-50 p-3 text-xs leading-6 text-green-900">
                 <strong>ملاحظة محاسبية:</strong>
                 <br />
-                ربط المورد بحساب الموردين يسمح بتسجيل المشتريات الآجلة عليه. لا
-                يتم إنشاء قيد محاسبي عند إنشاء المورد نفسه.
+                عند حفظ المورد، ينشئ النظام حسابًا فرعيًا مستقلًا تحت حساب
+                الموردين 2101، ويربط الحساب بسجل المورد. لا يتم إنشاء قيد محاسبي
+                عند إضافة المورد.
               </div>
             </section>
 
@@ -484,12 +634,20 @@ export default function NewSupplierPage() {
                 </div>
 
                 <div className="border-t border-gray-100 pt-3">
-                  <p className="text-xs text-gray-500">الحساب المحاسبي</p>
+                  <p className="text-xs text-gray-500">الحساب الرئيسي</p>
 
                   <p className="mt-1 font-semibold">
-                    {form.accountCode
-                      ? `${form.accountCode} - ${form.accountName}`
-                      : "لم يتم الاختيار"}
+                    {supplierParentAccount
+                      ? `${supplierParentAccount.code} - ${supplierParentAccount.name}`
+                      : "غير محدد"}
+                  </p>
+                </div>
+
+                <div className="border-t border-gray-100 pt-3">
+                  <p className="text-xs text-gray-500">الحساب الفرعي</p>
+
+                  <p className="mt-1 font-semibold text-[#0E1F33]">
+                    {form.name || "سيتم إنشاؤه عند الحفظ"}
                   </p>
                 </div>
 
@@ -509,8 +667,9 @@ export default function NewSupplierPage() {
                   <p className="font-bold">تنبيه</p>
 
                   <p className="mt-1 text-xs leading-6">
-                    تأكد من صحة بيانات المورد والحساب المحاسبي. ستُستخدم هذه
-                    البيانات عند إنشاء فواتير الشراء.
+                    تأكد من صحة بيانات المورد. سيتم إنشاء حساب محاسبي مستقل له
+                    داخل شجرة الحسابات، وستُستخدم بيانات الحساب عند إنشاء فواتير
+                    الشراء.
                   </p>
                 </div>
               </div>
@@ -523,7 +682,7 @@ export default function NewSupplierPage() {
         <div className="mt-6 flex flex-col-reverse justify-end gap-3 sm:flex-row">
           <button
             type="button"
-            onClick={() => router.push("/suppliers")}
+            onClick={() => router.push("/erp/suppliers")}
             className="h-11 rounded-lg border border-gray-200 bg-white px-6 font-semibold hover:bg-gray-50"
           >
             إلغاء
@@ -531,7 +690,7 @@ export default function NewSupplierPage() {
 
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || !supplierParentAccount}
             className="flex h-11 items-center justify-center gap-2 rounded-lg bg-[#0E1F33] px-8 font-semibold text-white transition hover:bg-[#193653] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {saving ? <FiRefreshCw className="animate-spin" /> : <FiSave />}

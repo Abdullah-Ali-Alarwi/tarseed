@@ -1,7 +1,6 @@
 "use client";
 
-import axios from "axios";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -17,145 +16,384 @@ import {
   FiMail,
   FiMapPin,
   FiLoader,
+  FiRefreshCw,
 } from "react-icons/fi";
 
-const API = "http://localhost:3001/users";
+import { supabase } from "@/lib/supabase";
+import { getUserByUsername } from "@/lib/api/users";
 
-const roleNames = {
+// =========================
+// Types
+// =========================
+
+type ERPUser = {
+  id: string;
+  name?: string;
+  username?: string;
+  email?: string;
+  role?: string;
+  type?: string;
+  companyId?: string;
+  companyname?: string;
+  ownerId?: string;
+  status?: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type CurrentUser = {
+  id: string;
+  username?: string;
+  name?: string;
+  role?: string;
+  type?: string;
+  companyId?: string;
+  companyname?: string;
+  ownerId?: string;
+  status?: string;
+  isActive?: boolean;
+};
+
+type UserStatus = "active" | "inactive";
+
+// =========================
+// Constants
+// =========================
+
+const roleNames: Record<string, string> = {
   owner: "مالك المؤسسة",
   accountant: "محاسب",
   cashier: "كاشير",
   manager: "مدير",
   inventory: "مسؤول المخزون",
   employee: "موظف",
+  admin: "مدير النظام",
 };
+
+const roleOptions = [
+  { value: "owner", label: "مالك المؤسسة" },
+  { value: "accountant", label: "محاسب" },
+  { value: "cashier", label: "كاشير" },
+  { value: "manager", label: "مدير" },
+  { value: "inventory", label: "مسؤول المخزون" },
+  { value: "employee", label: "موظف" },
+];
+
+// =========================
+// Helpers
+// =========================
+
+function getCookie(name: string): string {
+  if (typeof document === "undefined") return "";
+
+  const cookie = document.cookie
+    .split("; ")
+    .find((item) => item.startsWith(`${name}=`));
+
+  return cookie ? decodeURIComponent(cookie.substring(name.length + 1)) : "";
+}
+
+function isUserActive(user: ERPUser): boolean {
+  if (user.isActive === false) return false;
+
+  const status = String(user.status ?? "").toLowerCase();
+
+  return !["inactive", "غير نشط"].includes(status);
+}
+
+function normalizeStatus(user: ERPUser): UserStatus {
+  return isUserActive(user) ? "active" : "inactive";
+}
+
+// =========================
+// Main Component
+// =========================
 
 export default function UsersPage() {
   const router = useRouter();
 
-  const [users, setUsers] = useState([]);
+  const [users, setUsers] = useState<ERPUser[]>([]);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+
   const [loading, setLoading] = useState(true);
   const [companyname, setCompanyname] = useState("");
+  const [companyId, setCompanyId] = useState("");
+  const [currentUserId, setCurrentUserId] = useState("");
 
-  // قراءة Cookies
-  const getCookie = (name) => {
-    const cookie = document.cookie
-      .split("; ")
-      .find((item) => item.startsWith(name + "="));
+  const [processingIds, setProcessingIds] = useState<string[]>([]);
 
-    return cookie
-      ? decodeURIComponent(cookie.split("=").slice(1).join("="))
-      : "";
-  };
+  // =========================
+  // Get Current User
+  // =========================
 
-  // جلب مستخدمي المؤسسة الحالية
-  const getUsers = async () => {
+  const getCurrentUser = useCallback(async () => {
+    const username = getCookie("username");
+
+    if (!username) {
+      throw new Error("لم يتم العثور على بيانات تسجيل الدخول.");
+    }
+
+    const result = await getUserByUsername(username);
+
+    const user = (
+      Array.isArray(result) ? result[0] : result
+    ) as CurrentUser | null;
+
+    if (!user) {
+      throw new Error("تعذر العثور على المستخدم الحالي.");
+    }
+
+    if (user.type === "platform") {
+      throw new Error("لا يمكن لمستخدم المنصة الوصول إلى مستخدمي المؤسسة.");
+    }
+
+    if (user.isActive === false || user.status === "inactive") {
+      throw new Error("حساب المستخدم غير نشط.");
+    }
+
+    if (!user.companyId) {
+      throw new Error("المستخدم الحالي غير مرتبط بأي مؤسسة.");
+    }
+
+    return user;
+  }, []);
+
+  // =========================
+  // Fetch Users By Company
+  // =========================
+
+  const getUsers = useCallback(async () => {
     try {
       setLoading(true);
 
-      const companyId = getCookie("companyId");
-      const company = getCookie("companyname");
+      // أولاً: تحديد المستخدم الحالي
+      const currentUser = await getCurrentUser();
 
-      if (!companyId) {
-        toast.error("لم يتم العثور على معرف المؤسسة");
-        setUsers([]);
-        return;
+      const currentCompanyId = String(currentUser.companyId);
+
+      setCurrentUserId(String(currentUser.id));
+      setCompanyId(currentCompanyId);
+
+      setCompanyname(currentUser.companyname || "المؤسسة الحالية");
+
+      // ثانياً: جلب مستخدمي الشركة الحالية فقط
+      const { data, error } = await supabase
+        .from("users")
+        .select(
+          "id, name, username, email, role, type, companyId, companyname, ownerId, status, isActive, createdAt, updatedAt",
+        )
+        .eq("companyId", currentCompanyId)
+        .order("createdAt", {
+          ascending: false,
+        });
+
+      if (error) {
+        throw error;
       }
 
-      setCompanyname(company);
-
-      const res = await axios.get(API, {
-        params: {
-          companyId: companyId,
-        },
-      });
-
-      // التأكد من أن المستخدمين تابعون للمؤسسة الحالية
-      const companyUsers = res.data.filter(
-        (user) => String(user.companyId) === String(companyId),
-      );
+      // ثالثاً: تأكيد العزل حسب الشركة
+      const companyUsers = (data ?? []).filter(
+        (user) =>
+          String(user.companyId) === currentCompanyId &&
+          user.type !== "platform",
+      ) as ERPUser[];
 
       setUsers(companyUsers);
     } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحميل المستخدمين");
+      console.error("Get company users error:", error);
+
+      setUsers([]);
+
+      toast.error(
+        error instanceof Error ? error.message : "تعذر تحميل مستخدمي المؤسسة.",
+      );
     } finally {
       setLoading(false);
     }
-  };
+  }, [getCurrentUser]);
+
+  // =========================
+  // Initial Load
+  // =========================
 
   useEffect(() => {
     getUsers();
-  }, []);
+  }, [getUsers]);
 
-  // الإحصائيات
-  const activeUsers = users.filter((user) => user.status !== "غير نشط").length;
+  // =========================
+  // Statistics
+  // =========================
 
-  const inactiveUsers = users.filter(
-    (user) => user.status === "غير نشط",
-  ).length;
+  const activeUsers = users.filter(isUserActive).length;
+
+  const inactiveUsers = users.filter((user) => !isUserActive(user)).length;
 
   const admins = users.filter(
-    (user) => user.role === "owner" || user.role === "manager",
+    (user) =>
+      user.role === "owner" || user.role === "manager" || user.role === "admin",
   ).length;
 
-  // البحث والفلاتر
+  // =========================
+  // Search & Filters
+  // =========================
+
   const filteredUsers = users.filter((user) => {
+    const searchValue = search.trim().toLowerCase();
+
     const matchesSearch =
-      (user.name || "").toLowerCase().includes(search.toLowerCase()) ||
-      (user.username || "").toLowerCase().includes(search.toLowerCase());
+      String(user.name ?? "")
+        .toLowerCase()
+        .includes(searchValue) ||
+      String(user.username ?? "")
+        .toLowerCase()
+        .includes(searchValue) ||
+      String(user.email ?? "")
+        .toLowerCase()
+        .includes(searchValue);
 
     const matchesRole = roleFilter === "all" || user.role === roleFilter;
 
-    const userStatus = user.status === "غير نشط" ? "غير نشط" : "نشط";
+    const userStatus = isUserActive(user) ? "نشط" : "غير نشط";
 
     const matchesStatus = statusFilter === "all" || userStatus === statusFilter;
 
     return matchesSearch && matchesRole && matchesStatus;
   });
 
-  // تغيير حالة المستخدم
-  const toggleStatus = async (user) => {
-    const newStatus = user.status === "غير نشط" ? "نشط" : "غير نشط";
+  // =========================
+  // Processing State
+  // =========================
 
-    try {
-      await axios.patch(`${API}/${user.id}`, {
-        status: newStatus,
-      });
+  const setProcessing = (id: string, value: boolean) => {
+    setProcessingIds((prev) => {
+      if (value) {
+        return prev.includes(id) ? prev : [...prev, id];
+      }
 
-      setUsers((prev) =>
-        prev.map((item) =>
-          item.id === user.id ? { ...item, status: newStatus } : item,
-        ),
-      );
-
-      toast.success("تم تحديث حالة المستخدم");
-    } catch (error) {
-      console.error(error);
-      toast.error("تعذر تحديث حالة المستخدم");
-    }
+      return prev.filter((item) => item !== id);
+    });
   };
 
-  // حذف المستخدم
-  const deleteUser = async (id) => {
-    if (!confirm("هل أنت متأكد من حذف هذا المستخدم؟")) {
+  // =========================
+  // Toggle User Status
+  // =========================
+
+  const toggleStatus = async (user: ERPUser) => {
+    if (!companyId) {
+      toast.error("لم يتم تحديد المؤسسة الحالية.");
       return;
     }
 
+    const newIsActive = !isUserActive(user);
+
+    const newStatus: UserStatus = newIsActive ? "active" : "inactive";
+
     try {
-      await axios.delete(`${API}/${id}`);
+      setProcessing(user.id, true);
 
-      setUsers((prev) => prev.filter((user) => user.id !== id));
+      const { data, error } = await supabase
+        .from("users")
+        .update({
+          status: newStatus,
+          isActive: newIsActive,
+          updatedAt: new Date().toISOString(),
+        })
+        .eq("id", user.id)
+        .eq("companyId", companyId)
+        .select("id")
+        .maybeSingle();
 
-      toast.success("تم حذف المستخدم بنجاح");
+      if (error) throw error;
+
+      if (!data) {
+        throw new Error("لم يتم تحديث المستخدم. تحقق من صلاحيات الوصول.");
+      }
+
+      setUsers((prev) =>
+        prev.map((item) =>
+          item.id === user.id
+            ? {
+                ...item,
+                status: newStatus,
+                isActive: newIsActive,
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
+      );
+
+      toast.success(
+        newIsActive ? "تم تفعيل المستخدم بنجاح." : "تم إيقاف المستخدم بنجاح.",
+      );
     } catch (error) {
-      console.error(error);
-      toast.error("تعذر حذف المستخدم");
+      console.error("Toggle user status error:", error);
+
+      toast.error(
+        error instanceof Error ? error.message : "تعذر تحديث حالة المستخدم.",
+      );
+    } finally {
+      setProcessing(user.id, false);
     }
   };
+
+  // =========================
+  // Delete User
+  // =========================
+
+  const deleteUser = async (user: ERPUser) => {
+    if (!companyId) {
+      toast.error("لم يتم تحديد المؤسسة الحالية.");
+      return;
+    }
+
+    if (String(user.id) === currentUserId) {
+      toast.error("لا يمكنك حذف حسابك الحالي.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `هل أنت متأكد من حذف المستخدم "${user.name || user.username}"؟`,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setProcessing(user.id, true);
+
+      const { data, error } = await supabase
+        .from("users")
+        .delete()
+        .eq("id", user.id)
+        .eq("companyId", companyId)
+        .select("id")
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!data) {
+        throw new Error("لم يتم حذف المستخدم. تحقق من صلاحيات الوصول.");
+      }
+
+      setUsers((prev) => prev.filter((item) => item.id !== user.id));
+
+      toast.success("تم حذف المستخدم بنجاح.");
+    } catch (error) {
+      console.error("Delete user error:", error);
+
+      toast.error(
+        error instanceof Error ? error.message : "تعذر حذف المستخدم.",
+      );
+    } finally {
+      setProcessing(user.id, false);
+    }
+  };
+
+  // =========================
+  // UI
+  // =========================
 
   return (
     <main dir="rtl" className="min-h-screen bg-[#F5F7FA] p-5 md:p-8">
@@ -173,13 +411,46 @@ export default function UsersPage() {
             </p>
           </div>
 
-          <button
-            onClick={() => router.push("/erp/users/create-erp-user")}
-            className="flex items-center justify-center gap-2 rounded-lg bg-[#0E1F33] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#193957]"
-          >
-            <FiPlus size={18} />
-            إضافة مستخدم
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={getUsers}
+              disabled={loading}
+              className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            >
+              <FiRefreshCw className={loading ? "animate-spin" : ""} />
+              تحديث
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push("/erp/users/create-erp-user")}
+              className="flex items-center justify-center gap-2 rounded-lg bg-[#0E1F33] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#193957]"
+            >
+              <FiPlus size={18} />
+              إضافة مستخدم
+            </button>
+          </div>
+        </div>
+
+        {/* Company Information */}
+
+        <div className="mb-6 flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-blue-600">
+            <FiMapPin size={19} />
+          </div>
+
+          <div>
+            <p className="text-xs text-blue-600">المؤسسة الحالية</p>
+
+            <p className="mt-1 font-bold text-[#0E1F33]">
+              {companyname || "المؤسسة"}
+            </p>
+          </div>
+
+          <span className="mr-auto rounded-full bg-white px-3 py-1 text-xs text-green-700">
+            {users.length} مستخدم
+          </span>
         </div>
 
         {/* Statistics */}
@@ -214,7 +485,7 @@ export default function UsersPage() {
           />
         </div>
 
-        {/* Users Table Container */}
+        {/* Users Table */}
 
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           {/* Table Header */}
@@ -224,7 +495,7 @@ export default function UsersPage() {
               <h2 className="font-bold text-[#0E1F33]">قائمة المستخدمين</h2>
 
               <p className="mt-1 text-xs text-gray-400">
-                مستخدمو {companyname || "المؤسسة الحالية"}
+                المستخدمون المرتبطون بالمؤسسة الحالية فقط
               </p>
             </div>
 
@@ -259,12 +530,12 @@ export default function UsersPage() {
                     className="w-full appearance-none rounded-lg border border-gray-200 bg-white py-3 pr-9 pl-8 text-sm outline-none focus:border-[#0E1F33]"
                   >
                     <option value="all">جميع الأدوار</option>
-                    <option value="owner">مالك المؤسسة</option>
-                    <option value="accountant">محاسب</option>
-                    <option value="cashier">كاشير</option>
-                    <option value="manager">مدير</option>
-                    <option value="inventory">مسؤول المخزون</option>
-                    <option value="employee">موظف</option>
+
+                    {roleOptions.map((role) => (
+                      <option key={role.value} value={role.value}>
+                        {role.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -274,7 +545,9 @@ export default function UsersPage() {
                   className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-[#0E1F33]"
                 >
                   <option value="all">جميع الحالات</option>
+
                   <option value="نشط">نشط</option>
+
                   <option value="غير نشط">غير نشط</option>
                 </select>
               </div>
@@ -288,9 +561,13 @@ export default function UsersPage() {
               <thead className="bg-gray-50 text-xs text-gray-500">
                 <tr>
                   <th className="px-6 py-4 font-medium">المستخدم</th>
+
                   <th className="px-6 py-4 font-medium">الدور الوظيفي</th>
+
                   <th className="px-6 py-4 font-medium">المؤسسة</th>
+
                   <th className="px-6 py-4 font-medium">الحالة</th>
+
                   <th className="px-6 py-4 text-center font-medium">
                     الإجراءات
                   </th>
@@ -300,105 +577,113 @@ export default function UsersPage() {
               <tbody className="divide-y divide-gray-100">
                 {loading ? (
                   <tr>
-                    <td colSpan="5" className="py-12 text-center">
+                    <td colSpan={5} className="py-12 text-center">
                       <FiLoader className="mx-auto animate-spin text-2xl text-[#0E1F33]" />
+
                       <p className="mt-3 text-sm text-gray-400">
                         جارٍ تحميل المستخدمين...
                       </p>
                     </td>
                   </tr>
                 ) : (
-                  filteredUsers.map((user) => (
-                    <tr key={user.id} className="transition hover:bg-gray-50">
-                      {/* User */}
+                  filteredUsers.map((user) => {
+                    const active = isUserActive(user);
 
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E9EFF5] text-sm font-bold text-[#0E1F33]">
-                            {user.name?.slice(0, 2) || "؟"}
+                    const processing = processingIds.includes(user.id);
+
+                    return (
+                      <tr key={user.id} className="transition hover:bg-gray-50">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#E9EFF5] text-sm font-bold text-[#0E1F33]">
+                              {user.name?.slice(0, 2) || "؟"}
+                            </div>
+
+                            <div>
+                              <p className="text-sm font-semibold text-gray-800">
+                                {user.name || "بدون اسم"}
+                              </p>
+
+                              <p className="mt-1 flex items-center gap-1 text-xs text-gray-400">
+                                <FiMail size={12} />
+                                {user.email || user.username || "غير محدد"}
+                              </p>
+                            </div>
                           </div>
+                        </td>
 
-                          <div>
-                            <p className="text-sm font-semibold text-gray-800">
-                              {user.name}
-                            </p>
+                        <td className="px-6 py-4">
+                          <span className="rounded-md bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
+                            {roleNames[user.role ?? ""] ||
+                              user.role ||
+                              "غير محدد"}
+                          </span>
+                        </td>
 
-                            <p className="mt-1 flex items-center gap-1 text-xs text-gray-400">
-                              <FiMail size={12} />
-                              {user.username}
-                            </p>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <FiMapPin size={15} className="text-gray-400" />
+
+                            {user.companyname || companyname}
                           </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Role */}
-
-                      <td className="px-6 py-4">
-                        <span className="rounded-md bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
-                          {roleNames[user.role] || user.role || "غير محدد"}
-                        </span>
-                      </td>
-
-                      {/* Company */}
-
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <FiMapPin size={15} className="text-gray-400" />
-                          {user.companyname || companyname}
-                        </div>
-                      </td>
-
-                      {/* Status */}
-
-                      <td className="px-6 py-4">
-                        <span
-                          className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ${
-                            user.status !== "غير نشط"
-                              ? "bg-green-50 text-green-700"
-                              : "bg-red-50 text-red-600"
-                          }`}
-                        >
+                        <td className="px-6 py-4">
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              user.status !== "غير نشط"
-                                ? "bg-green-500"
-                                : "bg-red-500"
+                            className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ${
+                              active
+                                ? "bg-green-50 text-green-700"
+                                : "bg-red-50 text-red-600"
                             }`}
-                          />
-
-                          {user.status || "نشط"}
-                        </span>
-                      </td>
-
-                      {/* Actions */}
-
-                      <td className="px-6 py-4">
-                        <div className="flex items-center justify-center gap-4">
-                          <button
-                            title="تغيير الحالة"
-                            onClick={() => toggleStatus(user)}
-                            className="text-gray-400 transition hover:text-green-600"
                           >
-                            <FiUserCheck size={17} />
-                          </button>
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${
+                                active ? "bg-green-500" : "bg-red-500"
+                              }`}
+                            />
 
-                          <button
-                            title="حذف المستخدم"
-                            onClick={() => deleteUser(user.id)}
-                            className="text-gray-400 transition hover:text-red-600"
-                          >
-                            <FiTrash2 size={17} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                            {active ? "نشط" : "غير نشط"}
+                          </span>
+                        </td>
+
+                        <td className="px-6 py-4">
+                          <div className="flex items-center justify-center gap-4">
+                            <button
+                              type="button"
+                              title={
+                                active ? "إيقاف المستخدم" : "تفعيل المستخدم"
+                              }
+                              disabled={processing}
+                              onClick={() => toggleStatus(user)}
+                              className="text-gray-400 transition hover:text-green-600 disabled:opacity-40"
+                            >
+                              {processing ? (
+                                <FiLoader size={17} className="animate-spin" />
+                              ) : (
+                                <FiUserCheck size={17} />
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              title="حذف المستخدم"
+                              disabled={processing || user.id === currentUserId}
+                              onClick={() => deleteUser(user)}
+                              className="text-gray-400 transition hover:text-red-600 disabled:opacity-30"
+                            >
+                              <FiTrash2 size={17} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
 
                 {!loading && filteredUsers.length === 0 && (
                   <tr>
                     <td
-                      colSpan="5"
+                      colSpan={5}
                       className="py-12 text-center text-sm text-gray-400"
                     >
                       لا يوجد مستخدمون تابعون لهذه المؤسسة
@@ -424,9 +709,18 @@ export default function UsersPage() {
   );
 }
 
+// =========================
 // Statistics Card
+// =========================
 
-function StatCard({ title, value, icon, color }) {
+type StatCardProps = {
+  title: string;
+  value: number;
+  icon: React.ReactNode;
+  color: "blue" | "green" | "red" | "purple";
+};
+
+function StatCard({ title, value, icon, color }: StatCardProps) {
   const colors = {
     blue: "bg-blue-50 text-blue-600",
     green: "bg-green-50 text-green-600",
@@ -440,7 +734,9 @@ function StatCard({ title, value, icon, color }) {
         <div>
           <p className="text-sm text-gray-500">{title}</p>
 
-          <h3 className="mt-3 text-2xl font-bold text-[#0E1F33]">{value}</h3>
+          <h3 className="mt-3 text-2xl font-bold text-[#0E1F33]">
+            {value.toLocaleString("en-US")}
+          </h3>
         </div>
 
         <div
