@@ -1,643 +1,420 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import {
+  FiArrowRight,
+  FiPackage,
+  FiLayers,
+  FiBox,
+  FiPlus,
+  FiSave,
+  FiRefreshCw,
+} from "react-icons/fi";
 
-type Option = {
+import { supabase } from "@/lib/supabase";
+
+interface Category {
   id: string;
   name: string;
-  code?: string | null;
-  symbol?: string | null;
-  isDefault?: boolean | null;
-};
+  status?: string;
+}
 
-type ProductForm = {
+interface Unit {
+  id: string;
   name: string;
-  sku: string;
-  barcode: string;
-  categoryId: string;
-  unitId: string;
-  warehouseId: string;
-  purchasePrice: string;
-  sellingPrice: string;
-  currentStock: string;
-  minStock: string;
-  description: string;
-  trackInventory: boolean;
-  status: string;
-};
+  symbol?: string;
+  status?: string;
+}
 
-const initialForm: ProductForm = {
-  name: "",
-  sku: "",
-  barcode: "",
-  categoryId: "",
-  unitId: "",
-  warehouseId: "",
-  purchasePrice: "0",
-  sellingPrice: "0",
-  currentStock: "0",
-  minStock: "0",
-  description: "",
-  trackInventory: true,
-  status: "active",
-};
+interface AuthUser {
+  id: string;
+  name?: string;
+  username?: string;
+  type: string;
+  role?: string;
+  companyId?: string;
+}
 
 export default function NewProductPage() {
   const router = useRouter();
 
   const [companyId, setCompanyId] = useState("");
-  const [categories, setCategories] = useState<Option[]>([]);
-  const [units, setUnits] = useState<Option[]>([]);
-  const [warehouses, setWarehouses] = useState<Option[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
 
-  const [form, setForm] = useState<ProductForm>(initialForm);
-  const [loadingData, setLoadingData] = useState(true);
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [unitId, setUnitId] = useState("");
+
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const loadUserAndOptions = async () => {
-      try {
-        const storedUser = localStorage.getItem("authUser");
-
-        if (!storedUser) {
-          toast.error("يرجى تسجيل الدخول أولاً");
-          setLoadingData(false);
-          return;
-        }
-
-        const user = JSON.parse(storedUser);
-
-        if (!user.companyId) {
-          toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
-          setLoadingData(false);
-          return;
-        }
-
-        if (user.type === "platform") {
-          toast.error("لا يمكن لمستخدم المنصة إضافة أصناف");
-          setLoadingData(false);
-          return;
-        }
-
-        setCompanyId(user.companyId);
-
-        const [categoriesResult, unitsResult, warehousesResult] =
-          await Promise.all([
-            supabase
-              .from("categories")
-              .select("id, name, code, status")
-              .eq("companyId", user.companyId)
-              .eq("status", "active")
-              .order("name"),
-
-            supabase
-              .from("units")
-              .select("id, name, symbol, status, isDefault")
-              .eq("companyId", user.companyId)
-              .eq("status", "active")
-              .order("name"),
-
-            supabase
-              .from("warehouses")
-              .select("id, name, code, status, isDefault")
-              .eq("companyId", user.companyId)
-              .eq("status", "active")
-              .order("name"),
-          ]);
-
-        if (categoriesResult.error) throw categoriesResult.error;
-        if (unitsResult.error) throw unitsResult.error;
-        if (warehousesResult.error) throw warehousesResult.error;
-
-        const loadedCategories = categoriesResult.data ?? [];
-        const loadedUnits = unitsResult.data ?? [];
-        const loadedWarehouses = warehousesResult.data ?? [];
-
-        setCategories(loadedCategories);
-        setUnits(loadedUnits);
-        setWarehouses(loadedWarehouses);
-
-        const defaultUnit =
-          loadedUnits.find((unit) => unit.isDefault) ?? loadedUnits[0];
-
-        const defaultWarehouse =
-          loadedWarehouses.find((warehouse) => warehouse.isDefault) ??
-          loadedWarehouses[0];
-
-        setForm((previous) => ({
-          ...previous,
-          unitId: defaultUnit?.id ?? "",
-          warehouseId: defaultWarehouse?.id ?? "",
-        }));
-      } catch (error) {
-        console.error("Load product options error:", error);
-        toast.error("حدث خطأ أثناء تحميل بيانات الأصناف");
-      } finally {
-        setLoadingData(false);
-      }
-    };
-
-    loadUserAndOptions();
+    initialize();
   }, []);
 
-  const updateField = (field: keyof ProductForm, value: string | boolean) => {
-    setForm((previous) => ({
-      ...previous,
-      [field]: value,
-    }));
-  };
+  // =====================================
+  // تحميل بيانات المستخدم والتصنيفات والوحدات
+  // =====================================
 
-  const validateForm = () => {
-    if (!form.name.trim()) {
-      toast.error("يرجى إدخال اسم الصنف");
-      return false;
-    }
+  const initialize = async () => {
+    try {
+      const savedUser = localStorage.getItem("authUser");
 
-    if (!form.unitId) {
-      toast.error("يرجى اختيار وحدة الصنف");
-      return false;
-    }
-
-    if (!form.warehouseId && form.trackInventory) {
-      toast.error("يرجى اختيار المستودع");
-      return false;
-    }
-
-    const numericFields = [
-      { label: "سعر الشراء", value: form.purchasePrice },
-      { label: "سعر البيع", value: form.sellingPrice },
-      { label: "الرصيد الحالي", value: form.currentStock },
-      { label: "الحد الأدنى للمخزون", value: form.minStock },
-    ];
-
-    for (const field of numericFields) {
-      const value = Number(field.value);
-
-      if (!Number.isFinite(value) || value < 0) {
-        toast.error(
-          `${field.label} يجب أن يكون رقمًا صحيحًا أو عشريًا غير سالب`,
-        );
-        return false;
+      if (!savedUser) {
+        toast.error("انتهت جلسة تسجيل الدخول");
+        return;
       }
-    }
 
-    return true;
+      const user: AuthUser = JSON.parse(savedUser);
+
+      if (user.type === "platform") {
+        toast.error("هذه الصفحة مخصصة لمستخدمي الشركات");
+        return;
+      }
+
+      if (!user.companyId) {
+        toast.error("لم يتم العثور على الشركة المرتبطة بالمستخدم");
+        return;
+      }
+
+      setCompanyId(user.companyId);
+
+      await loadData(user.companyId);
+    } catch (error) {
+      console.error("Initialize error:", error);
+      toast.error("حدث خطأ أثناء تحميل البيانات");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // =====================================
+  // تحميل التصنيفات والوحدات الخاصة بالشركة
+  // =====================================
 
-    if (!validateForm() || !companyId) return;
+  const loadData = async (currentCompanyId: string) => {
+    const [categoriesResult, unitsResult] = await Promise.all([
+      supabase
+        .from("categories")
+        .select("id, name, status")
+        .eq("companyId", currentCompanyId)
+        .order("name"),
 
-    setSaving(true);
+      supabase
+        .from("units")
+        .select("id, name, symbol, status")
+        .eq("companyId", currentCompanyId)
+        .order("name"),
+    ]);
+
+    if (categoriesResult.error) {
+      throw categoriesResult.error;
+    }
+
+    if (unitsResult.error) {
+      throw unitsResult.error;
+    }
+
+    setCategories(
+      (categoriesResult.data || []).filter(
+        (item) => item.status !== "inactive",
+      ),
+    );
+
+    setUnits(
+      (unitsResult.data || []).filter((item) => item.status !== "inactive"),
+    );
+  };
+
+  // =====================================
+  // حفظ المنتج
+  // =====================================
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!companyId) {
+      toast.error("الشركة غير محددة");
+      return;
+    }
+
+    if (!name.trim()) {
+      toast.error("يرجى إدخال اسم المنتج");
+      return;
+    }
+
+    if (!categoryId) {
+      toast.error("يرجى اختيار التصنيف");
+      return;
+    }
+
+    if (!unitId) {
+      toast.error("يرجى اختيار الوحدة");
+      return;
+    }
+
+    const selectedCategory = categories.find((item) => item.id === categoryId);
+
+    const selectedUnit = units.find((item) => item.id === unitId);
+
+    if (!selectedCategory || !selectedUnit) {
+      toast.error("التصنيف أو الوحدة غير موجودة");
+      return;
+    }
 
     try {
-      const selectedCategory = categories.find(
-        (category) => category.id === form.categoryId,
-      );
+      setSaving(true);
 
-      const selectedUnit = units.find((unit) => unit.id === form.unitId);
-
-      const selectedWarehouse = warehouses.find(
-        (warehouse) => warehouse.id === form.warehouseId,
-      );
-
-      const productId = crypto.randomUUID();
-      const itemId = crypto.randomUUID();
       const now = new Date().toISOString();
 
-      const productData = {
-        id: productId,
+      const { error } = await supabase.from("products").insert({
+        id: crypto.randomUUID(),
         companyId,
+        name: name.trim(),
 
-        name: form.name.trim(),
-        sku: form.sku.trim() || null,
-        barcode: form.barcode.trim() || null,
+        categoryId: selectedCategory.id,
+        categoryName: selectedCategory.name,
 
-        categoryId: selectedCategory?.id ?? null,
-        categoryName: selectedCategory?.name ?? null,
+        unitId: selectedUnit.id,
+        unitName: selectedUnit.name,
 
-        unitId: selectedUnit?.id ?? null,
-        unitName: selectedUnit?.name ?? null,
+        status: "active",
+        trackInventory: true,
+        currentStock: 0,
+        minStock: 0,
 
-        warehouseId: form.trackInventory
-          ? (selectedWarehouse?.id ?? null)
-          : null,
-
-        purchasePrice: Number(form.purchasePrice),
-        sellingPrice: Number(form.sellingPrice),
-
-        currentStock: form.trackInventory ? Number(form.currentStock) : 0,
-
-        minStock: form.trackInventory ? Number(form.minStock) : 0,
-
-        description: form.description.trim() || null,
-        status: form.status,
-        trackInventory: form.trackInventory,
-
-        itemId,
         createdAt: now,
         updatedAt: now,
-
-        extra: {
-          id: productId,
-          itemId,
-          companyId,
-
-          name: form.name.trim(),
-          sku: form.sku.trim() || null,
-          barcode: form.barcode.trim() || null,
-
-          categoryId: selectedCategory?.id ?? null,
-          categoryName: selectedCategory?.name ?? null,
-
-          unitId: selectedUnit?.id ?? null,
-          unitName: selectedUnit?.name ?? null,
-
-          warehouseId: form.trackInventory
-            ? (selectedWarehouse?.id ?? null)
-            : null,
-
-          purchasePrice: Number(form.purchasePrice),
-          sellingPrice: Number(form.sellingPrice),
-
-          currentStock: form.trackInventory ? Number(form.currentStock) : 0,
-
-          minStock: form.trackInventory ? Number(form.minStock) : 0,
-
-          description: form.description.trim(),
-          trackInventory: form.trackInventory,
-          status: form.status,
-          createdAt: now,
-        },
-      };
-
-      const { error } = await supabase.from("products").insert(productData);
+        extra: {},
+      });
 
       if (error) throw error;
 
-      toast.success("تمت إضافة الصنف بنجاح");
+      toast.success("تمت إضافة المنتج بنجاح");
 
       router.push("/erp/products");
       router.refresh();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Create product error:", error);
 
-      const message =
-        error instanceof Error ? error.message : "حدث خطأ أثناء حفظ الصنف";
-
-      toast.error(message);
+      toast.error(error?.message || "حدث خطأ أثناء إضافة المنتج");
     } finally {
       setSaving(false);
     }
   };
 
-  if (loadingData) {
+  const inputClass =
+    "w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10";
+
+  if (loading) {
     return (
-      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-slate-500">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700" />
-          <p className="text-sm">جاري تحميل البيانات...</p>
-        </div>
+      <div
+        dir="rtl"
+        className="flex min-h-[400px] items-center justify-center gap-3 text-blue-600"
+      >
+        <FiRefreshCw className="animate-spin text-xl" />
+        <span>جارٍ تحميل البيانات...</span>
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <div
+        dir="rtl"
+        className="m-5 rounded-2xl border border-red-200 bg-red-50 p-6 text-center"
+      >
+        <p className="font-bold text-red-700">
+          لم يتم العثور على الشركة المرتبطة بالمستخدم.
+        </p>
       </div>
     );
   }
 
   return (
-    <div dir="rtl" className="space-y-6 p-4 md:p-6">
+    <div dir="rtl" className="min-h-screen space-y-6 p-4 md:p-6">
       {/* العنوان */}
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-sm text-slate-400">
-            <Link href="/erp/products" className="hover:text-slate-700">
-              الأصناف
+          <div className="mb-3 flex items-center gap-2 text-sm text-slate-500">
+            <Link href="/erp/products" className="hover:text-blue-600">
+              المنتجات
             </Link>
+
             <span>/</span>
-            <span className="text-slate-600">إضافة صنف جديد</span>
+
+            <span className="text-blue-600">إضافة منتج</span>
           </div>
 
-          <h1 className="text-2xl font-bold text-slate-800">إضافة صنف جديد</h1>
+          <h1 className="text-2xl font-bold text-slate-800">إضافة منتج جديد</h1>
 
-          <p className="mt-1 text-sm text-slate-500">
-            أدخل بيانات الصنف والأسعار وإعدادات المخزون
+          <p className="mt-2 text-sm text-slate-500">
+            أدخل اسم المنتج وحدد تصنيفه ووحدة القياس.
           </p>
         </div>
 
         <Link
           href="/erp/products"
-          className="w-fit rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"
         >
-          العودة للأصناف
+          <FiArrowRight />
+          العودة للمنتجات
         </Link>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* البيانات الأساسية */}
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-5 py-4">
-            <h2 className="font-bold text-slate-800">البيانات الأساسية</h2>
-            <p className="mt-1 text-xs text-slate-400">
-              المعلومات التعريفية للصنف
-            </p>
+      {/* النموذج */}
+
+      <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-7">
+          <div className="mb-6 flex items-center gap-3 border-b border-slate-100 pb-5">
+            <div className="rounded-xl bg-blue-50 p-3 text-blue-600">
+              <FiPackage size={22} />
+            </div>
+
+            <div>
+              <h2 className="font-bold text-slate-800">بيانات المنتج</h2>
+
+              <p className="mt-1 text-xs text-slate-500">
+                البيانات الأساسية للمنتج.
+              </p>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2 xl:grid-cols-3">
-            <Field label="اسم الصنف" required>
-              <input
-                required
-                value={form.name}
-                onChange={(e) => updateField("name", e.target.value)}
-                placeholder="مثال: عسل سدر"
-                className={inputClass}
-              />
-            </Field>
+          <div className="space-y-5">
+            {/* اسم المنتج */}
 
-            <Field label="كود الصنف (SKU)">
-              <input
-                value={form.sku}
-                onChange={(e) => updateField("sku", e.target.value)}
-                placeholder="مثال: PRD-001"
-                className={inputClass}
-              />
-            </Field>
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                اسم المنتج <span className="text-red-500">*</span>
+              </label>
 
-            <Field label="الباركود">
-              <input
-                dir="ltr"
-                value={form.barcode}
-                onChange={(e) => updateField("barcode", e.target.value)}
-                placeholder="2000000000001"
-                className={inputClass}
-              />
-            </Field>
+              <div className="relative">
+                <FiPackage className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
 
-            <Field label="التصنيف">
-              <select
-                value={form.categoryId}
-                onChange={(e) => updateField("categoryId", e.target.value)}
-                className={inputClass}
-              >
-                <option value="">بدون تصنيف</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                    {category.code ? ` (${category.code})` : ""}
-                  </option>
-                ))}
-              </select>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className={`${inputClass} pr-11`}
+                  placeholder="مثال: عسل سدر"
+                  required
+                />
+              </div>
+            </div>
+
+            {/* التصنيف */}
+
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <label className="text-sm font-semibold text-slate-700">
+                  التصنيف <span className="text-red-500">*</span>
+                </label>
+
+                <Link
+                  href="/erp/categories/new"
+                  className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"
+                >
+                  <FiPlus />
+                  إضافة تصنيف
+                </Link>
+              </div>
+
+              <div className="relative">
+                <FiLayers className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+
+                <select
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value)}
+                  className={`${inputClass} pr-11`}
+                  required
+                >
+                  <option value="">اختر التصنيف</option>
+
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               {categories.length === 0 && (
-                <p className="mt-1 text-xs text-amber-600">
-                  لا توجد تصنيفات نشطة لهذه الشركة.
+                <p className="mt-2 text-xs text-amber-600">
+                  لا توجد تصنيفات. أضف تصنيفًا جديدًا أولًا.
                 </p>
               )}
-            </Field>
+            </div>
 
-            <Field label="وحدة القياس" required>
-              <select
-                required
-                value={form.unitId}
-                onChange={(e) => updateField("unitId", e.target.value)}
-                className={inputClass}
-              >
-                <option value="">اختر الوحدة</option>
-                {units.map((unit) => (
-                  <option key={unit.id} value={unit.id}>
-                    {unit.name}
-                    {unit.symbol ? ` (${unit.symbol})` : ""}
-                  </option>
-                ))}
-              </select>
+            {/* الوحدة */}
+
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">
+                وحدة القياس <span className="text-red-500">*</span>
+              </label>
+
+              <div className="relative">
+                <FiBox className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+
+                <select
+                  value={unitId}
+                  onChange={(e) => setUnitId(e.target.value)}
+                  className={`${inputClass} pr-11`}
+                  required
+                >
+                  <option value="">اختر الوحدة</option>
+
+                  {units.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.name}
+                      {unit.symbol ? ` (${unit.symbol})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               {units.length === 0 && (
-                <p className="mt-1 text-xs text-red-600">
-                  لا توجد وحدات نشطة. أضف وحدة أولاً.
+                <p className="mt-2 text-xs text-amber-600">
+                  لا توجد وحدات قياس مرتبطة بهذه الشركة.
                 </p>
               )}
-            </Field>
-
-            <Field label="المستودع">
-              <select
-                value={form.warehouseId}
-                onChange={(e) => updateField("warehouseId", e.target.value)}
-                disabled={!form.trackInventory}
-                className={inputClass}
-              >
-                <option value="">اختر المستودع</option>
-                {warehouses.map((warehouse) => (
-                  <option key={warehouse.id} value={warehouse.id}>
-                    {warehouse.name}
-                    {warehouse.code ? ` (${warehouse.code})` : ""}
-                  </option>
-                ))}
-              </select>
-
-              {form.trackInventory && warehouses.length === 0 && (
-                <p className="mt-1 text-xs text-red-600">
-                  لا توجد مستودعات نشطة لهذه الشركة.
-                </p>
-              )}
-            </Field>
-          </div>
-        </section>
-
-        {/* الأسعار */}
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-5 py-4">
-            <h2 className="font-bold text-slate-800">الأسعار</h2>
-            <p className="mt-1 text-xs text-slate-400">
-              تحديد أسعار شراء وبيع الصنف
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2">
-            <Field label="سعر الشراء">
-              <div className="relative">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.purchasePrice}
-                  onChange={(e) => updateField("purchasePrice", e.target.value)}
-                  className={`${inputClass} pl-14`}
-                />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
-                  ر.ي
-                </span>
-              </div>
-            </Field>
-
-            <Field label="سعر البيع">
-              <div className="relative">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.sellingPrice}
-                  onChange={(e) => updateField("sellingPrice", e.target.value)}
-                  className={`${inputClass} pl-14`}
-                />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
-                  ر.ي
-                </span>
-              </div>
-            </Field>
-          </div>
-        </section>
-
-        {/* المخزون */}
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-5 py-4">
-            <h2 className="font-bold text-slate-800">إعدادات المخزون</h2>
-            <p className="mt-1 text-xs text-slate-400">
-              تحديد طريقة متابعة كمية الصنف
-            </p>
-          </div>
-
-          <div className="space-y-5 p-5">
-            <label className="flex cursor-pointer items-center gap-3">
-              <input
-                type="checkbox"
-                checked={form.trackInventory}
-                onChange={(e) =>
-                  updateField("trackInventory", e.target.checked)
-                }
-                className="h-4 w-4 accent-slate-800"
-              />
-
-              <div>
-                <p className="text-sm font-semibold text-slate-700">
-                  تتبع المخزون
-                </p>
-                <p className="mt-1 text-xs text-slate-400">
-                  تفعيل متابعة الكميات وحركات المخزون لهذا الصنف
-                </p>
-              </div>
-            </label>
-
-            {form.trackInventory && (
-              <div className="grid grid-cols-1 gap-5 border-t border-slate-100 pt-5 md:grid-cols-2">
-                <Field label="الرصيد الحالي / الافتتاحي">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.currentStock}
-                    onChange={(e) =>
-                      updateField("currentStock", e.target.value)
-                    }
-                    className={inputClass}
-                  />
-                  <p className="mt-1 text-xs text-slate-400">
-                    الكمية الحالية التي سيتم تسجيلها عند إنشاء الصنف.
-                  </p>
-                </Field>
-
-                <Field label="الحد الأدنى للمخزون">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.minStock}
-                    onChange={(e) => updateField("minStock", e.target.value)}
-                    className={inputClass}
-                  />
-                  <p className="mt-1 text-xs text-slate-400">
-                    يظهر تنبيه عند وصول الكمية إلى هذا الحد أو أقل.
-                  </p>
-                </Field>
-              </div>
-            )}
-
-            {!form.trackInventory && (
-              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
-                لن تتم متابعة الكميات لهذا الصنف، وسيتم حفظ رصيده وحده الأدنى
-                بصفر.
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* معلومات إضافية */}
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-5 py-4">
-            <h2 className="font-bold text-slate-800">معلومات إضافية</h2>
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-2">
-            <Field label="حالة الصنف">
-              <select
-                value={form.status}
-                onChange={(e) => updateField("status", e.target.value)}
-                className={inputClass}
-              >
-                <option value="active">نشط</option>
-                <option value="inactive">غير نشط</option>
-              </select>
-            </Field>
-
-            <Field label="الوصف">
-              <textarea
-                rows={3}
-                value={form.description}
-                onChange={(e) => updateField("description", e.target.value)}
-                placeholder="أدخل وصفًا اختياريًا للصنف..."
-                className={inputClass}
-              />
-            </Field>
+            </div>
           </div>
         </section>
 
         {/* الأزرار */}
+
         <div className="flex flex-col-reverse justify-end gap-3 sm:flex-row">
           <Link
             href="/erp/products"
-            className="rounded-lg border border-slate-200 bg-white px-6 py-3 text-center text-sm font-medium text-slate-600 hover:bg-slate-50"
+            className="rounded-xl border border-slate-200 bg-white px-6 py-3 text-center text-sm font-semibold text-slate-600 hover:bg-slate-50"
           >
             إلغاء
           </Link>
 
           <button
             type="submit"
-            disabled={
-              saving ||
-              !companyId ||
-              !form.unitId ||
-              (form.trackInventory && !form.warehouseId)
-            }
-            className="rounded-lg bg-[#0E1F33] px-8 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={saving || categories.length === 0 || units.length === 0}
+            className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-7 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? "جاري الحفظ..." : "حفظ الصنف"}
+            {saving ? (
+              <>
+                <FiRefreshCw className="animate-spin" />
+                جارٍ الحفظ...
+              </>
+            ) : (
+              <>
+                <FiSave />
+                حفظ المنتج
+              </>
+            )}
           </button>
         </div>
       </form>
-    </div>
-  );
-}
-
-const inputClass =
-  "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:bg-white";
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-slate-700">
-        {label}
-        {required && <span className="mr-1 text-red-500">*</span>}
-      </label>
-      {children}
     </div>
   );
 }

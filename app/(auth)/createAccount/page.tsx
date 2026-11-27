@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-
 import { supabase } from "@/lib/supabase";
 
 import {
@@ -10,7 +9,6 @@ import {
   FiLock,
   FiBriefcase,
   FiUserPlus,
-  FiArrowRight,
   FiEye,
   FiEyeOff,
   FiCheckCircle,
@@ -21,16 +19,15 @@ import {
 // HELPERS
 // =====================================================
 
-const normalizeUsername = (value: string) => {
-  return value.trim().normalize("NFC").toLocaleLowerCase();
-};
+const normalizeUsername = (value: string) =>
+  value.trim().normalize("NFC").toLocaleLowerCase();
 
 function getErrorMessage(error: any): string {
   return (
     error?.context?.message ||
     error?.message ||
     error?.error_description ||
-    "حدث خطأ أثناء إنشاء الحساب. حاول مرة أخرى."
+    "حدث خطأ أثناء إنشاء الحساب."
   );
 }
 
@@ -38,7 +35,7 @@ function getErrorMessage(error: any): string {
 // PAGE
 // =====================================================
 
-export default function Page() {
+export default function CreateAccountPage() {
   const router = useRouter();
 
   const [form, setForm] = useState({
@@ -58,17 +55,19 @@ export default function Page() {
   // =====================================================
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm({
-      ...form,
-      [e.target.name]: e.target.value,
-    });
+    const { name, value } = e.target;
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
 
     setError("");
     setSuccess("");
   };
 
   // =====================================================
-  // HANDLE SUBMIT
+  // SUBMIT
   // =====================================================
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -77,77 +76,71 @@ export default function Page() {
     setError("");
     setSuccess("");
 
-    // ===============================================
-    // 1. VALIDATION
-    // ===============================================
+    const name = form.name.trim();
+    const username = normalizeUsername(form.username);
+    const companyname = form.companyname.trim();
+    const password = form.password;
 
-    if (
-      !form.name.trim() ||
-      !form.username.trim() ||
-      !form.password.trim() ||
-      !form.companyname.trim()
-    ) {
+    // =========================================
+    // VALIDATION
+    // =========================================
+
+    if (!name || !username || !password || !companyname) {
       setError("يرجى تعبئة جميع الحقول.");
       return;
     }
 
-    if (form.password.length < 6) {
-      setError("كلمة المرور يجب ألا تقل عن 6 أحرف.");
+    if (name.length > 150) {
+      setError("الاسم طويل جداً.");
       return;
     }
 
-    const username = normalizeUsername(form.username);
-
-    if (username.length < 3) {
-      setError("اسم المستخدم يجب ألا يقل عن 3 أحرف.");
+    if (companyname.length > 150) {
+      setError("اسم الشركة طويل جداً.");
       return;
     }
+
+    if (username.length < 3 || username.length > 30) {
+      setError("اسم المستخدم يجب أن يكون بين 3 و30 حرفاً.");
+      return;
+    }
+
+    // السماح بالأحرف العربية والإنجليزية والأرقام
+    // والنقطة والشرطة والشرطة السفلية.
+    if (!/^[\p{L}\p{N}._-]+$/u.test(username)) {
+      setError("اسم المستخدم يحتوي على أحرف أو رموز غير مسموحة.");
+      return;
+    }
+
+    if (password.length < 8) {
+      setError("كلمة المرور يجب ألا تقل عن 8 أحرف.");
+      return;
+    }
+
+    // =========================================
+    // CREATE ACCOUNT
+    // =========================================
 
     try {
       setLoading(true);
 
-      // ===============================================
-      // 2. CHECK AUTH SESSION
-      // ===============================================
-
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-
-      if (sessionError) {
-        throw sessionError;
-      }
-
-      if (!session?.access_token) {
-        throw new Error("انتهت جلسة تسجيل الدخول. يرجى تسجيل الدخول مرة أخرى.");
-      }
-
-      // ===============================================
-      // 3. PREPARE DATA
-      // ===============================================
-
       const companyData = {
-        name: form.companyname.trim(),
-        nameEn: form.companyname.trim(),
-        code: `CMP-${Date.now()}`,
+        name: companyname,
+        nameEn: companyname,
         country: "YE",
         timezone: "Asia/Aden",
         currency: "YER",
         locale: "ar",
-        status: "active",
-        extra: {},
       };
 
       const userData = {
-        name: form.name.trim(),
+        name,
         username,
-        password: form.password,
+        password,
       };
 
-      // ===============================================
-      // 4. CALL EDGE FUNCTION
-      // ===============================================
+      // لا نحتاج إلى جلسة سابقة.
+      // Edge Function تنشئ حساب Auth والشركة والمالك.
 
       const { data, error: functionError } = await supabase.functions.invoke(
         "create-owner",
@@ -155,51 +148,47 @@ export default function Page() {
           body: {
             companyData,
             userData,
-          },
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
+            registrationType: "public",
           },
         },
       );
 
+      // =========================================
+      // FUNCTION ERROR
+      // =========================================
+
       if (functionError) {
         console.error("Create owner function error:", functionError);
 
-        let errorMessage = getErrorMessage(functionError);
+        let message = getErrorMessage(functionError);
 
         if (functionError.context instanceof Response) {
-          const responseText = await functionError.context.clone().text();
-
-          console.error("Create owner response body:", responseText);
-
           try {
-            const responseData = JSON.parse(responseText);
+            const response = await functionError.context.clone().json();
 
-            errorMessage = responseData.message || responseText || errorMessage;
+            message = response.message || response.error || message;
           } catch {
-            errorMessage = responseText || errorMessage;
+            // الاحتفاظ برسالة الخطأ الأصلية.
           }
         }
 
-        throw new Error(errorMessage);
+        throw new Error(message);
       }
 
-      // ===============================================
-      // 5. CHECK RESPONSE
-      // ===============================================
+      // =========================================
+      // CHECK RESULT
+      // =========================================
 
       if (!data?.success || data?.created !== true) {
-        throw new Error(
-          data?.message || "لم تكتمل عملية إنشاء الشركة وحساب المالك.",
-        );
+        throw new Error(data?.message || "لم تكتمل عملية إنشاء الحساب.");
       }
 
-      // ===============================================
-      // 6. SUCCESS
-      // ===============================================
+      // =========================================
+      // SUCCESS
+      // =========================================
 
       setSuccess(
-        "تم إنشاء الشركة وحساب مالك الشركة بنجاح. تم إنشاء دليل الحسابات تلقائياً بواسطة Supabase.",
+        "تم إنشاء الشركة وحساب المالك بنجاح. يمكنك تسجيل الدخول الآن.",
       );
 
       setForm({
@@ -210,16 +199,14 @@ export default function Page() {
       });
 
       setTimeout(() => {
-        router.push("/wezzan/platform-users");
+        router.push("/login");
         router.refresh();
-      }, 2000);
+      }, 2500);
     } catch (err) {
-      console.error("Create owner error:", err);
+      console.error("Public registration error:", err);
 
       setError(
-        err instanceof Error
-          ? err.message
-          : "حدث خطأ أثناء إنشاء الحساب. حاول مرة أخرى.",
+        err instanceof Error ? err.message : "حدث خطأ أثناء إنشاء الحساب.",
       );
     } finally {
       setLoading(false);
@@ -242,36 +229,21 @@ export default function Page() {
       <div className="mx-auto max-w-3xl">
         {/* HEADER */}
 
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-sm text-slate-400">
-              <span>Wezzan</span>
-              <span>/</span>
-              <span>مستخدمي المنصة</span>
-              <span>/</span>
-              <span className="text-blue-600">إضافة Owner</span>
-            </div>
-
-            <h1 className="text-2xl font-bold text-slate-800">
-              إنشاء حساب مالك شركة
-            </h1>
-
-            <p className="mt-2 text-sm text-slate-500">
-              إنشاء حساب جديد لمالك شركة وإضافته إلى منصة Wezzan.
-            </p>
+        <div className="mb-8">
+          <div className="mb-2 text-sm text-slate-400">
+            Wezzan / إنشاء حساب جديد
           </div>
 
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 transition hover:bg-slate-100"
-          >
-            <FiArrowRight />
-            <span>رجوع</span>
-          </button>
+          <h1 className="text-2xl font-bold text-slate-800">
+            ابدأ باستخدام Wezzan
+          </h1>
+
+          <p className="mt-2 text-sm text-slate-500">
+            أنشئ حسابك وشركتك وابدأ بإدارة أعمالك بسهولة.
+          </p>
         </div>
 
-        {/* FORM CARD */}
+        {/* CARD */}
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {/* CARD HEADER */}
@@ -283,10 +255,12 @@ export default function Page() {
               </div>
 
               <div>
-                <h2 className="font-bold text-slate-800">بيانات الحساب</h2>
+                <h2 className="font-bold text-slate-800">
+                  إنشاء حساب مالك شركة
+                </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  أدخل بيانات مالك الشركة الجديدة.
+                  أدخل بياناتك لإنشاء حساب جديد.
                 </p>
               </div>
             </div>
@@ -328,15 +302,9 @@ export default function Page() {
                 {/* USERNAME */}
 
                 <div>
-                  <div className="mb-2 flex items-center gap-2">
-                    <label className="block text-sm font-medium text-slate-600">
-                      اسم المستخدم
-                    </label>
-
-                    <span className="text-xs text-green-500">
-                      اسم الدخول للنظام
-                    </span>
-                  </div>
+                  <label className="mb-2 block text-sm font-medium text-slate-600">
+                    اسم المستخدم
+                  </label>
 
                   <div className="relative">
                     <FiUser className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -346,12 +314,16 @@ export default function Page() {
                       name="username"
                       value={form.username}
                       onChange={handleChange}
-                      placeholder="username"
-                      dir="ltr"
+                      placeholder="أحمد123 أو ahmed123"
+                      dir="auto"
                       autoComplete="username"
-                      className={`${inputClass} pl-4 pr-11`}
+                      className={`${inputClass} pr-11`}
                     />
                   </div>
+
+                  <p className="mt-2 text-xs text-slate-400">
+                    يمكنك استخدام الأحرف العربية أو الإنجليزية والأرقام.
+                  </p>
                 </div>
               </div>
             </div>
@@ -363,29 +335,26 @@ export default function Page() {
             <div>
               <h3 className="mb-5 font-bold text-slate-700">معلومات الشركة</h3>
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-600">
-                  اسم الشركة
-                </label>
+              <label className="mb-2 block text-sm font-medium text-slate-600">
+                اسم الشركة
+              </label>
 
-                <div className="relative">
-                  <FiBriefcase className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <div className="relative">
+                <FiBriefcase className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
 
-                  <input
-                    type="text"
-                    name="companyname"
-                    value={form.companyname}
-                    onChange={handleChange}
-                    placeholder="مثال: شركة الجابري"
-                    className={`${inputClass} pr-11`}
-                  />
-                </div>
-
-                <p className="mt-2 text-xs text-slate-400">
-                  سيتم إنشاء سجل الشركة وربطه بحساب المالك، وسيقوم Supabase
-                  بإنشاء دليل الحسابات الافتراضي تلقائياً.
-                </p>
+                <input
+                  type="text"
+                  name="companyname"
+                  value={form.companyname}
+                  onChange={handleChange}
+                  placeholder="مثال: شركة الجابري"
+                  className={`${inputClass} pr-11`}
+                />
               </div>
+
+              <p className="mt-2 text-xs text-slate-400">
+                سيتم إنشاء الشركة وربطها بحسابك تلقائياً.
+              </p>
             </div>
 
             <hr className="border-slate-100" />
@@ -417,15 +386,18 @@ export default function Page() {
 
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
+                  onClick={() => setShowPassword((prev) => !prev)}
                   className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  aria-label={
+                    showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"
+                  }
                 >
                   {showPassword ? <FiEyeOff /> : <FiEye />}
                 </button>
               </div>
 
               <p className="mt-2 text-xs text-slate-400">
-                يجب أن تتكون كلمة المرور من 6 أحرف على الأقل.
+                يجب ألا تقل كلمة المرور عن 8 أحرف.
               </p>
             </div>
 
@@ -433,9 +405,7 @@ export default function Page() {
 
             <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
-                  <FiCheckCircle />
-                </div>
+                <FiCheckCircle className="text-xl text-blue-600" />
 
                 <div>
                   <p className="text-sm font-bold text-slate-700">
@@ -452,8 +422,11 @@ export default function Page() {
             {/* ERROR */}
 
             {error && (
-              <div className="flex items-center gap-2 rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-600">
-                <FiAlertCircle />
+              <div
+                role="alert"
+                className="flex items-center gap-2 rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-600"
+              >
+                <FiAlertCircle className="shrink-0" />
                 {error}
               </div>
             )}
@@ -461,22 +434,25 @@ export default function Page() {
             {/* SUCCESS */}
 
             {success && (
-              <div className="flex items-center gap-2 rounded-xl border border-green-100 bg-green-50 p-4 text-sm text-green-700">
-                <FiCheckCircle />
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-xl border border-green-100 bg-green-50 p-4 text-sm text-green-700"
+              >
+                <FiCheckCircle className="shrink-0" />
                 {success}
               </div>
             )}
 
-            {/* ACTIONS */}
+            {/* BUTTONS */}
 
             <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-6 sm:flex-row">
               <button
                 type="button"
-                onClick={() => router.back()}
+                onClick={() => router.push("/login")}
                 disabled={loading}
                 className="flex-1 rounded-xl border border-slate-200 px-6 py-3.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
               >
-                إلغاء
+                تسجيل الدخول
               </button>
 
               <button
@@ -486,7 +462,7 @@ export default function Page() {
               >
                 <FiUserPlus />
 
-                {loading ? "جارٍ إنشاء الحساب..." : "إنشاء حساب Owner"}
+                {loading ? "جارٍ إنشاء الحساب..." : "إنشاء حساب جديد"}
               </button>
             </div>
           </form>
