@@ -63,7 +63,6 @@ interface OpeningEntryLine {
 function getCurrentUsername(): string {
   if (typeof window === "undefined") return "";
 
-  // أولاً: قراءة اسم المستخدم من Cookie
   const cookie = document.cookie
     .split(";")
     .find((item) => item.trim().startsWith("username="));
@@ -78,7 +77,6 @@ function getCurrentUsername(): string {
     cookieUsername = "";
   }
 
-  // ثانياً: الرجوع إلى localStorage
   let storedUser: Partial<CurrentUser> | null = null;
 
   try {
@@ -120,7 +118,9 @@ function isValidPostingAccount(account: Account): boolean {
 
 function sortAccounts(accounts: Account[]): Account[] {
   return [...accounts].sort((a, b) =>
-    String(a.code).localeCompare(String(b.code), undefined, { numeric: true }),
+    String(a.code).localeCompare(String(b.code), undefined, {
+      numeric: true,
+    }),
   );
 }
 
@@ -174,7 +174,6 @@ export default function CreateOpeningEntriesPage() {
         throw new Error("لم يتم العثور على بيانات تسجيل الدخول");
       }
 
-      // جلب المستخدم الحالي
       const { data: user, error: userError } = await supabase
         .from("users")
         .select("*")
@@ -207,7 +206,6 @@ export default function CreateOpeningEntriesPage() {
       setCurrentUser(user);
       setCompanyId(currentCompanyId);
 
-      // جلب حسابات الشركة
       const { data: accountsData, error: accountsError } = await supabase
         .from("accounts")
         .select("*")
@@ -216,13 +214,11 @@ export default function CreateOpeningEntriesPage() {
 
       if (accountsError) {
         console.error("Get accounts error:", accountsError);
-
         throw new Error(accountsError.message);
       }
 
       const normalizedAccounts = (accountsData || []).map(normalizeAccount);
 
-      // الحسابات النهائية القابلة للترحيل فقط
       const postingAccounts = sortAccounts(
         normalizedAccounts.filter(isValidPostingAccount),
       );
@@ -282,7 +278,6 @@ export default function CreateOpeningEntriesPage() {
           [field]: value,
         };
 
-        // منع إدخال مدين ودائن في السطر نفسه
         if (field === "debit" && Number(value) > 0) {
           updated.credit = "";
         }
@@ -336,7 +331,6 @@ export default function CreateOpeningEntriesPage() {
       return false;
     }
 
-    // منع تكرار الحساب
     if (new Set(selectedAccounts).size !== selectedAccounts.length) {
       toast.error("لا يمكن اختيار الحساب نفسه أكثر من مرة");
       return false;
@@ -439,6 +433,7 @@ export default function CreateOpeningEntriesPage() {
         throw new Error("حساب المستخدم غير نشط");
       }
 
+      // وقت إنشاء المستند
       const createdAt = new Date().toISOString();
 
       /*
@@ -447,34 +442,41 @@ export default function CreateOpeningEntriesPage() {
        * id
        * companyId
        * extra JSONB
+       * createdAt
+       * updatedAt
        *
-       * لذلك accountId والتاريخ والمبالغ
-       * تحفظ داخل extra وليس كأعمدة مستقلة.
+       * تفاصيل الحساب والتاريخ والمبالغ تحفظ داخل extra.
        */
 
       const payload = lines.map((line) => ({
         id: crypto.randomUUID(),
+
         companyId,
+
+        createdAt,
+
+        updatedAt: createdAt,
+
         extra: {
           accountId: line.accountId,
+
           date,
+
           debit: Number(line.debit) || 0,
+
           credit: Number(line.credit) || 0,
+
           description: description.trim(),
+
           reference: reference.trim(),
-          createdBy: String(currentUser.id),
-          createdAt: new Date().toISOString(),
+
+          createdBy: String(user.id),
+
+          createdAt,
         },
       }));
 
-      const { error } = await supabase.from("openingEntries").insert(payload);
-
-      if (error) {
-        console.error("Submit error:", error);
-        toast.error("حدث خطأ أثناء حفظ الأرصدة الافتتاحية");
-        return;
-      }
-      // إدخال جميع الأسطر في طلب واحد
+      // تنفيذ عملية الإدخال مرة واحدة فقط
       const { error: insertError } = await supabase
         .from("openingEntries")
         .insert(payload);
@@ -504,6 +506,8 @@ export default function CreateOpeningEntriesPage() {
       });
 
       toast.error(error?.message || "تعذر حفظ الأرصدة الافتتاحية");
+    } finally {
+      setSaving(false);
     }
   }
 

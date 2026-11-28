@@ -1,342 +1,377 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  FiArrowRight,
+  FiShoppingCart,
+  FiUser,
+  FiPackage,
+  FiPlus,
+  FiTrash2,
+  FiSave,
+  FiCheckCircle,
+  FiRefreshCw,
+  FiAlertCircle,
+  FiDollarSign,
+  FiSearch,
+  FiFileText,
+} from "react-icons/fi";
+import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+import { IoCaretForwardCircleSharp } from "react-icons/io5";
 
 type Customer = {
   id: string;
   name: string;
-  phone?: string;
-  accountId?: string;
-  accountCode?: string;
-  accountName?: string;
-  status?: string;
-  isActive?: boolean;
-};
-
-type Product = {
-  id: string;
-  name: string;
-  sku?: string;
-  barcode?: string;
-  unitName?: string;
-  warehouseId?: string;
-  purchasePrice?: number;
-  sellingPrice?: number;
-  currentStock?: number;
-  trackInventory?: boolean | null;
-  status?: string;
+  balance: number | null;
 };
 
 type Warehouse = {
   id: string;
   name: string;
-  status?: string;
   isDefault?: boolean;
+};
+
+type Product = {
+  id: string;
+  name: string;
+  sku: string | null;
+  unitName: string | null;
+  purchasePrice: number | null;
+  sellingPrice: number | null;
+  currentStock: number | null;
+  trackInventory: boolean | null;
+  status: string | null;
+};
+
+type Stock = {
+  id: string;
+  productId: string;
+  warehouseId: string;
+  quantity: number;
+  averageCost: number;
+  unitCost: number;
 };
 
 type Account = {
   id: string;
   code: string;
   name: string;
-  type?: string;
-  nature?: string;
-  parentId?: string;
-  isGroup?: boolean;
-  isActive?: boolean;
-  status?: string;
-  extra?: Record<string, unknown> | null;
 };
 
 type SaleItem = {
-  id: string;
   productId: string;
   productName: string;
   productCode: string;
   unitName: string;
   quantity: number;
   price: number;
-  cost: number;
+  purchasePrice: number;
   discount: number;
   total: number;
-  costTotal: number;
-  warehouseId: string;
-  warehouseName: string;
+  available: number;
+  trackInventory: boolean;
 };
 
 type AuthUser = {
   id?: string;
-  userId?: string;
-  username?: string;
-  name?: string;
-  fullName?: string;
-  role?: string;
-  jobTitle?: string;
-  type?: string;
   companyId?: string;
+  username?: string;
+  fullName?: string;
+  type?: string;
+  role?: string;
 };
 
-const today = () => {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-};
-
-const numberValue = (value: unknown) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
-};
-
-const formatMoney = (value: number) =>
+const money = (value: number) =>
   new Intl.NumberFormat("ar-YE", {
-    minimumFractionDigits: 2,
+    minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(Number(value || 0));
 
-const isActiveRecord = (record: { status?: string; isActive?: boolean }) => {
-  if (record.isActive === false) return false;
-  if (record.status && record.status !== "active") return false;
-  return true;
-};
+const today = () => new Date().toISOString().slice(0, 10);
 
-export default function NewSalePage() {
-  const router = useRouter();
-
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+export default function NewSalesPage() {
   const [companyId, setCompanyId] = useState("");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-
-  const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [date, setDate] = useState(today());
+  const [stocks, setStocks] = useState<Stock[]>([]);
 
   const [customerId, setCustomerId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
+  const [date, setDate] = useState(today());
 
-  const [paymentMethod, setPaymentMethod] = useState<
-    "cash" | "bank" | "credit"
-  >("cash");
-
+  const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentAccountId, setPaymentAccountId] = useState("");
+  const [paidAmount, setPaidAmount] = useState(0);
 
-  const [items, setItems] = useState<SaleItem[]>([]);
-
-  const [invoiceDiscount, setInvoiceDiscount] = useState(0);
+  const [discount, setDiscount] = useState(0);
   const [taxRate, setTaxRate] = useState(0);
   const [notes, setNotes] = useState("");
 
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [selectedQuantity, setSelectedQuantity] = useState(1);
+  const [items, setItems] = useState<SaleItem[]>([]);
+  const [search, setSearch] = useState("");
 
-  // =====================================================
-  // تحميل بيانات المستخدم والبيانات الأساسية
-  // =====================================================
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadingStock, setLoadingStock] = useState(false);
+
+  const [companyError, setCompanyError] = useState("");
+
+  /* تحميل بيانات المستخدم */
 
   useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        setLoading(true);
-        setError("");
+    try {
+      const saved = localStorage.getItem("authUser");
 
-        const storedUser = localStorage.getItem("authUser");
+      if (!saved) {
+        setCompanyError("لم يتم العثور على بيانات المستخدم.");
+        setLoading(false);
+        return;
+      }
 
-        if (!storedUser) {
-          router.replace("/login");
-          return;
-        }
+      const user: AuthUser = JSON.parse(saved);
 
-        const user: AuthUser = JSON.parse(storedUser);
+      if (user.type === "platform") {
+        setCompanyError("لا يمكن لحساب المنصة إنشاء فاتورة مبيعات.");
+        setLoading(false);
+        return;
+      }
 
-        if (!user.companyId) {
-          setError("لم يتم العثور على الشركة المرتبطة بالمستخدم.");
-          return;
-        }
+      if (!user.companyId) {
+        setCompanyError("لم يتم تحديد الشركة المرتبطة بالمستخدم.");
+        setLoading(false);
+        return;
+      }
 
-        if (user.type === "platform") {
-          setError("لا يمكن لمستخدم المنصة إنشاء فاتورة مبيعات.");
-          return;
-        }
+      setAuthUser(user);
+      setCompanyId(user.companyId);
+    } catch {
+      setCompanyError("تعذر قراءة بيانات المستخدم.");
+      setLoading(false);
+    }
+  }, []);
 
-        setAuthUser(user);
-        setCompanyId(user.companyId);
+  /* تحميل البيانات الأساسية */
 
-        const [
-          customersResult,
-          productsResult,
-          warehousesResult,
-          accountsResult,
-          salesResult,
-        ] = await Promise.all([
-          supabase
-            .from("customers")
-            .select("*")
-            .eq("companyId", user.companyId),
+  const loadData = useCallback(async () => {
+    if (!companyId) return;
 
-          supabase.from("products").select("*").eq("companyId", user.companyId),
+    setLoading(true);
 
-          supabase
-            .from("warehouses")
-            .select("*")
-            .eq("companyId", user.companyId),
+    try {
+      const [
+        customersResult,
+        warehousesResult,
+        productsResult,
+        accountsResult,
+      ] = await Promise.all([
+        supabase
+          .from("customers")
+          .select("id,name,balance")
+          .eq("companyId", companyId)
+          .eq("isActive", true)
+          .order("name"),
 
-          supabase.from("accounts").select("*").eq("companyId", user.companyId),
+        supabase
+          .from("warehouses")
+          .select("id,name,isDefault")
+          .eq("companyId", companyId)
+          .eq("status", "active")
+          .order("name"),
 
-          supabase
-            .from("sales")
-            .select("invoiceNumber")
-            .eq("companyId", user.companyId),
-        ]);
+        supabase
+          .from("products")
+          .select(
+            "id,name,sku,unitName,purchasePrice,sellingPrice,currentStock,trackInventory,status",
+          )
+          .eq("companyId", companyId)
+          .eq("status", "active")
+          .order("name"),
 
-        if (customersResult.error) {
-          throw customersResult.error;
-        }
+        supabase
+          .from("accounts")
+          .select("id,code,name")
+          .eq("companyId", companyId)
+          .in("code", ["1101", "1102"])
+          .eq("isActive", true)
+          .order("code"),
+      ]);
 
-        if (productsResult.error) {
-          throw productsResult.error;
-        }
+      if (customersResult.error) throw customersResult.error;
+      if (warehousesResult.error) throw warehousesResult.error;
+      if (productsResult.error) throw productsResult.error;
+      if (accountsResult.error) throw accountsResult.error;
 
-        if (warehousesResult.error) {
-          throw warehousesResult.error;
-        }
+      const loadedWarehouses = (warehousesResult.data || []) as Warehouse[];
 
-        if (accountsResult.error) {
-          throw accountsResult.error;
-        }
+      setCustomers((customersResult.data || []) as Customer[]);
+      setWarehouses(loadedWarehouses);
+      setProducts((productsResult.data || []) as Product[]);
+      setAccounts((accountsResult.data || []) as Account[]);
 
-        if (salesResult.error) {
-          throw salesResult.error;
-        }
-
-        const activeCustomers = (
-          (customersResult.data || []) as Customer[]
-        ).filter(isActiveRecord);
-
-        const activeProducts = (
-          (productsResult.data || []) as Product[]
-        ).filter(isActiveRecord);
-
-        const activeWarehouses = (
-          (warehousesResult.data || []) as Warehouse[]
-        ).filter(isActiveRecord);
-
-        const activeAccounts = (
-          (accountsResult.data || []) as Account[]
-        ).filter((account) => {
-          if (!isActiveRecord(account)) return false;
-          if (account.isGroup === true) return false;
-
-          if (account.extra?.allowPosting === false) {
-            return false;
+      if (loadedWarehouses.length) {
+        setWarehouseId((previous) => {
+          if (previous && loadedWarehouses.some((w) => w.id === previous)) {
+            return previous;
           }
 
-          return true;
+          return (
+            loadedWarehouses.find((w) => w.isDefault)?.id ||
+            loadedWarehouses[0].id
+          );
         });
-
-        setCustomers(activeCustomers);
-        setProducts(activeProducts);
-        setWarehouses(activeWarehouses);
-        setAccounts(activeAccounts);
-
-        // اختيار المستودع الافتراضي
-        const defaultWarehouse =
-          activeWarehouses.find((warehouse) => warehouse.isDefault) ||
-          activeWarehouses[0];
-
-        if (defaultWarehouse) {
-          setWarehouseId(defaultWarehouse.id);
-        }
-
-        // إنشاء رقم الفاتورة التالي
-        const existingNumbers = (salesResult.data || []).map((sale) => {
-          const match = String(sale.invoiceNumber || "").match(/^SAL-(\d+)$/);
-
-          return match ? Number(match[1]) : 0;
-        });
-
-        const nextNumber = Math.max(0, ...existingNumbers) + 1;
-
-        setInvoiceNumber(`SAL-${String(nextNumber).padStart(5, "0")}`);
-      } catch (err: unknown) {
-        console.error("Error loading sales data:", err);
-
-        setError(
-          err instanceof Error ? err.message : "حدث خطأ أثناء تحميل البيانات.",
-        );
-      } finally {
-        setLoading(false);
       }
-    };
-
-    loadInitialData();
-  }, [router]);
-
-  // =====================================================
-  // الحسابات المتاحة حسب طريقة الدفع
-  // =====================================================
-
-  const availableAccounts = useMemo(() => {
-    if (paymentMethod === "cash") {
-      return accounts.filter((account) => account.code === "1101");
+    } catch (error: any) {
+      console.error("Load sales data:", error);
+      toast.error(error?.message || "تعذر تحميل بيانات البيع.");
+    } finally {
+      setLoading(false);
     }
-
-    if (paymentMethod === "bank") {
-      return accounts.filter((account) => account.code.startsWith("1102"));
-    }
-
-    if (paymentMethod === "credit") {
-      const selectedCustomer = customers.find(
-        (customer) => customer.id === customerId,
-      );
-
-      if (!selectedCustomer) return [];
-
-      return accounts.filter((account) => {
-        const matchesId =
-          selectedCustomer.accountId &&
-          account.id === selectedCustomer.accountId;
-
-        const matchesCode =
-          selectedCustomer.accountCode &&
-          account.code === selectedCustomer.accountCode;
-
-        return Boolean(matchesId || matchesCode);
-      });
-    }
-
-    return [];
-  }, [accounts, paymentMethod, customers, customerId]);
+  }, [companyId]);
 
   useEffect(() => {
-    if (paymentMethod === "credit" && !customerId) {
-      setPaymentAccountId("");
+    if (companyId) loadData();
+  }, [companyId, loadData]);
+
+  /* تحميل رصيد المستودع */
+
+  const loadWarehouseStock = useCallback(async () => {
+    if (!companyId || !warehouseId) return;
+
+    setLoadingStock(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("warehouseStocks")
+        .select("id,productId,warehouseId,quantity,averageCost,unitCost")
+        .eq("companyId", companyId)
+        .eq("warehouseId", warehouseId);
+
+      if (error) throw error;
+
+      setStocks((data || []) as Stock[]);
+    } catch (error: any) {
+      console.error("Load warehouse stock:", error);
+      toast.error("تعذر تحميل كميات المستودع.");
+    } finally {
+      setLoadingStock(false);
+    }
+  }, [companyId, warehouseId]);
+
+  useEffect(() => {
+    if (companyId && warehouseId) loadWarehouseStock();
+  }, [companyId, warehouseId, loadWarehouseStock]);
+
+  /* الكمية المتاحة */
+
+  const getAvailableStock = (product: Product) => {
+    if (product.trackInventory === false) return 999999;
+
+    const stock = stocks.find((item) => item.productId === product.id);
+
+    return Number(stock?.quantity || 0);
+  };
+
+  const getStockCost = (product: Product) => {
+    const stock = stocks.find((item) => item.productId === product.id);
+
+    return Number(
+      stock?.averageCost ?? stock?.unitCost ?? product.purchasePrice ?? 0,
+    );
+  };
+
+  /* الأصناف المعروضة */
+
+  const filteredProducts = useMemo(() => {
+    const term = search.trim().toLowerCase();
+
+    return products.filter((product) => {
+      const alreadyAdded = items.some((item) => item.productId === product.id);
+
+      if (alreadyAdded) return false;
+
+      if (!term) return true;
+
+      return (
+        product.name.toLowerCase().includes(term) ||
+        (product.sku || "").toLowerCase().includes(term)
+      );
+    });
+  }, [products, search, items]);
+
+  /* إضافة صنف */
+
+  const addProduct = (product: Product) => {
+    if (!warehouseId) {
+      toast.error("اختر المستودع أولاً.");
       return;
     }
 
-    const defaultAccount = availableAccounts[0];
+    const available = getAvailableStock(product);
 
-    if (
-      !paymentAccountId ||
-      !availableAccounts.some((account) => account.id === paymentAccountId)
-    ) {
-      setPaymentAccountId(defaultAccount?.id || "");
+    if (product.trackInventory !== false && available <= 0) {
+      toast.error("هذا الصنف غير متوفر في المستودع المحدد.");
+      return;
     }
-  }, [paymentMethod, customerId, availableAccounts, paymentAccountId]);
 
-  // =====================================================
-  // إجماليات الفاتورة
-  // =====================================================
+    const purchasePrice = getStockCost(product);
+
+    const newItem: SaleItem = {
+      productId: product.id,
+      productName: product.name,
+      productCode: product.sku || "",
+      unitName: product.unitName || "وحدة",
+      quantity: 1,
+      price: Number(product.sellingPrice || 0),
+      purchasePrice,
+      discount: 0,
+      total: Number(product.sellingPrice || 0),
+      available,
+      trackInventory: product.trackInventory !== false,
+    };
+
+    setItems((previous) => [...previous, newItem]);
+    setSearch("");
+  };
+
+  /* تعديل صنف */
+
+  const updateItem = (
+    productId: string,
+    field: "quantity" | "price" | "discount",
+    value: number,
+  ) => {
+    setItems((previous) =>
+      previous.map((item) => {
+        if (item.productId !== productId) return item;
+
+        const updated = {
+          ...item,
+          [field]: Math.max(0, value),
+        };
+
+        updated.total = Math.max(
+          0,
+          updated.quantity * updated.price - updated.discount,
+        );
+
+        return updated;
+      }),
+    );
+  };
+
+  const removeItem = (productId: string) => {
+    setItems((previous) =>
+      previous.filter((item) => item.productId !== productId),
+    );
+  };
+
+  /* الحسابات */
 
   const subtotal = useMemo(
     () => items.reduce((sum, item) => sum + item.quantity * item.price, 0),
@@ -348,913 +383,841 @@ export default function NewSalePage() {
     [items],
   );
 
-  const totalBeforeInvoiceDiscount = Math.max(0, subtotal - itemsDiscount);
-
-  const safeInvoiceDiscount = Math.min(
-    Math.max(0, invoiceDiscount),
-    totalBeforeInvoiceDiscount,
+  const totalDiscount = Math.min(
+    subtotal,
+    itemsDiscount + Math.max(0, discount),
   );
 
-  const taxableAmount = Math.max(
-    0,
-    totalBeforeInvoiceDiscount - safeInvoiceDiscount,
+  const taxableAmount = Math.max(0, subtotal - totalDiscount);
+
+  const tax = taxableAmount * (Math.max(0, taxRate) / 100);
+
+  const grandTotal = taxableAmount + tax;
+
+  const totalCost = useMemo(
+    () =>
+      items.reduce((sum, item) => sum + item.quantity * item.purchasePrice, 0),
+    [items],
   );
 
-  const taxAmount = (taxableAmount * Math.max(0, taxRate)) / 100;
+  const profit = taxableAmount - totalCost;
 
-  const total = taxableAmount + taxAmount;
+  const remainingAmount = Math.max(0, grandTotal - Math.max(0, paidAmount));
 
-  const totalCost = items.reduce((sum, item) => sum + item.costTotal, 0);
+  /* التحقق من الفاتورة */
 
-  const estimatedProfit = total - totalCost;
-
-  // =====================================================
-  // إضافة منتج للفاتورة
-  // =====================================================
-
-  const addProduct = () => {
-    setError("");
-    setSuccess("");
-
-    if (!selectedProductId) {
-      setError("يرجى اختيار المنتج.");
-      return;
+  const validateInvoice = () => {
+    if (!customerId) {
+      toast.error("يرجى اختيار العميل.");
+      return false;
     }
 
     if (!warehouseId) {
-      setError("يرجى اختيار المستودع.");
-      return;
+      toast.error("يرجى اختيار المستودع.");
+      return false;
     }
 
-    if (selectedQuantity <= 0) {
-      setError("يجب أن تكون الكمية أكبر من صفر.");
-      return;
+    if (!items.length) {
+      toast.error("أضف صنفًا واحدًا على الأقل.");
+      return false;
     }
 
-    const product = products.find((item) => item.id === selectedProductId);
+    for (const item of items) {
+      if (item.quantity <= 0) {
+        toast.error(`كمية ${item.productName} غير صحيحة.`);
+        return false;
+      }
 
-    if (!product) {
-      setError("المنتج المحدد غير موجود.");
-      return;
-    }
+      if (item.price < 0) {
+        toast.error(`سعر ${item.productName} غير صحيح.`);
+        return false;
+      }
 
-    if (product.trackInventory !== false) {
-      const availableStock = numberValue(product.currentStock);
-
-      const alreadyAdded = items
-        .filter(
-          (item) =>
-            item.productId === product.id && item.warehouseId === warehouseId,
-        )
-        .reduce((sum, item) => sum + item.quantity, 0);
-
-      if (alreadyAdded + selectedQuantity > availableStock) {
-        setError(
-          `الكمية المطلوبة تتجاوز الرصيد المتاح للمنتج ${product.name}. الرصيد الحالي: ${availableStock}`,
+      if (item.trackInventory && item.quantity > item.available) {
+        toast.error(
+          `الكمية المطلوبة من ${item.productName} أكبر من المتوفر (${money(item.available)}).`,
         );
-        return;
+        return false;
       }
     }
 
-    const existingIndex = items.findIndex(
-      (item) =>
-        item.productId === product.id && item.warehouseId === warehouseId,
-    );
-
-    if (existingIndex !== -1) {
-      const updatedItems = [...items];
-      const existingItem = updatedItems[existingIndex];
-
-      const newQuantity = existingItem.quantity + selectedQuantity;
-
-      if (
-        product.trackInventory !== false &&
-        newQuantity > numberValue(product.currentStock)
-      ) {
-        setError("الكمية الإجمالية تتجاوز المخزون المتاح.");
-        return;
-      }
-
-      existingItem.quantity = newQuantity;
-      existingItem.total =
-        newQuantity * existingItem.price - existingItem.discount;
-
-      existingItem.costTotal = newQuantity * existingItem.cost;
-
-      setItems(updatedItems);
-    } else {
-      const warehouse = warehouses.find((item) => item.id === warehouseId);
-
-      const price = numberValue(product.sellingPrice);
-      const cost = numberValue(product.purchasePrice);
-
-      const newItem: SaleItem = {
-        id: crypto.randomUUID(),
-        productId: product.id,
-        productName: product.name,
-        productCode: product.sku || product.barcode || "",
-        unitName: product.unitName || "",
-        quantity: selectedQuantity,
-        price,
-        cost,
-        discount: 0,
-        total: selectedQuantity * price,
-        costTotal: selectedQuantity * cost,
-        warehouseId,
-        warehouseName: warehouse?.name || "",
-      };
-
-      setItems((previous) => [...previous, newItem]);
+    if (paymentMethod !== "credit" && !paymentAccountId) {
+      toast.error("اختر حساب الصندوق أو البنك.");
+      return false;
     }
 
-    setSelectedProductId("");
-    setSelectedQuantity(1);
+    if (paidAmount < 0 || paidAmount > grandTotal) {
+      toast.error("المبلغ المدفوع غير صحيح.");
+      return false;
+    }
+
+    return true;
   };
 
-  // =====================================================
-  // تعديل كمية أو سعر أو خصم المنتج
-  // =====================================================
+  /* حفظ الفاتورة */
 
-  const updateItem = (
-    itemId: string,
-    field: "quantity" | "price" | "discount",
-    value: number,
-  ) => {
-    setItems((previous) =>
-      previous.map((item) => {
-        if (item.id !== itemId) return item;
+  const saveInvoice = async (mode: "draft" | "save" | "post") => {
+    if (saving) return;
 
-        const updated = {
-          ...item,
-          [field]: Math.max(0, value),
-        };
+    if (!validateInvoice()) return;
 
-        const product = products.find(
-          (product) => product.id === item.productId,
-        );
-
-        if (field === "quantity" && product?.trackInventory !== false) {
-          const otherQuantity = previous
-            .filter(
-              (other) =>
-                other.productId === item.productId &&
-                other.warehouseId === item.warehouseId &&
-                other.id !== itemId,
-            )
-            .reduce((sum, other) => sum + other.quantity, 0);
-
-          const maxQuantity =
-            numberValue(product?.currentStock) - otherQuantity;
-
-          updated.quantity = Math.min(
-            updated.quantity,
-            Math.max(0, maxQuantity),
-          );
-        }
-
-        const lineSubtotal = updated.quantity * updated.price;
-
-        updated.discount = Math.min(updated.discount, lineSubtotal);
-
-        updated.total = Math.max(0, lineSubtotal - updated.discount);
-
-        updated.costTotal = updated.quantity * updated.cost;
-
-        return updated;
-      }),
-    );
-  };
-
-  const removeItem = (itemId: string) => {
-    setItems((previous) => previous.filter((item) => item.id !== itemId));
-  };
-
-  // =====================================================
-  // حفظ الفاتورة
-  // =====================================================
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-
-    setError("");
-    setSuccess("");
-
-    if (!companyId || !authUser) {
-      setError("بيانات المستخدم أو الشركة غير مكتملة.");
+    if (
+      mode === "post" &&
+      !window.confirm(
+        "هل تريد حفظ الفاتورة وترحيلها؟ سيتم تحديث المخزون وإنشاء القيد المحاسبي.",
+      )
+    ) {
       return;
     }
 
-    if (!date) {
-      setError("يرجى تحديد تاريخ الفاتورة.");
-      return;
-    }
-
-    if (!warehouseId) {
-      setError("يرجى اختيار المستودع.");
-      return;
-    }
-
-    if (items.length === 0) {
-      setError("يرجى إضافة منتج واحد على الأقل.");
-      return;
-    }
-
-    if (total <= 0) {
-      setError("إجمالي الفاتورة يجب أن يكون أكبر من صفر.");
-      return;
-    }
-
-    if (paymentMethod === "credit" && !customerId) {
-      setError("يجب اختيار عميل عند البيع الآجل.");
-      return;
-    }
-
-    if (!paymentAccountId) {
-      setError(
-        paymentMethod === "credit"
-          ? "لا يوجد حساب ذمم مرتبط بهذا العميل. تحقق من حساب العميل في شجرة الحسابات."
-          : "لا يوجد حساب مناسب لطريقة الدفع المحددة.",
-      );
-      return;
-    }
-
-    const selectedAccount = accounts.find(
-      (account) => account.id === paymentAccountId,
-    );
-
-    if (!selectedAccount) {
-      setError("الحساب المحدد غير موجود.");
-      return;
-    }
-
-    const selectedCustomer = customers.find(
-      (customer) => customer.id === customerId,
-    );
-
-    const selectedWarehouse = warehouses.find(
-      (warehouse) => warehouse.id === warehouseId,
-    );
+    setSaving(true);
 
     try {
-      setSaving(true);
+      const selectedCustomer = customers.find(
+        (customer) => customer.id === customerId,
+      );
 
-      // منع تكرار رقم الفاتورة قدر الإمكان
-      const { data: existingInvoice, error: checkError } = await supabase
-        .from("sales")
-        .select("id")
-        .eq("companyId", companyId)
-        .eq("invoiceNumber", invoiceNumber)
-        .maybeSingle();
+      const selectedWarehouse = warehouses.find(
+        (warehouse) => warehouse.id === warehouseId,
+      );
 
-      if (checkError) throw checkError;
+      const selectedAccount = accounts.find(
+        (account) => account.id === paymentAccountId,
+      );
 
-      if (existingInvoice) {
-        setError(
-          "رقم الفاتورة مستخدم بالفعل. أعد تحميل الصفحة للحصول على رقم جديد.",
-        );
-        return;
-      }
+      const invoiceId = crypto.randomUUID();
 
-      const now = new Date().toISOString();
+      const invoiceNumber = `SAL-${Date.now()}`;
 
-      const userName =
-        authUser.fullName || authUser.name || authUser.username || "مستخدم";
+      const status =
+        mode === "draft"
+          ? "draft"
+          : paymentMethod === "credit" || remainingAmount > 0
+            ? "pending"
+            : "paid";
 
-      const userId = authUser.id || authUser.userId || null;
-
-      const saleItems = items.map((item) => ({
-        id: item.id,
+      const invoiceItems = items.map((item) => ({
+        id: crypto.randomUUID(),
         productId: item.productId,
         productName: item.productName,
         productCode: item.productCode,
         unitName: item.unitName,
         quantity: item.quantity,
         price: item.price,
-        unitPrice: item.price,
-        cost: item.cost,
+        purchasePrice: item.purchasePrice,
+        cost: item.purchasePrice,
         discount: item.discount,
         total: item.total,
-        costTotal: item.costTotal,
-        warehouseId: item.warehouseId,
-        warehouseName: item.warehouseName,
+        warehouseId,
+        warehouseName: selectedWarehouse?.name || "",
       }));
 
-      /*
-        نحفظ الفاتورة كمسودة:
-        - لا يتم خصم المخزون.
-        - لا يتم إنشاء قيد محاسبي.
-        - لا يتم تسجيل مبلغ مدفوع فعليًا.
-        - لا يتم إنشاء سند قبض.
-      */
-
-      const payload = {
-        id: crypto.randomUUID(),
+      const invoice = {
+        id: invoiceId,
         companyId,
-
         invoiceNumber,
-
-        customerId: selectedCustomer?.id || null,
-        customerName: selectedCustomer?.name || "عميل نقدي",
-
-        warehouseId: selectedWarehouse?.id || null,
+        customerId,
+        customerName: selectedCustomer?.name || "",
+        warehouseId,
         warehouseName: selectedWarehouse?.name || "",
-
         date,
-
-        items: saleItems,
-
+        items: invoiceItems,
         subtotal,
-        total,
-        totalAmount: total,
-        grandTotal: total,
-
+        total: grandTotal,
+        totalAmount: grandTotal,
+        grandTotal,
         totalCost,
-        profit: estimatedProfit,
-
-        paidAmount: 0,
-        remainingAmount: total,
-
+        profit,
+        paidAmount: mode === "draft" ? 0 : paidAmount,
+        remainingAmount: mode === "draft" ? grandTotal : remainingAmount,
         paymentMethod,
-
-        paymentAccountId: selectedAccount.id,
-        paymentAccountCode: selectedAccount.code,
-        paymentAccountName: selectedAccount.name,
-
-        status: "draft",
-
-        notes: notes.trim(),
-
-        journalId: null,
-
-        createdBy: userName,
-        createdById: userId,
-        createdByName: userName,
-        createdByUsername: authUser.username || "",
-        createdByRole: authUser.role || authUser.jobTitle || "",
-
-        updatedBy: userName,
-        updatedById: userId,
-
-        createdAt: now,
-        updatedAt: now,
-
+        paymentAccountId: paymentMethod === "credit" ? null : paymentAccountId,
+        paymentAccountCode:
+          paymentMethod === "credit" ? null : selectedAccount?.code || null,
+        paymentAccountName:
+          paymentMethod === "credit" ? null : selectedAccount?.name || null,
+        status,
+        notes,
+        createdBy: authUser?.fullName || authUser?.username || "",
+        createdById: authUser?.id || null,
+        createdByName: authUser?.fullName || authUser?.username || "",
+        createdByUsername: authUser?.username || "",
+        createdByRole: authUser?.role || "",
         extra: {
-          invoiceDiscount: safeInvoiceDiscount,
-          itemsDiscount,
-          taxRate,
-          taxAmount,
-          taxableAmount,
-          paymentMethod,
-          status: "draft",
+          source: "sales_new_page",
+          postingStatus: "not_posted",
         },
       };
 
-      const { error: insertError } = await supabase
-        .from("sales")
-        .insert(payload);
+      const { error } = await supabase.from("sales").insert(invoice);
 
-      if (insertError) throw insertError;
+      if (error) throw error;
 
-      setSuccess("تم حفظ فاتورة المبيعات كمسودة بنجاح.");
+      if (mode === "post") {
+        /*
+          يجب إنشاء دالة post_sales_invoice في Supabase أولاً.
+          الدالة مسؤولة عن:
+          1. التحقق من المستخدم والشركة.
+          2. قفل الفاتورة ومنع الترحيل المكرر.
+          3. التحقق من الكمية المتاحة داخل المعاملة.
+          4. خصم الكميات من warehouseStocks.
+          5. تسجيل inventoryMovements.
+          6. إنشاء قيد المبيعات وتكلفة البضاعة.
+          7. تحديث sales.journalId و sales.extra.
+          8. تنفيذ جميع الخطوات ذرياً داخل معاملة واحدة.
+        */
 
-      setTimeout(() => {
-        router.push("/erp/sales");
-        router.refresh();
-      }, 1000);
-    } catch (err: unknown) {
-      console.error("Error creating sale:", err);
+        const { data, error: postingError } = await supabase.rpc(
+          "post_sales_invoice",
+          {
+            p_sale_id: invoiceId,
+          },
+        );
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : "حدث خطأ أثناء حفظ فاتورة المبيعات.",
-      );
+        if (postingError) {
+          throw new Error(
+            `تم حفظ الفاتورة، لكن تعذر ترحيلها: ${postingError.message}`,
+          );
+        }
+
+        if (data && typeof data === "object" && data.success === false) {
+          throw new Error(data.message || "تعذر ترحيل فاتورة المبيعات.");
+        }
+
+        toast.success("تم حفظ الفاتورة وترحيلها بنجاح.");
+      } else if (mode === "draft") {
+        toast.success("تم حفظ فاتورة المبيعات كمسودة.");
+      } else {
+        toast.success("تم حفظ فاتورة المبيعات بنجاح.");
+      }
+
+      window.location.href = "/erp/sales/invoices";
+    } catch (error: any) {
+      console.error("Save sales invoice error:", {
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+        code: error?.code,
+        error,
+      });
+
+      toast.error(error?.message || "حدث خطأ أثناء حفظ فاتورة المبيعات.");
     } finally {
       setSaving(false);
     }
   };
 
-  // =====================================================
-  // واجهة التحميل
-  // =====================================================
+  /* خطأ المستخدم */
 
-  if (loading) {
+  if (companyError) {
     return (
-      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
-        <div className="text-center">
-          <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          <p className="text-sm text-gray-500">جاري تحميل بيانات المبيعات...</p>
+      <div dir="rtl" className="p-6">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">
+          {companyError}
         </div>
       </div>
     );
   }
 
-  // =====================================================
-  // الواجهة الرئيسية
-  // =====================================================
+  /* التحميل */
+
+  if (loading) {
+    return (
+      <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
+        <div className="text-center text-slate-500">
+          <FiRefreshCw className="mx-auto mb-3 animate-spin text-3xl" />
+          جاري تحميل بيانات المبيعات...
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div dir="rtl" className="space-y-6 pb-10">
-      {/* العنوان */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">
-            إنشاء فاتورة مبيعات
-          </h1>
+    <div dir="rtl" className="min-h-screen space-y-6 bg-slate-50/70 p-4 md:p-6">
+      {/* رأس الصفحة */}
 
-          <p className="mt-1 text-sm text-gray-500">
-            تسجيل فاتورة مبيعات جديدة
-          </p>
+      <div className="rounded-2xl bg-gradient-to-l from-emerald-950 via-emerald-800 to-teal-700 p-5 text-white shadow-lg md:p-7">
+        <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center">
+          <div>
+            <div className="mb-3 flex items-center gap-2 text-emerald-200">
+              <FiShoppingCart size={22} />
+              <span className="text-sm font-semibold">نظام المبيعات</span>
+            </div>
+
+            <h1 className="text-2xl font-bold md:text-3xl">
+              إنشاء فاتورة مبيعات
+            </h1>
+
+            <p className="mt-2 text-sm text-emerald-100">
+              تسجيل عملية البيع ومتابعة الكميات والأرباح والمدفوعات.
+            </p>
+          </div>
+
+          <Link
+            href="/erp/sales/invoices"
+            className="flex items-center justify-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 py-3 text-sm font-semibold transition hover:bg-white/20"
+          >
+            <FiArrowRight />
+            العودة إلى الفواتير
+          </Link>
         </div>
-
-        <button
-          type="button"
-          onClick={() => router.push("/erp/sales")}
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
-        >
-          العودة إلى المبيعات
-        </button>
       </div>
 
-      {/* رسائل الخطأ والنجاح */}
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {/* معلومات الفاتورة */}
 
-      {success && (
-        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          {success}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* بيانات الفاتورة */}
-        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-5 text-lg font-bold text-gray-800">
-            بيانات الفاتورة
-          </h2>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                رقم الفاتورة
-              </label>
-
-              <input
-                value={invoiceNumber}
-                readOnly
-                className="w-full rounded-lg border border-gray-200 bg-gray-100 px-3 py-2.5 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                تاريخ الفاتورة
-              </label>
-
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                العميل
-              </label>
-
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-              >
-                <option value="">عميل نقدي</option>
-
-                {customers.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.name}
-                    {customer.phone ? ` - ${customer.phone}` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                المستودع
-              </label>
-
-              <select
-                value={warehouseId}
-                onChange={(e) => setWarehouseId(e.target.value)}
-                required
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-              >
-                <option value="">اختر المستودع</option>
-
-                {warehouses.map((warehouse) => (
-                  <option key={warehouse.id} value={warehouse.id}>
-                    {warehouse.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </section>
-
-        {/* إضافة المنتجات */}
-        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-5 text-lg font-bold text-gray-800">
-            إضافة المنتجات
-          </h2>
-
-          <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
-            <div className="md:col-span-2">
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                المنتج
-              </label>
-
-              <select
-                value={selectedProductId}
-                onChange={(e) => setSelectedProductId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-              >
-                <option value="">اختر المنتج</option>
-
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                    {product.sku ? ` (${product.sku})` : ""}
-                    {" - "}
-                    سعر البيع: {formatMoney(numberValue(product.sellingPrice))}
-                    {product.trackInventory !== false
-                      ? ` - المخزون: ${numberValue(product.currentStock)}`
-                      : " - غير مخزني"}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                الكمية
-              </label>
-
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={selectedQuantity}
-                onChange={(e) =>
-                  setSelectedQuantity(numberValue(e.target.value))
-                }
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-              />
-            </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-2 text-emerald-700">
+            <FiUser size={19} />
+            <h2 className="font-bold">العميل</h2>
           </div>
 
-          <button
-            type="button"
-            onClick={addProduct}
-            className="mt-4 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+          <select
+            value={customerId}
+            onChange={(e) => setCustomerId(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
           >
-            + إضافة المنتج
-          </button>
+            <option value="">اختر العميل</option>
+            {customers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.name}
+              </option>
+            ))}
+          </select>
 
-          {/* جدول المنتجات */}
-          <div className="mt-6 overflow-x-auto">
-            <table className="w-full min-w-[850px] text-right text-sm">
-              <thead>
-                <tr className="border-b bg-gray-50 text-gray-600">
-                  <th className="px-3 py-3">المنتج</th>
-                  <th className="px-3 py-3">الوحدة</th>
-                  <th className="px-3 py-3">الكمية</th>
-                  <th className="px-3 py-3">السعر</th>
-                  <th className="px-3 py-3">الخصم</th>
-                  <th className="px-3 py-3">الإجمالي</th>
-                  <th className="px-3 py-3">حذف</th>
+          {customerId && (
+            <p className="mt-3 text-xs text-slate-500">
+              رصيد العميل:{" "}
+              <strong className="text-slate-700">
+                {money(
+                  customers.find((c) => c.id === customerId)?.balance || 0,
+                )}{" "}
+                ر.ي
+              </strong>
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-2 text-emerald-700">
+            <IoCaretForwardCircleSharp size={19} />
+            <h2 className="font-bold">مستودع الصرف</h2>
+          </div>
+
+          <select
+            value={warehouseId}
+            onChange={(e) => {
+              setWarehouseId(e.target.value);
+              setItems([]);
+            }}
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
+          >
+            <option value="">اختر المستودع</option>
+            {warehouses.map((warehouse) => (
+              <option key={warehouse.id} value={warehouse.id}>
+                {warehouse.name}
+                {warehouse.isDefault ? " (افتراضي)" : ""}
+              </option>
+            ))}
+          </select>
+
+          {loadingStock && (
+            <p className="mt-2 text-xs text-emerald-600">
+              جاري تحديث أرصدة المستودع...
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-2 text-emerald-700">
+            <FiFileText size={19} />
+            <h2 className="font-bold">بيانات الفاتورة</h2>
+          </div>
+
+          <label className="mb-2 block text-xs text-slate-500">
+            تاريخ البيع
+          </label>
+
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
+          />
+        </div>
+      </div>
+
+      {/* اختيار الأصناف */}
+
+      <section className="overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-sm">
+        <div className="flex flex-col justify-between gap-3 border-b border-emerald-100 bg-emerald-50/70 p-5 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="flex items-center gap-2 font-bold text-emerald-950">
+              <FiPackage className="text-emerald-700" />
+              أصناف فاتورة البيع
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              اختر الصنف لمشاهدة سعر الشراء والكمية المتوفرة.
+            </p>
+          </div>
+
+          <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-800">
+            {items.length} صنف
+          </span>
+        </div>
+
+        <div className="p-5">
+          <div className="relative mb-4">
+            <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ابحث عن صنف بالاسم أو الرمز..."
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pr-10 pl-4 text-sm outline-none focus:border-emerald-500 focus:bg-white"
+            />
+          </div>
+
+          {search && (
+            <div className="mb-5 max-h-64 overflow-y-auto rounded-xl border border-slate-200">
+              {filteredProducts.map((product) => {
+                const available = getAvailableStock(product);
+                const cost = getStockCost(product);
+
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => addProduct(product)}
+                    className="flex w-full flex-col justify-between gap-3 border-b border-slate-100 p-4 text-right transition last:border-0 hover:bg-emerald-50 sm:flex-row sm:items-center"
+                  >
+                    <div>
+                      <p className="font-bold text-slate-800">{product.name}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {product.sku || "بدون رمز"} ·{" "}
+                        {product.unitName || "وحدة"}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <span className="rounded-lg bg-slate-100 px-3 py-2 text-slate-600">
+                        شراء: {money(cost)}
+                      </span>
+
+                      <span className="rounded-lg bg-emerald-100 px-3 py-2 font-bold text-emerald-800">
+                        بيع: {money(product.sellingPrice || 0)}
+                      </span>
+
+                      <span
+                        className={`rounded-lg px-3 py-2 font-bold ${
+                          available > 0
+                            ? "bg-blue-50 text-blue-700"
+                            : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        المتوفر:{" "}
+                        {product.trackInventory === false
+                          ? "غير محدود"
+                          : money(available)}
+                      </span>
+
+                      <span className="flex items-center gap-1 text-emerald-700">
+                        <FiPlus />
+                        إضافة
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+
+              {filteredProducts.length === 0 && (
+                <p className="p-5 text-center text-sm text-slate-400">
+                  لا توجد أصناف مطابقة أو أن الأصناف أضيفت بالفعل.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* جدول الأصناف */}
+
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[1000px] text-right">
+              <thead className="bg-slate-100 text-xs text-slate-600">
+                <tr>
+                  <th className="p-3">الصنف</th>
+                  <th className="p-3">المتوفر</th>
+                  <th className="p-3">سعر الشراء</th>
+                  <th className="p-3">سعر البيع</th>
+                  <th className="p-3">الكمية</th>
+                  <th className="p-3">الخصم</th>
+                  <th className="p-3">الإجمالي</th>
+                  <th className="p-3">حذف</th>
                 </tr>
               </thead>
 
-              <tbody>
-                {items.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="px-3 py-10 text-center text-gray-400"
-                    >
-                      لم تتم إضافة أي منتجات حتى الآن.
-                    </td>
-                  </tr>
-                ) : (
-                  items.map((item) => (
-                    <tr key={item.id} className="border-b last:border-0">
-                      <td className="px-3 py-3">
-                        <div className="font-medium text-gray-800">
+              <tbody className="divide-y divide-slate-100">
+                {items.map((item) => {
+                  const exceeds =
+                    item.trackInventory && item.quantity > item.available;
+
+                  return (
+                    <tr key={item.productId} className="hover:bg-slate-50">
+                      <td className="p-3">
+                        <p className="font-bold text-slate-800">
                           {item.productName}
-                        </div>
-
-                        <div className="mt-1 text-xs text-gray-400">
-                          {item.productCode || "بدون كود"}
-                        </div>
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {item.productCode || "-"} · {item.unitName}
+                        </p>
                       </td>
 
-                      <td className="px-3 py-3 text-gray-600">
-                        {item.unitName || "-"}
+                      <td className="p-3">
+                        <span
+                          className={`rounded-lg px-3 py-2 text-xs font-bold ${
+                            exceeds
+                              ? "bg-red-100 text-red-700"
+                              : "bg-blue-50 text-blue-700"
+                          }`}
+                        >
+                          {item.trackInventory
+                            ? money(item.available)
+                            : "غير محدود"}
+                        </span>
                       </td>
 
-                      <td className="px-3 py-3">
+                      <td className="p-3 text-sm text-slate-600">
+                        {money(item.purchasePrice)}
+                      </td>
+
+                      <td className="p-3">
                         <input
                           type="number"
                           min="0"
-                          step="0.01"
-                          value={item.quantity}
-                          onChange={(e) =>
-                            updateItem(
-                              item.id,
-                              "quantity",
-                              numberValue(e.target.value),
-                            )
-                          }
-                          className="w-24 rounded-md border border-gray-300 px-2 py-1.5"
-                        />
-                      </td>
-
-                      <td className="px-3 py-3">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
                           value={item.price}
                           onChange={(e) =>
                             updateItem(
-                              item.id,
+                              item.productId,
                               "price",
-                              numberValue(e.target.value),
+                              Number(e.target.value),
                             )
                           }
-                          className="w-28 rounded-md border border-gray-300 px-2 py-1.5"
+                          className="w-28 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-sm font-bold text-emerald-800 outline-none focus:border-emerald-500"
                         />
                       </td>
 
-                      <td className="px-3 py-3">
+                      <td className="p-3">
+                        <input
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            updateItem(
+                              item.productId,
+                              "quantity",
+                              Number(e.target.value),
+                            )
+                          }
+                          className={`w-24 rounded-lg border p-2 text-sm outline-none ${
+                            exceeds
+                              ? "border-red-400 bg-red-50"
+                              : "border-slate-200 bg-white"
+                          }`}
+                        />
+
+                        {exceeds && (
+                          <p className="mt-1 text-xs text-red-600">
+                            الكمية أكبر من المتوفر
+                          </p>
+                        )}
+                      </td>
+
+                      <td className="p-3">
                         <input
                           type="number"
                           min="0"
-                          step="0.01"
                           value={item.discount}
                           onChange={(e) =>
                             updateItem(
-                              item.id,
+                              item.productId,
                               "discount",
-                              numberValue(e.target.value),
+                              Number(e.target.value),
                             )
                           }
-                          className="w-24 rounded-md border border-gray-300 px-2 py-1.5"
+                          className="w-24 rounded-lg border border-slate-200 p-2 text-sm outline-none focus:border-emerald-500"
                         />
                       </td>
 
-                      <td className="px-3 py-3 font-semibold text-gray-800">
-                        {formatMoney(item.total)}
+                      <td className="p-3 font-bold text-slate-800">
+                        {money(item.total)}
                       </td>
 
-                      <td className="px-3 py-3">
+                      <td className="p-3">
                         <button
                           type="button"
-                          onClick={() => removeItem(item.id)}
-                          className="rounded-md px-3 py-1.5 text-red-600 transition hover:bg-red-50"
+                          onClick={() => removeItem(item.productId)}
+                          className="rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100"
+                          title="حذف الصنف"
                         >
-                          حذف
+                          <FiTrash2 />
                         </button>
                       </td>
                     </tr>
-                  ))
+                  );
+                })}
+
+                {items.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="p-12 text-center text-sm text-slate-400"
+                    >
+                      <FiPackage className="mx-auto mb-3 text-3xl" />
+                      ابحث عن صنف لإضافته إلى فاتورة البيع.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* الحسابات والملاحظات */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-5 text-lg font-bold text-gray-800">
-              بيانات الدفع
+      {/* بيانات الدفع والملخص */}
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
+        <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-3">
+          <div>
+            <h2 className="flex items-center gap-2 font-bold text-slate-800">
+              <FiDollarSign className="text-emerald-700" />
+              تفاصيل الدفع
             </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              حدد طريقة الدفع والمبلغ المستلم.
+            </p>
+          </div>
 
-            <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-600">
+                طريقة الدفع
+              </label>
+
+              <select
+                value={paymentMethod}
+                onChange={(e) => {
+                  setPaymentMethod(e.target.value);
+                  setPaymentAccountId("");
+                }}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
+              >
+                <option value="cash">نقداً</option>
+                <option value="bank">تحويل بنكي</option>
+                <option value="credit">آجل</option>
+              </select>
+            </div>
+
+            {paymentMethod !== "credit" && (
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  طريقة الدفع
-                </label>
-
-                <select
-                  value={paymentMethod}
-                  onChange={(e) =>
-                    setPaymentMethod(
-                      e.target.value as "cash" | "bank" | "credit",
-                    )
-                  }
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                >
-                  <option value="cash">نقدًا</option>
-                  <option value="bank">تحويل بنكي</option>
-                  <option value="credit">آجل</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  الحساب المرتبط
+                <label className="mb-2 block text-sm font-semibold text-slate-600">
+                  حساب التحصيل
                 </label>
 
                 <select
                   value={paymentAccountId}
                   onChange={(e) => setPaymentAccountId(e.target.value)}
-                  disabled={paymentMethod === "credit" && !customerId}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 disabled:bg-gray-100"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
                 >
                   <option value="">اختر الحساب</option>
-
-                  {availableAccounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.code} - {account.name}
-                    </option>
-                  ))}
+                  {accounts
+                    .filter((account) =>
+                      paymentMethod === "cash"
+                        ? account.code === "1101"
+                        : account.code === "1102",
+                    )
+                    .map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.code} - {account.name}
+                      </option>
+                    ))}
                 </select>
-
-                {availableAccounts.length === 0 && (
-                  <p className="mt-2 text-xs text-amber-600">
-                    لا يوجد حساب مناسب. تحقق من إعدادات شجرة الحسابات وربط حساب
-                    العميل.
-                  </p>
-                )}
               </div>
+            )}
 
-              {paymentMethod === "credit" && (
-                <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-                  هذه فاتورة آجلة. يجب اختيار عميل مرتبط بحساب ذمم فرعي في شجرة
-                  الحسابات.
-                </div>
-              )}
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-600">
+                المبلغ المدفوع
+              </label>
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  ملاحظات
-                </label>
-
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={4}
-                  placeholder="أدخل ملاحظات الفاتورة..."
-                  className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
+              <input
+                type="number"
+                min="0"
+                max={grandTotal}
+                value={paidAmount}
+                onChange={(e) => setPaidAmount(Number(e.target.value))}
+                disabled={paymentMethod === "credit"}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500 disabled:opacity-50"
+              />
             </div>
-          </section>
 
-          {/* ملخص الفاتورة */}
-          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-5 text-lg font-bold text-gray-800">
-              ملخص الفاتورة
-            </h2>
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-600">
+                نسبة الضريبة %
+              </label>
 
-            <div className="space-y-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500">إجمالي المنتجات</span>
+              <input
+                type="number"
+                min="0"
+                value={taxRate}
+                onChange={(e) => setTaxRate(Number(e.target.value))}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
+              />
+            </div>
 
-                <span className="font-semibold text-gray-800">
-                  {formatMoney(subtotal)}
-                </span>
-              </div>
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-slate-600">
+                خصم الفاتورة
+              </label>
 
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500">خصومات المنتجات</span>
+              <input
+                type="number"
+                min="0"
+                value={discount}
+                onChange={(e) => setDiscount(Number(e.target.value))}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
 
-                <span className="font-semibold text-red-600">
-                  - {formatMoney(itemsDiscount)}
-                </span>
-              </div>
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-slate-600">
+              ملاحظات
+            </label>
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  خصم إضافي على الفاتورة
-                </label>
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="أضف ملاحظات الفاتورة إن وجدت..."
+              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm outline-none focus:border-emerald-500"
+            />
+          </div>
+        </section>
 
-                <input
-                  type="number"
-                  min="0"
-                  max={totalBeforeInvoiceDiscount}
-                  step="0.01"
-                  value={invoiceDiscount}
-                  onChange={(e) =>
-                    setInvoiceDiscount(numberValue(e.target.value))
-                  }
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
+        {/* الملخص المالي */}
 
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500">إجمالي الخصم</span>
+        <section className="rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm xl:col-span-2">
+          <h2 className="mb-5 font-bold text-emerald-950">ملخص فاتورة البيع</h2>
 
-                <span className="font-semibold text-red-600">
-                  - {formatMoney(itemsDiscount + safeInvoiceDiscount)}
-                </span>
-              </div>
+          <div className="space-y-4">
+            <SummaryRow label="إجمالي الأصناف" value={subtotal} />
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  نسبة الضريبة %
-                </label>
+            <SummaryRow label="خصم الأصناف" value={itemsDiscount} />
 
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={taxRate}
-                  onChange={(e) => setTaxRate(numberValue(e.target.value))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
+            <div>
+              <SummaryRow label="خصم الفاتورة" value={discount} />
+            </div>
 
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500">قيمة الضريبة</span>
+            <SummaryRow label="الضريبة" value={tax} />
 
-                <span className="font-semibold text-gray-800">
-                  {formatMoney(taxAmount)}
-                </span>
-              </div>
-
-              <hr />
-
+            <div className="border-t border-dashed border-slate-200 pt-4">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-gray-800">
+                <span className="font-bold text-slate-700">
                   الإجمالي النهائي
                 </span>
 
-                <span className="text-2xl font-bold text-blue-700">
-                  {formatMoney(total)}
+                <span className="text-2xl font-extrabold text-emerald-700">
+                  {money(grandTotal)} ر.ي
                 </span>
               </div>
+            </div>
 
-              <div className="rounded-lg bg-gray-50 p-3">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">
-                    تكلفة المنتجات التقديرية
+            <div className="rounded-xl bg-slate-50 p-4">
+              <SummaryRow label="تكلفة البضاعة" value={totalCost} />
+
+              <SummaryRow label="الربح المتوقع" value={profit} />
+
+              <SummaryRow label="المبلغ المدفوع" value={paidAmount} />
+
+              <div className="mt-3 border-t border-slate-200 pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-700">
+                    المتبقي
                   </span>
 
-                  <span className="font-medium text-gray-800">
-                    {formatMoney(totalCost)}
-                  </span>
-                </div>
-
-                <div className="mt-2 flex items-center justify-between text-sm">
-                  <span className="text-gray-500">الربح التقديري</span>
-
-                  <span
-                    className={`font-bold ${
-                      estimatedProfit >= 0 ? "text-green-600" : "text-red-600"
-                    }`}
-                  >
-                    {formatMoney(estimatedProfit)}
+                  <span className="font-bold text-amber-700">
+                    {money(remainingAmount)} ر.ي
                   </span>
                 </div>
-              </div>
-
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-800">
-                سيتم حفظ الفاتورة كمسودة. لن يتم تسجيل المبلغ كمدفوع فعليًا أو
-                ترحيل قيد محاسبي أو خصم المخزون عند الحفظ.
               </div>
             </div>
-          </section>
+
+            {items.some(
+              (item) => item.trackInventory && item.quantity > item.available,
+            ) && (
+              <div className="flex gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-6 text-red-700">
+                <FiAlertCircle className="mt-1 shrink-0" />
+                توجد أصناف بكميات أكبر من المتاح. يرجى تعديل الكميات.
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {/* أزرار الحفظ */}
+
+      <div className="sticky bottom-3 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur">
+        <div className="text-xs text-slate-500">
+          <span className="font-bold text-slate-700">{items.length}</span> أصناف
+          · الإجمالي{" "}
+          <strong className="text-emerald-700">{money(grandTotal)} ر.ي</strong>
         </div>
 
-        {/* أزرار الحفظ */}
-        <div className="flex flex-wrap items-center justify-end gap-3">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => router.push("/erp/sales")}
             disabled={saving}
-            className="rounded-lg border border-gray-300 px-6 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+            onClick={() => saveInvoice("draft")}
+            className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            إلغاء
+            <FiFileText />
+            حفظ كمسودة
           </button>
 
           <button
-            type="submit"
-            disabled={saving || items.length === 0}
-            className="rounded-lg bg-blue-600 px-7 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            disabled={saving}
+            onClick={() => saveInvoice("save")}
+            className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
           >
-            {saving ? "جاري الحفظ..." : "حفظ الفاتورة كمسودة"}
+            <FiSave />
+            حفظ
+          </button>
+
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => saveInvoice("post")}
+            className="flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white shadow-md transition hover:bg-emerald-800 disabled:opacity-50"
+          >
+            {saving ? (
+              <FiRefreshCw className="animate-spin" />
+            ) : (
+              <FiCheckCircle />
+            )}
+            {saving ? "جارٍ الحفظ..." : "حفظ وترحيل"}
           </button>
         </div>
-      </form>
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold text-slate-700">{money(value)} ر.ي</span>
     </div>
   );
 }

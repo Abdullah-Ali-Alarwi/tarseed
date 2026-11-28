@@ -9,6 +9,7 @@ import {
   FiBarChart2,
   FiTrendingUp,
   FiDollarSign,
+  FiActivity,
 } from "react-icons/fi";
 
 const reportLinks = [
@@ -31,6 +32,11 @@ const reportLinks = [
     name: "الميزانية العمومية",
     href: "/erp/reports/balance-sheet",
     icon: FiDollarSign,
+  },
+  {
+    name: "سجل العمليات",
+    href: "/erp/reports/activity-logs",
+    icon: FiActivity,
   },
 ];
 

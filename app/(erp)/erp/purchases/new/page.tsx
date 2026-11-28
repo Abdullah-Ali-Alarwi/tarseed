@@ -11,14 +11,11 @@ import {
   FiPackage,
   FiFileText,
   FiAlertCircle,
+  FiCheckCircle,
 } from "react-icons/fi";
 import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
-
-/* =====================================================
-   Types
-===================================================== */
 
 type AnyRecord = Record<string, any>;
 
@@ -94,17 +91,14 @@ interface PurchaseItem {
   total: number;
 }
 
-/* =====================================================
-   Helpers
-===================================================== */
-
 const today = () => {
   const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
 
-  return `${year}-${month}-${day}`;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 };
 
 const createId = () => crypto.randomUUID();
@@ -121,10 +115,6 @@ const activeRecord = (item: AnyRecord) =>
   item.status !== "inactive" &&
   item.status !== "disabled";
 
-/* =====================================================
-   Initial Item
-===================================================== */
-
 const createEmptyItem = (): PurchaseItem => ({
   id: createId(),
   productId: "",
@@ -138,10 +128,6 @@ const createEmptyItem = (): PurchaseItem => ({
   discount: 0,
   total: 0,
 });
-
-/* =====================================================
-   Component
-===================================================== */
 
 export default function NewPurchasePage() {
   const router = useRouter();
@@ -160,8 +146,6 @@ export default function NewPurchasePage() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
 
-  /* بيانات الفاتورة */
-
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [date, setDate] = useState(today());
 
@@ -175,10 +159,6 @@ export default function NewPurchasePage() {
   const [notes, setNotes] = useState("");
 
   const [items, setItems] = useState<PurchaseItem[]>([createEmptyItem()]);
-
-  /* =====================================================
-     المستخدم الحالي
-  ===================================================== */
 
   const actorName =
     currentUser?.name ||
@@ -196,10 +176,6 @@ export default function NewPurchasePage() {
     }),
     [currentUser, actorName],
   );
-
-  /* =====================================================
-     البيانات المختارة
-  ===================================================== */
 
   const selectedSupplier = useMemo(
     () => suppliers.find((supplier) => normalize(supplier.id) === supplierId),
@@ -228,10 +204,6 @@ export default function NewPurchasePage() {
       ),
     [paymentAccounts, paymentAccountId],
   );
-
-  /* =====================================================
-     الحسابات
-  ===================================================== */
 
   const subtotal = useMemo(
     () =>
@@ -263,9 +235,7 @@ export default function NewPurchasePage() {
     [items],
   );
 
-  /* =====================================================
-     تحميل بيانات Supabase
-  ===================================================== */
+  /* تحميل البيانات */
 
   const loadData = useCallback(async () => {
     try {
@@ -360,9 +330,13 @@ export default function NewPurchasePage() {
       );
 
       const loadedSuppliers = (suppliersResult.data || []) as Supplier[];
+
       const loadedProducts = (productsResult.data || []) as Product[];
+
       const loadedWarehouses = (warehousesResult.data || []) as Warehouse[];
+
       const loadedUnits = (unitsResult.data || []) as Unit[];
+
       const loadedAccounts = (accountsResult.data || []) as Account[];
 
       setSuppliers(loadedSuppliers.filter(activeRecord));
@@ -370,8 +344,6 @@ export default function NewPurchasePage() {
       setWarehouses(loadedWarehouses.filter(activeRecord));
       setUnits(loadedUnits);
       setAccounts(loadedAccounts.filter(activeRecord));
-
-      /* رقم الفاتورة التالي */
 
       const existingNumbers = (purchasesResult.data || []).map(
         (purchase: AnyRecord) => {
@@ -387,8 +359,6 @@ export default function NewPurchasePage() {
 
       setInvoiceNumber(`PUR-${String(nextNumber).padStart(4, "0")}`);
 
-      /* اختيار المستودع الافتراضي */
-
       if (loadedWarehouses.length === 1) {
         const defaultWarehouse = loadedWarehouses[0];
 
@@ -400,8 +370,6 @@ export default function NewPurchasePage() {
           })),
         );
       }
-
-      /* اختيار حساب الصندوق الافتراضي */
 
       const cashAccount = loadedAccounts.find(
         (account) =>
@@ -426,9 +394,7 @@ export default function NewPurchasePage() {
     loadData();
   }, [loadData]);
 
-  /* =====================================================
-     إضافة صنف
-  ===================================================== */
+  /* إضافة صنف */
 
   const addItem = () => {
     const defaultWarehouse = warehouses.find(
@@ -445,9 +411,7 @@ export default function NewPurchasePage() {
     ]);
   };
 
-  /* =====================================================
-     حذف صنف
-  ===================================================== */
+  /* حذف صنف */
 
   const removeItem = (id: string) => {
     if (items.length === 1) {
@@ -458,9 +422,7 @@ export default function NewPurchasePage() {
     setItems((previous) => previous.filter((item) => item.id !== id));
   };
 
-  /* =====================================================
-     تحديث صنف
-  ===================================================== */
+  /* تحديث صنف */
 
   const updateItem = (id: string, field: keyof PurchaseItem, value: any) => {
     setItems((previous) =>
@@ -479,10 +441,12 @@ export default function NewPurchasePage() {
           );
 
           updated.productName = product?.name || "";
+
           updated.productCode =
             product?.sku || product?.code || product?.barcode || "";
 
           updated.price = Number(product?.purchasePrice || 0);
+
           updated.unit = unit
             ? `${unit.name}${unit.symbol ? ` (${unit.symbol})` : ""}`
             : product?.unitName || "";
@@ -507,9 +471,7 @@ export default function NewPurchasePage() {
     );
   };
 
-  /* =====================================================
-     التحقق من الفاتورة
-  ===================================================== */
+  /* التحقق */
 
   const validateInvoice = () => {
     if (!companyId || !currentUser) {
@@ -544,10 +506,11 @@ export default function NewPurchasePage() {
           !item.warehouseId ||
           Number(item.quantity) <= 0 ||
           Number(item.price) < 0 ||
-          Number(item.discount) < 0,
+          Number(item.discount) < 0 ||
+          Number(item.discount) > Number(item.quantity) * Number(item.price),
       )
     ) {
-      toast.error("يرجى إدخال الأصناف والكميات والأسعار بشكل صحيح");
+      toast.error("يرجى إدخال الأصناف والكميات والأسعار والخصومات بشكل صحيح");
       return false;
     }
 
@@ -579,11 +542,9 @@ export default function NewPurchasePage() {
     return true;
   };
 
-  /* =====================================================
-     حفظ الفاتورة في Supabase
-  ===================================================== */
+  /* الحفظ والترحيل */
 
-  const handleSave = async () => {
+  const handleSave = async (mode: "draft" | "post") => {
     if (saving) return;
 
     if (!validateInvoice()) return;
@@ -592,8 +553,6 @@ export default function NewPurchasePage() {
       setSaving(true);
 
       const now = new Date().toISOString();
-
-      /* منع تكرار رقم الفاتورة */
 
       const { data: duplicate, error: duplicateError } = await supabase
         .from("purchases")
@@ -608,8 +567,6 @@ export default function NewPurchasePage() {
         toast.error("رقم الفاتورة مستخدم مسبقاً");
         return;
       }
-
-      /* تجهيز الأصناف */
 
       const normalizedItems = items.map((item) => {
         const product = products.find(
@@ -626,21 +583,16 @@ export default function NewPurchasePage() {
 
         return {
           id: item.id,
-
           productId: item.productId,
           productCode: item.productCode,
           productName: item.productName,
           name: item.productName,
-
           quantity,
           price,
           discount,
-
           total: Math.max(0, quantity * price - discount),
-
           warehouseId: item.warehouseId,
           warehouseName: warehouse?.name || "",
-
           unit: item.unit || product?.unitName || "",
         };
       });
@@ -658,8 +610,6 @@ export default function NewPurchasePage() {
       );
 
       const purchaseId = createId();
-
-      /* تجهيز سجل المشتريات */
 
       const purchasePayload = {
         id: purchaseId,
@@ -699,17 +649,26 @@ export default function NewPurchasePage() {
         paymentAccountId:
           paymentMethod === "credit" ? "" : selectedPaymentAccount!.id,
 
-        status: paymentMethod === "credit" ? "pending" : "paid",
+        status:
+          mode === "draft"
+            ? "draft"
+            : paymentMethod === "credit"
+              ? "pending"
+              : "paid",
 
         notes: notes.trim(),
 
         ...actorData,
 
+        extra: {
+          inventoryPosted: false,
+        },
+
         createdAt: now,
         updatedAt: now,
       };
 
-      /* الحفظ */
+      /* حفظ الفاتورة */
 
       const { error: insertError } = await supabase
         .from("purchases")
@@ -717,7 +676,55 @@ export default function NewPurchasePage() {
 
       if (insertError) throw insertError;
 
-      toast.success("تم حفظ فاتورة المشتريات بنجاح");
+      /* حفظ مسودة فقط */
+
+      if (mode === "draft") {
+        toast.success("تم حفظ مسودة فاتورة الشراء بنجاح");
+
+        router.push("/erp/purchases/invoices");
+        router.refresh();
+
+        return;
+      }
+
+      /* ترحيل الفاتورة إلى المخزون */
+
+      const { data: postingResult, error: postingError } = await supabase.rpc(
+        "post_purchase_invoice",
+        {
+          p_purchase_id: purchaseId,
+        },
+      );
+
+      if (postingError) {
+        console.error("Purchase posting error:", postingError);
+
+        toast.error(
+          `تم حفظ الفاتورة، لكن تعذر ترحيلها: ${postingError.message}`,
+        );
+
+        router.push("/erp/purchases/invoices");
+        router.refresh();
+
+        return;
+      }
+
+      if (
+        postingResult &&
+        typeof postingResult === "object" &&
+        postingResult.success === false
+      ) {
+        toast.error(
+          postingResult.message || "تم حفظ الفاتورة، لكن لم يكتمل الترحيل",
+        );
+
+        router.push("/erp/purchases/invoices");
+        router.refresh();
+
+        return;
+      }
+
+      toast.success("تم حفظ الفاتورة وترحيلها إلى المخزون بنجاح");
 
       router.push("/erp/purchases/invoices");
       router.refresh();
@@ -729,10 +736,6 @@ export default function NewPurchasePage() {
       setSaving(false);
     }
   };
-
-  /* =====================================================
-     Loading
-  ===================================================== */
 
   if (loading) {
     return (
@@ -747,17 +750,11 @@ export default function NewPurchasePage() {
     );
   }
 
-  /* =====================================================
-     UI
-  ===================================================== */
-
   return (
     <div
       dir="rtl"
       className="min-h-screen bg-gray-50 p-3 text-xs text-gray-800 sm:p-5"
     >
-      {/* الرأس */}
-
       <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
           <div className="flex items-center gap-2">
@@ -781,7 +778,6 @@ export default function NewPurchasePage() {
 
         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
           <p className="text-[10px] text-gray-500">رقم الفاتورة</p>
-
           <p className="font-bold text-[#0E1F33]">{invoiceNumber}</p>
         </div>
       </div>
@@ -886,7 +882,7 @@ export default function NewPurchasePage() {
         </div>
       </div>
 
-      {/* أصناف الفاتورة */}
+      {/* الأصناف */}
 
       <div className="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-gray-100 p-4">
@@ -1130,13 +1126,11 @@ export default function NewPurchasePage() {
 
       {/* تنبيه */}
 
-      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-6 text-amber-900">
-        <strong>تنبيه:</strong>
+      <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-[11px] leading-6 text-blue-900">
+        <strong>ملاحظة حول الترحيل:</strong>
         <br />
-        هذه النسخة تحفظ بيانات الفاتورة وأصنافها في جدول purchases. لا تنفذ حتى
-        الآن تحديث المخزون أو إنشاء القيد المحاسبي؛ يجب ربط هذه العمليات بإجراء
-        آمن ومتكامل حتى لا تُحفظ الفاتورة دون تحديث بقية الحسابات والمخزون عند
-        حدوث خطأ.
+        ترحيل الفاتورة ينفذ تحديث المخزون وحركات المستودعات حسب إجراء قاعدة
+        البيانات الحالي. إنشاء القيد المحاسبي غير مشمول في هذا الإجراء.
       </div>
 
       {/* الأزرار */}
@@ -1144,8 +1138,9 @@ export default function NewPurchasePage() {
       <div className="mt-5 flex flex-col-reverse justify-end gap-2 sm:flex-row">
         <button
           type="button"
+          disabled={saving}
           onClick={() => router.push("/erp/purchases/invoices")}
-          className="h-10 rounded-md border border-gray-200 bg-white px-5 font-semibold hover:bg-gray-50"
+          className="h-10 rounded-md border border-gray-200 bg-white px-5 font-semibold hover:bg-gray-50 disabled:opacity-50"
         >
           إلغاء
         </button>
@@ -1153,12 +1148,25 @@ export default function NewPurchasePage() {
         <button
           type="button"
           disabled={saving || !currentUser}
-          onClick={handleSave}
-          className="flex h-10 items-center justify-center gap-2 rounded-md bg-[#0E1F33] px-6 font-semibold text-white hover:bg-[#162d49] disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => handleSave("draft")}
+          className="flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-5 font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? <FiRefreshCw className="animate-spin" /> : <FiSave />}
+          حفظ مسودة
+        </button>
 
-          {saving ? "جارٍ الحفظ..." : "حفظ الفاتورة"}
+        <button
+          type="button"
+          disabled={saving || !currentUser}
+          onClick={() => handleSave("post")}
+          className="flex h-10 items-center justify-center gap-2 rounded-md bg-emerald-600 px-6 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {saving ? (
+            <FiRefreshCw className="animate-spin" />
+          ) : (
+            <FiCheckCircle />
+          )}
+          حفظ وترحيل
         </button>
       </div>
     </div>

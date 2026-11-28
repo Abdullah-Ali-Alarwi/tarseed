@@ -19,13 +19,12 @@ import {
   FiTruck,
   FiCalendar,
   FiCreditCard,
+  FiArchive,
+  FiAlertCircle,
 } from "react-icons/fi";
+import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
-
-// =========================
-// Types
-// =========================
 
 type PurchaseItem = {
   id?: string;
@@ -66,6 +65,7 @@ type Purchase = {
   status: string | null;
   notes: string | null;
   createdAt: string;
+  extra?: Record<string, any> | null;
 };
 
 type Supplier = {
@@ -81,15 +81,10 @@ type AuthUser = {
   fullName?: string;
 };
 
-// =========================
-// Helpers
-// =========================
-
-const formatNumber = (value: number | null | undefined) => {
-  return new Intl.NumberFormat("ar-YE", {
+const formatNumber = (value: number | null | undefined) =>
+  new Intl.NumberFormat("ar-YE", {
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
-};
 
 const formatDate = (value: string | null | undefined) => {
   if (!value) return "-";
@@ -104,6 +99,10 @@ const formatDate = (value: string | null | undefined) => {
     day: "2-digit",
   });
 };
+
+const isInventoryPosted = (invoice: Purchase) =>
+  invoice.extra?.inventoryPosted === true ||
+  invoice.extra?.inventoryPosted === "true";
 
 const getStatus = (status: string | null) => {
   switch (status?.toLowerCase()) {
@@ -160,10 +159,6 @@ const getPaymentMethod = (method: string | null) => {
   }
 };
 
-// =========================
-// Main Page
-// =========================
-
 export default function PurchaseInvoicesPage() {
   const [invoices, setInvoices] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -179,9 +174,9 @@ export default function PurchaseInvoicesPage() {
 
   const [selectedInvoice, setSelectedInvoice] = useState<Purchase | null>(null);
 
-  // =========================
-  // Load User
-  // =========================
+  const [postingId, setPostingId] = useState<string | null>(null);
+
+  /* تحميل المستخدم */
 
   useEffect(() => {
     try {
@@ -214,9 +209,7 @@ export default function PurchaseInvoicesPage() {
     }
   }, []);
 
-  // =========================
-  // Fetch Invoices
-  // =========================
+  /* تحميل الفواتير */
 
   const fetchInvoices = useCallback(async () => {
     if (!companyId) return;
@@ -247,10 +240,14 @@ export default function PurchaseInvoicesPage() {
       }
 
       setInvoices((invoicesResult.data || []) as Purchase[]);
+
       setSuppliers((suppliersResult.data || []) as Supplier[]);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Fetch purchases error:", err);
-      setError("تعذر تحميل فواتير المشتريات. حاول تحديث الصفحة.");
+
+      setError(
+        err?.message || "تعذر تحميل فواتير المشتريات. حاول تحديث الصفحة.",
+      );
     } finally {
       setLoading(false);
     }
@@ -262,9 +259,7 @@ export default function PurchaseInvoicesPage() {
     }
   }, [companyId, fetchInvoices]);
 
-  // =========================
-  // Supplier Name
-  // =========================
+  /* اسم المورد */
 
   const getSupplierName = (invoice: Purchase) => {
     if (invoice.supplier) return invoice.supplier;
@@ -274,9 +269,7 @@ export default function PurchaseInvoicesPage() {
     return supplier?.name || "مورد غير محدد";
   };
 
-  // =========================
-  // Filter Invoices
-  // =========================
+  /* التصفية */
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter((invoice) => {
@@ -298,9 +291,7 @@ export default function PurchaseInvoicesPage() {
     });
   }, [invoices, search, statusFilter, paymentFilter, suppliers]);
 
-  // =========================
-  // Statistics
-  // =========================
+  /* الإحصائيات */
 
   const statistics = useMemo(() => {
     const activeInvoices = invoices.filter(
@@ -320,25 +311,93 @@ export default function PurchaseInvoicesPage() {
       .filter((invoice) => invoice.status === "pending")
       .reduce((sum, invoice) => sum + Number(invoice.total || 0), 0);
 
+    const postedCount = invoices.filter(isInventoryPosted).length;
+
     return {
       count: invoices.length,
       total: totalAmount,
       paid: paidAmount,
       pending: pendingAmount,
+      posted: postedCount,
     };
   }, [invoices]);
 
-  // =========================
-  // Print Invoice
-  // =========================
+  /* ترحيل فاتورة */
+
+  const postInvoice = async (invoice: Purchase) => {
+    if (postingId) return;
+
+    if (invoice.status === "cancelled") {
+      toast.error("لا يمكن ترحيل فاتورة ملغاة");
+      return;
+    }
+
+    if (invoice.status === "draft") {
+      toast.error("هذه الفاتورة مسودة. احفظ الفاتورة كفاتورة شراء أولاً.");
+      return;
+    }
+
+    if (isInventoryPosted(invoice)) {
+      toast.info("هذه الفاتورة مرحّلة إلى المخزون مسبقاً");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `هل تريد ترحيل فاتورة ${invoice.invoiceNumber} إلى المخزون؟\n\nسيتم تحديث أرصدة المنتجات والمستودعات وإنشاء حركات مخزون.`,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setPostingId(invoice.id);
+
+      const { data, error } = await supabase.rpc("post_purchase_invoice", {
+        p_purchase_id: invoice.id,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data && typeof data === "object" && data.success === false) {
+        throw new Error(data.message || "لم يكتمل ترحيل الفاتورة");
+      }
+
+      toast.success(
+        `تم ترحيل الفاتورة ${invoice.invoiceNumber} إلى المخزون بنجاح`,
+      );
+
+      await fetchInvoices();
+
+      setSelectedInvoice((previous) =>
+        previous?.id === invoice.id ? null : previous,
+      );
+    } catch (err: any) {
+      console.error("Post purchase invoice error:", err);
+
+      toast.error(err?.message || "حدث خطأ أثناء ترحيل فاتورة المشتريات");
+    } finally {
+      setPostingId(null);
+    }
+  };
+
+  /* طباعة الفاتورة */
 
   const printInvoice = (invoice: Purchase) => {
     const items = Array.isArray(invoice.items) ? invoice.items : [];
 
+    const escapeHtml = (value: any) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
     const printWindow = window.open("", "_blank", "width=900,height=700");
 
     if (!printWindow) {
-      alert("يرجى السماح بفتح النوافذ المنبثقة للطباعة.");
+      toast.error("يرجى السماح بفتح النوافذ المنبثقة للطباعة.");
       return;
     }
 
@@ -347,9 +406,9 @@ export default function PurchaseInvoicesPage() {
         (item, index) => `
           <tr>
             <td>${index + 1}</td>
-            <td>${item.productName || item.name || "-"}</td>
-            <td>${item.quantity || 0}</td>
-            <td>${item.unitName || item.unit || "-"}</td>
+            <td>${escapeHtml(item.productName || item.name || "-")}</td>
+            <td>${formatNumber(item.quantity)}</td>
+            <td>${escapeHtml(item.unitName || item.unit || "-")}</td>
             <td>${formatNumber(item.price)}</td>
             <td>${formatNumber(item.total)}</td>
           </tr>
@@ -362,7 +421,8 @@ export default function PurchaseInvoicesPage() {
       <html lang="ar" dir="rtl">
       <head>
         <meta charset="UTF-8" />
-        <title>فاتورة مشتريات ${invoice.invoiceNumber}</title>
+        <title>فاتورة مشتريات ${escapeHtml(invoice.invoiceNumber)}</title>
+
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -419,17 +479,26 @@ export default function PurchaseInvoicesPage() {
 
       <body>
         <h2>فاتورة مشتريات</h2>
-        <h3>${invoice.invoiceNumber || "-"}</h3>
+        <h3>${escapeHtml(invoice.invoiceNumber || "-")}</h3>
 
         <div class="info">
           <div>
-            <strong>المورد:</strong> ${getSupplierName(invoice)}<br />
-            <strong>تاريخ الفاتورة:</strong> ${formatDate(invoice.date)}<br />
+            <strong>المورد:</strong>
+            ${escapeHtml(getSupplierName(invoice))}<br />
+
+            <strong>تاريخ الفاتورة:</strong>
+            ${escapeHtml(formatDate(invoice.date))}<br />
           </div>
 
           <div>
-            <strong>طريقة الدفع:</strong> ${getPaymentMethod(invoice.paymentMethod)}<br />
-            <strong>الحالة:</strong> ${getStatus(invoice.status).label}<br />
+            <strong>طريقة الدفع:</strong>
+            ${escapeHtml(getPaymentMethod(invoice.paymentMethod))}<br />
+
+            <strong>الحالة:</strong>
+            ${escapeHtml(getStatus(invoice.status).label)}<br />
+
+            <strong>ترحيل المخزون:</strong>
+            ${isInventoryPosted(invoice) ? "مرحّلة" : "غير مرحلة"}
           </div>
         </div>
 
@@ -452,15 +521,22 @@ export default function PurchaseInvoicesPage() {
 
         <div class="totals">
           <div>الإجمالي قبل الخصم: ${formatNumber(invoice.subtotal)}</div>
+
           <div>الخصم: ${formatNumber(invoice.discount)}</div>
+
           <div>الضريبة: ${formatNumber(invoice.tax)}</div>
+
           <hr />
+
           <strong>الإجمالي النهائي: ${formatNumber(invoice.total)}</strong>
         </div>
 
         ${
           invoice.notes
-            ? `<div class="notes"><strong>ملاحظات:</strong> ${invoice.notes}</div>`
+            ? `<div class="notes">
+                <strong>ملاحظات:</strong>
+                ${escapeHtml(invoice.notes)}
+              </div>`
             : ""
         }
 
@@ -476,9 +552,7 @@ export default function PurchaseInvoicesPage() {
     printWindow.document.close();
   };
 
-  // =========================
-  // Loading
-  // =========================
+  /* شاشة التحميل */
 
   if (loading && !invoices.length) {
     return (
@@ -491,9 +565,7 @@ export default function PurchaseInvoicesPage() {
     );
   }
 
-  // =========================
-  // Error
-  // =========================
+  /* شاشة الخطأ */
 
   if (error && !invoices.length) {
     return (
@@ -515,13 +587,10 @@ export default function PurchaseInvoicesPage() {
     );
   }
 
-  // =========================
-  // Render
-  // =========================
-
   return (
     <div dir="rtl" className="space-y-6 p-4 md:p-6">
-      {/* Header */}
+      {/* الرأس */}
+
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
           <div className="flex items-center gap-2">
@@ -561,8 +630,9 @@ export default function PurchaseInvoicesPage() {
         </div>
       </div>
 
-      {/* Statistics */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* الإحصائيات */}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           title="عدد الفواتير"
           value={formatNumber(statistics.count)}
@@ -593,9 +663,17 @@ export default function PurchaseInvoicesPage() {
           color="amber"
           suffix="ر.ي"
         />
+
+        <StatCard
+          title="مرحّلة للمخزون"
+          value={formatNumber(statistics.posted)}
+          icon={<FiArchive size={21} />}
+          color="green"
+        />
       </div>
 
-      {/* Search and Filters */}
+      {/* البحث والتصفية */}
+
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-center gap-2 text-slate-700">
           <FiSearch />
@@ -603,7 +681,6 @@ export default function PurchaseInvoicesPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {/* Search */}
           <div className="relative">
             <FiSearch className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
 
@@ -616,7 +693,6 @@ export default function PurchaseInvoicesPage() {
             />
           </div>
 
-          {/* Status */}
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -629,7 +705,6 @@ export default function PurchaseInvoicesPage() {
             <option value="cancelled">ملغاة</option>
           </select>
 
-          {/* Payment */}
           <select
             value={paymentFilter}
             onChange={(e) => setPaymentFilter(e.target.value)}
@@ -658,14 +733,14 @@ export default function PurchaseInvoicesPage() {
         </div>
       </div>
 
-      {/* Error Banner */}
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      {/* Invoices Table */}
+      {/* جدول الفواتير */}
+
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 p-4">
           <div>
@@ -703,16 +778,25 @@ export default function PurchaseInvoicesPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-right">
+            <table className="w-full min-w-[1250px] text-right">
               <thead className="bg-slate-50 text-xs text-slate-500">
                 <tr>
                   <th className="px-4 py-4 font-semibold">رقم الفاتورة</th>
+
                   <th className="px-4 py-4 font-semibold">التاريخ</th>
+
                   <th className="px-4 py-4 font-semibold">المورد</th>
+
                   <th className="px-4 py-4 font-semibold">عدد الأصناف</th>
+
                   <th className="px-4 py-4 font-semibold">الإجمالي</th>
+
                   <th className="px-4 py-4 font-semibold">طريقة الدفع</th>
-                  <th className="px-4 py-4 font-semibold">الحالة</th>
+
+                  <th className="px-4 py-4 font-semibold">حالة السداد</th>
+
+                  <th className="px-4 py-4 font-semibold">ترحيل المخزون</th>
+
                   <th className="px-4 py-4 text-center font-semibold">
                     الإجراءات
                   </th>
@@ -724,19 +808,26 @@ export default function PurchaseInvoicesPage() {
                   const status = getStatus(invoice.status);
                   const StatusIcon = status.icon;
 
+                  const posted = isInventoryPosted(invoice);
+
+                  const isPosting = postingId === invoice.id;
+
+                  const canPost =
+                    !posted &&
+                    invoice.status !== "draft" &&
+                    invoice.status !== "cancelled";
+
                   return (
                     <tr
                       key={invoice.id}
                       className="transition hover:bg-slate-50"
                     >
-                      {/* Invoice Number */}
                       <td className="px-4 py-4">
                         <span className="font-bold text-blue-700">
                           {invoice.invoiceNumber || "-"}
                         </span>
                       </td>
 
-                      {/* Date */}
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2 text-sm text-slate-600">
                           <FiCalendar className="text-slate-400" size={14} />
@@ -744,7 +835,6 @@ export default function PurchaseInvoicesPage() {
                         </div>
                       </td>
 
-                      {/* Supplier */}
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
                           <div className="rounded-lg bg-slate-100 p-2 text-slate-500">
@@ -757,7 +847,6 @@ export default function PurchaseInvoicesPage() {
                         </div>
                       </td>
 
-                      {/* Items Count */}
                       <td className="px-4 py-4">
                         <span className="text-sm text-slate-600">
                           {formatNumber(
@@ -769,7 +858,6 @@ export default function PurchaseInvoicesPage() {
                         </span>
                       </td>
 
-                      {/* Total */}
                       <td className="px-4 py-4">
                         <div className="font-bold text-slate-800">
                           {formatNumber(invoice.total)}
@@ -780,16 +868,15 @@ export default function PurchaseInvoicesPage() {
                         </span>
                       </td>
 
-                      {/* Payment Method */}
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2 text-sm text-slate-600">
                           <FiCreditCard size={15} className="text-slate-400" />
+
                           {invoice.paymentMethodName ||
                             getPaymentMethod(invoice.paymentMethod)}
                         </div>
                       </td>
 
-                      {/* Status */}
                       <td className="px-4 py-4">
                         <span
                           className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${status.className}`}
@@ -799,7 +886,20 @@ export default function PurchaseInvoicesPage() {
                         </span>
                       </td>
 
-                      {/* Actions */}
+                      <td className="px-4 py-4">
+                        {posted ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                            <FiCheckCircle size={13} />
+                            مرحّلة
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
+                            <FiClock size={13} />
+                            غير مرحلة
+                          </span>
+                        )}
+                      </td>
+
                       <td className="px-4 py-4">
                         <div className="flex items-center justify-center gap-2">
                           <button
@@ -819,6 +919,30 @@ export default function PurchaseInvoicesPage() {
                           >
                             <FiPrinter size={17} />
                           </button>
+
+                          {canPost && (
+                            <button
+                              type="button"
+                              disabled={Boolean(postingId)}
+                              onClick={() => postInvoice(invoice)}
+                              title="ترحيل إلى المخزون"
+                              className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isPosting ? (
+                                <FiRefreshCw className="animate-spin" />
+                              ) : (
+                                <FiArchive />
+                              )}
+
+                              {isPosting ? "جارٍ الترحيل" : "ترحيل"}
+                            </button>
+                          )}
+
+                          {posted && (
+                            <span className="rounded-lg bg-emerald-50 p-2 text-emerald-700">
+                              <FiCheckCircle size={17} />
+                            </span>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -830,7 +954,8 @@ export default function PurchaseInvoicesPage() {
         )}
       </div>
 
-      {/* Invoice Details Modal */}
+      {/* نافذة تفاصيل الفاتورة */}
+
       {selectedInvoice && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 md:p-6"
@@ -841,7 +966,6 @@ export default function PurchaseInvoicesPage() {
             onClick={(e) => e.stopPropagation()}
             className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-2xl"
           >
-            {/* Modal Header */}
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white p-5">
               <div>
                 <h2 className="text-lg font-bold text-slate-800">
@@ -862,7 +986,8 @@ export default function PurchaseInvoicesPage() {
             </div>
 
             <div className="space-y-5 p-5">
-              {/* Invoice Information */}
+              {/* معلومات الفاتورة */}
+
               <div className="grid grid-cols-1 gap-4 rounded-xl bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-3">
                 <InfoItem
                   label="رقم الفاتورة"
@@ -900,9 +1025,35 @@ export default function PurchaseInvoicesPage() {
                   label="حالة الفاتورة"
                   value={getStatus(selectedInvoice.status).label}
                 />
+
+                <InfoItem
+                  label="حالة ترحيل المخزون"
+                  value={
+                    isInventoryPosted(selectedInvoice)
+                      ? "مرحّلة إلى المخزون"
+                      : "غير مرحلة"
+                  }
+                />
+
+                {isInventoryPosted(selectedInvoice) && (
+                  <InfoItem
+                    label="تاريخ الترحيل"
+                    value={formatDate(selectedInvoice.extra?.inventoryPostedAt)}
+                  />
+                )}
+
+                {isInventoryPosted(selectedInvoice) && (
+                  <InfoItem
+                    label="عدد حركات المخزون"
+                    value={formatNumber(
+                      selectedInvoice.extra?.inventoryMovementCount,
+                    )}
+                  />
+                )}
               </div>
 
-              {/* Items */}
+              {/* الأصناف */}
+
               <div>
                 <h3 className="mb-3 flex items-center gap-2 font-bold text-slate-800">
                   <FiPackage className="text-blue-600" />
@@ -970,7 +1121,8 @@ export default function PurchaseInvoicesPage() {
                 </div>
               </div>
 
-              {/* Totals */}
+              {/* الإجماليات */}
+
               <div className="flex justify-start">
                 <div className="w-full max-w-sm space-y-3 rounded-xl border border-slate-200 p-4">
                   <TotalRow
@@ -981,7 +1133,9 @@ export default function PurchaseInvoicesPage() {
                   <TotalRow label="الخصم" value={selectedInvoice.discount} />
 
                   <TotalRow
-                    label={`الضريبة (${formatNumber(selectedInvoice.taxRate)}%)`}
+                    label={`الضريبة (${formatNumber(
+                      selectedInvoice.taxRate,
+                    )}%)`}
                     value={selectedInvoice.tax}
                   />
 
@@ -999,7 +1153,8 @@ export default function PurchaseInvoicesPage() {
                 </div>
               </div>
 
-              {/* Notes */}
+              {/* الملاحظات */}
+
               {selectedInvoice.notes && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                   <h3 className="mb-2 text-sm font-bold text-amber-800">
@@ -1012,8 +1167,65 @@ export default function PurchaseInvoicesPage() {
                 </div>
               )}
 
-              {/* Footer Actions */}
+              {/* تنبيه الترحيل */}
+
+              {!isInventoryPosted(selectedInvoice) &&
+                selectedInvoice.status !== "draft" &&
+                selectedInvoice.status !== "cancelled" && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <div className="flex items-start gap-2 text-amber-800">
+                      <FiAlertCircle size={18} className="mt-0.5 shrink-0" />
+
+                      <div>
+                        <p className="font-bold">
+                          الفاتورة لم تُرحّل إلى المخزون
+                        </p>
+
+                        <p className="mt-1 text-xs leading-6">
+                          عند الترحيل ستتم إضافة الكميات إلى المستودعات وتسجيل
+                          حركات المخزون.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              {isInventoryPosted(selectedInvoice) && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="flex items-center gap-2 text-emerald-700">
+                    <FiCheckCircle size={18} />
+
+                    <span className="font-bold">
+                      تم ترحيل الفاتورة إلى المخزون بنجاح
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* الأزرار */}
+
               <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
+                {!isInventoryPosted(selectedInvoice) &&
+                  selectedInvoice.status !== "draft" &&
+                  selectedInvoice.status !== "cancelled" && (
+                    <button
+                      type="button"
+                      disabled={Boolean(postingId)}
+                      onClick={() => postInvoice(selectedInvoice)}
+                      className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {postingId === selectedInvoice.id ? (
+                        <FiRefreshCw className="animate-spin" />
+                      ) : (
+                        <FiArchive />
+                      )}
+
+                      {postingId === selectedInvoice.id
+                        ? "جارٍ الترحيل..."
+                        : "ترحيل إلى المخزون"}
+                    </button>
+                  )}
+
                 <button
                   onClick={() => printInvoice(selectedInvoice)}
                   className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
@@ -1037,9 +1249,7 @@ export default function PurchaseInvoicesPage() {
   );
 }
 
-// =========================
-// Statistics Card
-// =========================
+/* بطاقة إحصائية */
 
 function StatCard({
   title,
@@ -1069,6 +1279,7 @@ function StatCard({
 
           <h3 className="mt-2 text-xl font-bold text-slate-800">
             {value}
+
             {suffix && (
               <span className="mr-1 text-xs font-normal text-slate-400">
                 {suffix}
@@ -1083,9 +1294,7 @@ function StatCard({
   );
 }
 
-// =========================
-// Information Item
-// =========================
+/* بيانات */
 
 function InfoItem({
   label,
@@ -1097,14 +1306,13 @@ function InfoItem({
   return (
     <div>
       <p className="mb-1 text-xs text-slate-400">{label}</p>
+
       <p className="text-sm font-semibold text-slate-700">{value || "-"}</p>
     </div>
   );
 }
 
-// =========================
-// Total Row
-// =========================
+/* الإجماليات */
 
 function TotalRow({
   label,
