@@ -1,717 +1,546 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import axios from "axios";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  FiArrowRight,
-  FiUser,
-  FiPhone,
-  FiMapPin,
-  FiFileText,
-  FiDollarSign,
-  FiShoppingBag,
-  FiCreditCard,
-  FiPrinter,
-  FiRefreshCw,
-  FiEdit2,
-  FiCalendar,
-  FiAlertCircle,
-  FiCheckCircle,
-  FiClock,
-  FiXCircle,
-  FiHash,
-} from "react-icons/fi";
-
-const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
-  headers: { "Content-Type": "application/json" },
-});
-
-type Customer = {
-  id: string;
-  companyId: string;
-  name: string;
-  phone?: string;
-  address?: string;
-  accountCode?: string;
-  accountName?: string;
-  accountId?: string;
-  balance?: number;
-  notes?: string;
-  status?: string;
-  isActive?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-  createdByName?: string;
-  createdByUsername?: string;
-};
+import { supabase } from "@/lib/supabase";
 
 type Sale = {
   id: string;
   companyId: string;
-  customerId: string;
-  customerName?: string;
   invoiceNumber?: string;
+  customerId?: string;
+  customerName?: string;
+  warehouseId?: string;
+  warehouseName?: string;
   date?: string;
-  createdAt?: string;
+  items?: any[];
+  subtotal?: number;
   total?: number;
   totalAmount?: number;
   grandTotal?: number;
+  totalCost?: number;
+  profit?: number;
   paidAmount?: number;
   remainingAmount?: number;
   paymentMethod?: string;
+  paymentAccountName?: string;
   status?: string;
   notes?: string;
-  items?: {
-    id?: string;
-    productId?: string;
-    productName?: string;
-    name?: string;
-    quantity?: number;
-    price?: number;
-    unitPrice?: number;
-    total?: number;
-  }[];
+  journalId?: string;
+  createdByName?: string;
+  createdByUsername?: string;
+  createdAt?: string;
+  extra?: any;
 };
 
-const money = (value: number) =>
-  new Intl.NumberFormat("en-US", {
+const formatNumber = (value: any) =>
+  Number(value || 0).toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Number(value) || 0);
+  });
 
-const formatDate = (date?: string) => {
-  if (!date) return "—";
+const formatDate = (value?: string) => {
+  if (!value) return "—";
 
-  const parsed = new Date(date);
+  const date = new Date(value);
 
-  if (Number.isNaN(parsed.getTime())) return "—";
+  if (isNaN(date.getTime())) return value;
 
-  return parsed.toLocaleDateString("ar-YE", {
+  return date.toLocaleDateString("ar", {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 };
 
-const getSaleTotal = (sale: Sale) =>
-  Number(sale.grandTotal ?? sale.totalAmount ?? sale.total ?? 0);
+const getPaymentStatus = (status?: string) => {
+  const value = (status || "").toLowerCase();
 
-const getPaidAmount = (sale: Sale) => {
-  const total = getSaleTotal(sale);
-
-  if (sale.paidAmount !== undefined && sale.paidAmount !== null) {
-    return Math.min(Math.max(Number(sale.paidAmount) || 0, 0), total);
-  }
-
-  if (sale.paymentMethod === "cash" || sale.paymentMethod === "paid") {
-    return total;
-  }
-
-  return 0;
-};
-
-const getRemainingAmount = (sale: Sale) => {
-  if (sale.remainingAmount !== undefined && sale.remainingAmount !== null) {
-    return Math.max(Number(sale.remainingAmount) || 0, 0);
-  }
-
-  return Math.max(getSaleTotal(sale) - getPaidAmount(sale), 0);
-};
-
-const isCancelled = (sale: Sale) =>
-  ["cancelled", "canceled", "void"].includes(
-    String(sale.status || "").toLowerCase(),
-  );
-
-const getPaymentLabel = (method?: string) => {
-  switch (method) {
-    case "cash":
-      return "نقدي";
-    case "credit":
-      return "آجل";
-    case "paid":
-      return "مدفوع";
-    case "partial":
-      return "دفع جزئي";
-    case "bank":
-      return "تحويل بنكي";
-    default:
-      return method || "غير محدد";
-  }
-};
-
-const getStatusInfo = (status?: string) => {
-  const value = String(status || "").toLowerCase();
-
-  if (["posted", "completed", "paid"].includes(value)) {
+  if (["paid", "مدفوعة", "completed"].includes(value)) {
     return {
-      label: "مكتملة",
-      className: "bg-emerald-50 text-emerald-700",
-      icon: FiCheckCircle,
+      label: "مدفوعة بالكامل",
+      className: "bg-green-100 text-green-700",
     };
   }
 
-  if (["cancelled", "canceled", "void"].includes(value)) {
+  if (["partial", "جزئية", "partially_paid"].includes(value)) {
     return {
-      label: "ملغاة",
-      className: "bg-red-50 text-red-700",
-      icon: FiXCircle,
+      label: "مدفوعة جزئياً",
+      className: "bg-yellow-100 text-yellow-700",
     };
   }
 
-  if (["draft", "pending"].includes(value)) {
+  if (["unpaid", "غير مدفوعة", "pending"].includes(value)) {
     return {
-      label: "معلقة",
-      className: "bg-amber-50 text-amber-700",
-      icon: FiClock,
+      label: "غير مدفوعة",
+      className: "bg-red-100 text-red-700",
     };
   }
 
   return {
     label: status || "غير محدد",
-    className: "bg-slate-100 text-slate-600",
-    icon: FiFileText,
+    className: "bg-gray-100 text-gray-700",
   };
 };
 
-export default function CustomerDetailsPage() {
+export default function SaleDetailsPage() {
   const params = useParams();
   const router = useRouter();
 
-  const customerId = String(params.id);
+  const id = params.id as string;
 
-  const [customer, setCustomer] = useState<Customer | null>(null);
-  const [sales, setSales] = useState<Sale[]>([]);
+  const [sale, setSale] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
-  const loadData = useCallback(async () => {
+  useEffect(() => {
+    if (id) loadSale();
+  }, [id]);
+
+  const loadSale = async () => {
     try {
+      setLoading(true);
       setError("");
 
-      const username = document.cookie
-        .split("; ")
-        .find((item) => item.startsWith("username="))
-        ?.split("=")
-        .slice(1)
-        .join("=");
+      const storedUser = localStorage.getItem("authUser");
 
-      if (!username) {
-        router.replace("/login");
+      if (!storedUser) {
+        setError("يرجى تسجيل الدخول أولاً");
         return;
       }
 
-      const decodedUsername = decodeURIComponent(username);
+      const user = JSON.parse(storedUser);
+      const companyId = user.companyId;
 
-      const userResponse = await api.get("/users", {
-        params: { username: decodedUsername },
-      });
-
-      const user = userResponse.data?.[0];
-
-      if (!user || user.type === "platform" || !user.companyId) {
-        router.replace("/login");
+      if (!companyId) {
+        setError("لم يتم العثور على الشركة المرتبطة بالمستخدم");
         return;
       }
 
-      const companyId = String(user.companyId);
+      const { data, error: queryError } = await supabase
+        .from("sales")
+        .select("*")
+        .eq("id", id)
+        .eq("companyId", companyId)
+        .single();
 
-      const [customerResponse, salesResponse] = await Promise.all([
-        api.get(`/customers/${customerId}`),
-        api.get("/sales", {
-          params: { companyId },
-        }),
-      ]);
-
-      const customerData = customerResponse.data as Customer;
-
-      if (!customerData || String(customerData.companyId) !== companyId) {
-        setCustomer(null);
-        setSales([]);
-        setError("العميل غير موجود أو لا تملك صلاحية الوصول إليه.");
-        return;
+      if (queryError) {
+        console.error("Sale loading error:", queryError);
+        throw queryError;
       }
 
-      setCustomer(customerData);
-
-      const customerSales = (salesResponse.data as Sale[]).filter(
-        (sale) =>
-          String(sale.companyId) === companyId &&
-          String(sale.customerId) === customerId,
-      );
-
-      customerSales.sort((a, b) => {
-        const dateA = new Date(a.date || a.createdAt || 0).getTime();
-
-        const dateB = new Date(b.date || b.createdAt || 0).getTime();
-
-        return dateB - dateA;
-      });
-
-      setSales(customerSales);
-    } catch (err) {
+      setSale(data as Sale);
+    } catch (err: any) {
       console.error(err);
-      setError("حدث خطأ أثناء تحميل بيانات العميل.");
+      setError(err?.message || "حدث خطأ أثناء تحميل بيانات الفاتورة");
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [customerId, router]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const statistics = useMemo(() => {
-    const validSales = sales.filter((sale) => !isCancelled(sale));
-
-    const totalSales = validSales.reduce(
-      (sum, sale) => sum + getSaleTotal(sale),
-      0,
-    );
-
-    const totalPaid = validSales.reduce(
-      (sum, sale) => sum + getPaidAmount(sale),
-      0,
-    );
-
-    const calculatedRemaining = validSales.reduce(
-      (sum, sale) => sum + getRemainingAmount(sale),
-      0,
-    );
-
-    return {
-      invoiceCount: validSales.length,
-      totalSales,
-      totalPaid,
-      calculatedRemaining,
-    };
-  }, [sales]);
-
-  const customerBalance = Number(customer?.balance || 0);
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadData();
   };
 
-  const handlePrint = () => {
-    window.print();
+  const getItems = () => {
+    if (!Array.isArray(sale?.items)) return [];
+    return sale.items;
   };
+
+  const getItemName = (item: any) =>
+    item.productName || item.name || item.product?.name || "صنف بدون اسم";
+
+  const getItemQuantity = (item: any) => Number(item.quantity ?? item.qty ?? 0);
+
+  const getItemPrice = (item: any) =>
+    Number(item.unitPrice ?? item.sellingPrice ?? item.price ?? 0);
+
+  const getItemTotal = (item: any) => {
+    if (item.total !== undefined) return Number(item.total);
+
+    if (item.totalPrice !== undefined) return Number(item.totalPrice);
+
+    return getItemQuantity(item) * getItemPrice(item);
+  };
+
+  const getTotal = () =>
+    Number(sale?.grandTotal ?? sale?.totalAmount ?? sale?.total ?? 0);
+
+  const getPaid = () => Number(sale?.paidAmount || 0);
+
+  const getRemaining = () =>
+    sale?.remainingAmount !== undefined && sale?.remainingAmount !== null
+      ? Number(sale.remainingAmount)
+      : Math.max(getTotal() - getPaid(), 0);
 
   if (loading) {
     return (
-      <div dir="rtl" className="flex min-h-[70vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <FiRefreshCw className="animate-spin text-3xl text-blue-600" />
-          <p className="text-sm text-slate-500">جاري تحميل بيانات العميل...</p>
+      <div dir="rtl" className="flex min-h-[60vh] items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-[#0E1F33]" />
+          <p className="text-sm text-gray-500">جاري تحميل بيانات الفاتورة...</p>
         </div>
       </div>
     );
   }
 
-  if (error || !customer) {
+  if (error || !sale) {
     return (
-      <div dir="rtl" className="mx-auto max-w-3xl p-6">
-        <div className="rounded-2xl border border-red-100 bg-red-50 p-8 text-center">
-          <FiAlertCircle className="mx-auto mb-3 text-4xl text-red-500" />
+      <div dir="rtl" className="p-6">
+        <div className="mx-auto max-w-2xl rounded-2xl border border-red-200 bg-white p-8 text-center shadow-sm">
+          <div className="mb-4 text-4xl">⚠️</div>
 
-          <h2 className="text-lg font-bold text-red-700">
-            تعذر عرض بيانات العميل
+          <h2 className="mb-2 text-lg font-bold text-gray-800">
+            تعذر عرض الفاتورة
           </h2>
 
-          <p className="mt-2 text-sm text-red-600">
-            {error || "لم يتم العثور على العميل."}
+          <p className="mb-6 text-sm text-red-600">
+            {error || "الفاتورة غير موجودة"}
           </p>
 
-          <Link
-            href="/erp/customers"
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white"
+          <button
+            onClick={() => router.push("/erp/sales")}
+            className="rounded-xl bg-[#0E1F33] px-6 py-3 text-sm font-semibold text-white hover:bg-[#183653]"
           >
-            <FiArrowRight />
-            العودة إلى العملاء
-          </Link>
+            العودة إلى فواتير المبيعات
+          </button>
         </div>
       </div>
     );
   }
 
+  const paymentStatus = getPaymentStatus(sale.status);
+  const items = getItems();
+
   return (
-    <div dir="rtl" className="space-y-6 pb-10">
+    <div dir="rtl" className="min-h-screen bg-gray-50 p-4 md:p-7">
       {/* Header */}
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center print:hidden">
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-sm text-slate-500">
-            <Link
-              href="/erp/customers"
-              className="transition hover:text-blue-600"
-            >
-              العملاء
-            </Link>
-
-            <FiArrowRight className="text-xs" />
-
-            <span className="text-slate-700">تفاصيل العميل</span>
-          </div>
-
-          <h1 className="text-2xl font-bold text-slate-800">تفاصيل العميل</h1>
-
-          <p className="mt-1 text-sm text-slate-500">
-            عرض بيانات العميل وحركة المبيعات والرصيد المستحق.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            <FiRefreshCw className={refreshing ? "animate-spin" : ""} />
-            تحديث
-          </button>
-
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <FiPrinter />
-            طباعة الكشف
-          </button>
-
-          <Link
-            href={`/erp/customers/${customer.id}/edit`}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
-          >
-            <FiEdit2 />
-            تعديل العميل
-          </Link>
-        </div>
-      </div>
-
-      {/* Customer Profile */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-3xl text-blue-600">
-            <FiUser />
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-xl font-bold text-slate-800">
-                {customer.name}
-              </h2>
-
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                  customer.isActive === false || customer.status === "inactive"
-                    ? "bg-red-50 text-red-600"
-                    : "bg-emerald-50 text-emerald-700"
-                }`}
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 print:hidden">
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-sm text-gray-500">
+              <button
+                onClick={() => router.push("/erp/sales")}
+                className="hover:text-[#0E1F33]"
               >
-                {customer.isActive === false || customer.status === "inactive"
-                  ? "غير نشط"
-                  : "نشط"}
-              </span>
+                المبيعات
+              </button>
+
+              <span>/</span>
+              <span className="text-gray-800">تفاصيل الفاتورة</span>
             </div>
 
-            <p className="mt-1 text-sm text-slate-500">
-              ملف العميل وسجل تعاملاته المالية.
+            <h1 className="text-2xl font-bold text-[#0E1F33]">
+              فاتورة المبيعات
+            </h1>
+
+            <p className="mt-1 text-sm text-gray-500">
+              تفاصيل ومعلومات فاتورة المبيعات
             </p>
           </div>
 
-          <div className="rounded-xl bg-slate-50 px-5 py-3">
-            <p className="text-xs text-slate-500">رقم العميل</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => router.push("/erp/sales")}
+              className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+            >
+              ← العودة
+            </button>
 
-            <p className="mt-1 font-mono text-sm font-bold text-slate-800">
-              {customer.id}
-            </p>
+            <button
+              onClick={() => window.print()}
+              className="rounded-xl bg-[#0E1F33] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#183653]"
+            >
+              طباعة الفاتورة
+            </button>
           </div>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-blue-50 p-2.5 text-blue-600">
-              <FiPhone />
-            </div>
+        {/* Invoice */}
+        <div
+          id="invoice"
+          className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+        >
+          {/* Invoice Header */}
+          <div className="bg-[#0E1F33] p-6 text-white md:p-8">
+            <div className="flex flex-wrap items-start justify-between gap-6">
+              <div>
+                <div className="mb-2 text-sm text-blue-200">WEZZAN ERP</div>
 
-            <div>
-              <p className="text-xs text-slate-500">رقم الهاتف</p>
+                <h2 className="text-2xl font-bold">فاتورة مبيعات</h2>
 
-              <p className="mt-1 text-sm font-semibold text-slate-800">
-                {customer.phone || "غير مسجل"}
-              </p>
-            </div>
-          </div>
+                <p className="mt-2 text-sm text-blue-200">تفاصيل عملية البيع</p>
+              </div>
 
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-purple-50 p-2.5 text-purple-600">
-              <FiMapPin />
-            </div>
+              <div className="text-left">
+                <div className="text-sm text-blue-200">رقم الفاتورة</div>
 
-            <div>
-              <p className="text-xs text-slate-500">العنوان</p>
+                <div className="mt-1 text-2xl font-bold" dir="ltr">
+                  {sale.invoiceNumber || sale.id}
+                </div>
 
-              <p className="mt-1 text-sm font-semibold text-slate-800">
-                {customer.address || "غير مسجل"}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-amber-50 p-2.5 text-amber-600">
-              <FiHash />
-            </div>
-
-            <div>
-              <p className="text-xs text-slate-500">الحساب المحاسبي</p>
-
-              <p className="mt-1 text-sm font-semibold text-slate-800">
-                {customer.accountCode || "غير مرتبط"}
-                {customer.accountName ? ` - ${customer.accountName}` : ""}
-              </p>
+                <div className="mt-3">
+                  <span
+                    className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${paymentStatus.className}`}
+                  >
+                    {paymentStatus.label}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-emerald-50 p-2.5 text-emerald-600">
-              <FiCalendar />
-            </div>
+          <div className="space-y-8 p-5 md:p-8">
+            {/* Basic Information */}
+            <section>
+              <h3 className="mb-4 border-b border-gray-100 pb-3 text-base font-bold text-[#0E1F33]">
+                معلومات الفاتورة
+              </h3>
 
-            <div>
-              <p className="text-xs text-slate-500">تاريخ الإضافة</p>
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                <Info
+                  label="رقم الفاتورة"
+                  value={sale.invoiceNumber || sale.id}
+                />
 
-              <p className="mt-1 text-sm font-semibold text-slate-800">
-                {formatDate(customer.createdAt)}
-              </p>
-            </div>
-          </div>
-        </div>
+                <Info label="تاريخ الفاتورة" value={formatDate(sale.date)} />
 
-        {customer.notes && (
-          <div className="mt-5 rounded-xl bg-slate-50 p-4">
-            <p className="mb-1 text-xs font-semibold text-slate-500">ملاحظات</p>
+                <Info label="العميل" value={sale.customerName || "عميل نقدي"} />
 
-            <p className="text-sm leading-7 text-slate-700">{customer.notes}</p>
-          </div>
-        )}
-      </section>
+                <Info label="المستودع" value={sale.warehouseName || "—"} />
 
-      {/* Statistics */}
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="إجمالي المبيعات"
-          value={statistics.totalSales}
-          icon={<FiShoppingBag />}
-          color="blue"
-        />
+                <Info label="طريقة الدفع" value={sale.paymentMethod || "—"} />
 
-        <StatCard
-          title="إجمالي المحصل"
-          value={statistics.totalPaid}
-          icon={<FiDollarSign />}
-          color="emerald"
-        />
+                <Info
+                  label="حساب الدفع"
+                  value={sale.paymentAccountName || "—"}
+                />
 
-        <StatCard
-          title="المتبقي حسب الفواتير"
-          value={statistics.calculatedRemaining}
-          icon={<FiCreditCard />}
-          color="amber"
-        />
+                <Info
+                  label="أنشئت بواسطة"
+                  value={sale.createdByName || sale.createdByUsername || "—"}
+                />
 
-        <StatCard
-          title="رصيد العميل المسجل"
-          value={customerBalance}
-          icon={<FiUser />}
-          color="purple"
-        />
-      </section>
+                <Info label="حالة الفاتورة" value={paymentStatus.label} />
+              </div>
+            </section>
 
-      {/* Sales History */}
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
-          <div>
-            <h3 className="flex items-center gap-2 font-bold text-slate-800">
-              <FiFileText className="text-blue-600" />
-              سجل فواتير المبيعات
-            </h3>
+            {/* Items */}
+            <section>
+              <div className="mb-4 flex items-center justify-between border-b border-gray-100 pb-3">
+                <h3 className="text-base font-bold text-[#0E1F33]">
+                  الأصناف المباعة
+                </h3>
 
-            <p className="mt-1 text-xs text-slate-500">
-              جميع فواتير المبيعات المرتبطة بهذا العميل.
-            </p>
-          </div>
+                <span className="text-sm text-gray-500">
+                  {items.length} صنف
+                </span>
+              </div>
 
-          <span className="w-fit rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">
-            {sales.length} فاتورة
-          </span>
-        </div>
-
-        {sales.length === 0 ? (
-          <div className="px-5 py-16 text-center">
-            <FiShoppingBag className="mx-auto mb-3 text-4xl text-slate-300" />
-
-            <h4 className="font-semibold text-slate-700">
-              لا توجد فواتير مبيعات
-            </h4>
-
-            <p className="mt-2 text-sm text-slate-400">
-              لم يتم تسجيل أي فاتورة مبيعات لهذا العميل حتى الآن.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[850px] text-right">
-              <thead className="bg-slate-50 text-xs text-slate-500">
-                <tr>
-                  <th className="px-5 py-4 font-semibold">رقم الفاتورة</th>
-
-                  <th className="px-5 py-4 font-semibold">التاريخ</th>
-
-                  <th className="px-5 py-4 font-semibold">عدد الأصناف</th>
-
-                  <th className="px-5 py-4 font-semibold">الإجمالي</th>
-
-                  <th className="px-5 py-4 font-semibold">المدفوع</th>
-
-                  <th className="px-5 py-4 font-semibold">المتبقي</th>
-
-                  <th className="px-5 py-4 font-semibold">طريقة الدفع</th>
-
-                  <th className="px-5 py-4 font-semibold">الحالة</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-100">
-                {sales.map((sale) => {
-                  const status = getStatusInfo(sale.status);
-
-                  const StatusIcon = status.icon;
-
-                  return (
-                    <tr key={sale.id} className="transition hover:bg-slate-50">
-                      <td className="px-5 py-4">
-                        <div className="font-mono text-sm font-bold text-blue-600">
-                          {sale.invoiceNumber || sale.id}
-                        </div>
-                      </td>
-
-                      <td className="px-5 py-4 text-sm text-slate-600">
-                        {formatDate(sale.date || sale.createdAt)}
-                      </td>
-
-                      <td className="px-5 py-4 text-sm text-slate-600">
-                        {sale.items?.length || 0}
-                      </td>
-
-                      <td className="px-5 py-4 text-sm font-semibold text-slate-800">
-                        {money(getSaleTotal(sale))}
-                      </td>
-
-                      <td className="px-5 py-4 text-sm font-semibold text-emerald-700">
-                        {money(getPaidAmount(sale))}
-                      </td>
-
-                      <td className="px-5 py-4 text-sm font-semibold text-amber-700">
-                        {money(getRemainingAmount(sale))}
-                      </td>
-
-                      <td className="px-5 py-4 text-sm text-slate-600">
-                        {getPaymentLabel(sale.paymentMethod)}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${status.className}`}
-                        >
-                          <StatusIcon />
-                          {status.label}
-                        </span>
-                      </td>
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="w-full min-w-[650px] text-right text-sm">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="px-4 py-4 font-semibold">#</th>
+                      <th className="px-4 py-4 font-semibold">الصنف</th>
+                      <th className="px-4 py-4 font-semibold">الكمية</th>
+                      <th className="px-4 py-4 font-semibold">سعر الوحدة</th>
+                      <th className="px-4 py-4 font-semibold">الإجمالي</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                  </thead>
 
-        <div className="border-t border-slate-100 bg-slate-50 px-5 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-            <span className="text-slate-500">
-              إجمالي الفواتير غير الملغاة:{" "}
-              <strong className="text-slate-800">
-                {statistics.invoiceCount}
-              </strong>
-            </span>
+                  <tbody className="divide-y divide-gray-100">
+                    {items.length > 0 ? (
+                      items.map((item, index) => (
+                        <tr key={item.id || index} className="hover:bg-gray-50">
+                          <td className="px-4 py-4 text-gray-500">
+                            {index + 1}
+                          </td>
 
-            <span className="font-bold text-slate-800">
-              إجمالي المبيعات: {money(statistics.totalSales)}
-            </span>
-          </div>
-        </div>
-      </section>
+                          <td className="px-4 py-4">
+                            <div className="font-semibold text-gray-800">
+                              {getItemName(item)}
+                            </div>
 
-      {/* Accounting Note */}
-      <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 print:hidden">
-        <div className="flex items-start gap-3">
-          <FiAlertCircle className="mt-0.5 shrink-0 text-blue-600" />
+                            {item.sku && (
+                              <div className="mt-1 text-xs text-gray-400">
+                                SKU: {item.sku}
+                              </div>
+                            )}
+                          </td>
 
-          <div>
-            <h4 className="text-sm font-bold text-blue-800">ملاحظة محاسبية</h4>
+                          <td className="px-4 py-4 text-gray-700">
+                            {formatNumber(getItemQuantity(item))}
+                            {item.unitName ? ` ${item.unitName}` : ""}
+                          </td>
 
-            <p className="mt-1 text-xs leading-6 text-blue-700">
-              رصيد العميل المسجل هو الحقل balance في سجل العميل. أما المبالغ
-              المعروضة في سجل الفواتير فهي محسوبة من فواتير المبيعات المرتبطة
-              به. لا يتم اعتبار هذه الصفحة كشف حساب محاسبي نهائيًا قبل ربطها
-              بحركات التحصيل والقيود اليومية المرحلة.
-            </p>
+                          <td className="px-4 py-4 text-gray-700">
+                            {formatNumber(getItemPrice(item))}
+                          </td>
+
+                          <td className="px-4 py-4 font-bold text-gray-800">
+                            {formatNumber(getItemTotal(item))}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan={5}
+                          className="px-4 py-10 text-center text-gray-400"
+                        >
+                          لا توجد أصناف مسجلة في هذه الفاتورة
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {/* Totals */}
+            <section className="flex flex-col items-end">
+              <div className="w-full max-w-md space-y-4 rounded-xl bg-gray-50 p-5">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">المجموع الفرعي</span>
+
+                  <span className="font-semibold text-gray-800">
+                    {formatNumber(sale.subtotal ?? sale.total ?? getTotal())}
+                  </span>
+                </div>
+
+                <div className="border-t border-gray-200 pt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-gray-800">
+                      إجمالي الفاتورة
+                    </span>
+
+                    <span className="text-xl font-bold text-[#0E1F33]">
+                      {formatNumber(getTotal())}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">المبلغ المدفوع</span>
+
+                  <span className="font-bold text-green-700">
+                    {formatNumber(getPaid())}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-gray-200 pt-4">
+                  <span className="font-bold text-gray-800">
+                    المبلغ المتبقي
+                  </span>
+
+                  <span className="text-xl font-bold text-red-600">
+                    {formatNumber(getRemaining())}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* Notes */}
+            {sale.notes && (
+              <section>
+                <h3 className="mb-3 border-b border-gray-100 pb-3 font-bold text-[#0E1F33]">
+                  ملاحظات الفاتورة
+                </h3>
+
+                <div className="rounded-xl bg-gray-50 p-4 text-sm leading-7 text-gray-600">
+                  {sale.notes}
+                </div>
+              </section>
+            )}
+
+            {/* Journal Information */}
+            <section className="rounded-xl border border-gray-200 p-4">
+              <h3 className="mb-3 font-bold text-[#0E1F33]">
+                المعلومات المحاسبية
+              </h3>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                <span className="text-gray-500">حالة الترحيل المحاسبي</span>
+
+                {sale.journalId ? (
+                  <span className="rounded-full bg-green-100 px-3 py-1 font-semibold text-green-700">
+                    تم الترحيل
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-yellow-100 px-3 py-1 font-semibold text-yellow-700">
+                    غير مرحلة
+                  </span>
+                )}
+              </div>
+
+              {sale.journalId && (
+                <div className="mt-3 flex flex-wrap justify-between gap-2 text-sm">
+                  <span className="text-gray-500">رقم القيد المحاسبي</span>
+
+                  <span className="font-medium text-gray-800" dir="ltr">
+                    {sale.journalId}
+                  </span>
+                </div>
+              )}
+            </section>
+
+            {/* Footer */}
+            <div className="border-t border-gray-100 pt-6 text-center text-xs text-gray-400">
+              تم إنشاء هذه الفاتورة بواسطة نظام Wezzan ERP
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Print Footer */}
-      <div className="hidden print:block">
-        <p className="border-t pt-4 text-center text-xs text-slate-500">
-          تم استخراج كشف حساب العميل بتاريخ{" "}
-          {new Date().toLocaleDateString("ar-YE")}
-        </p>
-      </div>
+      {/* Print Styles */}
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A4;
+            margin: 12mm;
+          }
+
+          body {
+            background: white !important;
+          }
+
+          body * {
+            visibility: hidden;
+          }
+
+          #invoice,
+          #invoice * {
+            visibility: visible;
+          }
+
+          #invoice {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 100%;
+            border: none !important;
+            box-shadow: none !important;
+          }
+
+          .print\\:hidden {
+            display: none !important;
+          }
+
+          #invoice {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+        }
+      `}</style>
     </div>
   );
 }
 
-function StatCard({
-  title,
-  value,
-  icon,
-  color,
-}: {
-  title: string;
-  value: number;
-  icon: React.ReactNode;
-  color: "blue" | "emerald" | "amber" | "purple";
-}) {
-  const colors = {
-    blue: "bg-blue-50 text-blue-600",
-    emerald: "bg-emerald-50 text-emerald-600",
-    amber: "bg-amber-50 text-amber-600",
-    purple: "bg-purple-50 text-purple-600",
-  };
-
+function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">{title}</p>
+    <div>
+      <div className="mb-1 text-xs text-gray-400">{label}</div>
 
-        <div className={`rounded-xl p-3 ${colors[color]}`}>{icon}</div>
+      <div className="break-words text-sm font-semibold text-gray-800">
+        {value || "—"}
       </div>
-
-      <p className="mt-4 text-2xl font-bold text-slate-800">{money(value)}</p>
     </div>
   );
 }

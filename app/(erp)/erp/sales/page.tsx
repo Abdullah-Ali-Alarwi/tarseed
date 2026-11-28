@@ -41,51 +41,36 @@ type SaleItem = {
 type Sale = {
   id: string;
   companyId: string;
-
   invoiceNumber?: string;
-
   customerId?: string | null;
   customerName?: string;
-
   warehouseId?: string;
   warehouseName?: string;
-
   date?: string;
   createdAt?: string;
-
   items?: SaleItem[];
-
   subtotal?: number;
   discount?: number;
   tax?: number;
   taxRate?: number;
-
   total?: number;
   totalAmount?: number;
   grandTotal?: number;
-
   totalCost?: number;
   profit?: number;
-
   paidAmount?: number;
   remainingAmount?: number;
-
   paymentMethod?: string;
   paymentAccountId?: string;
   paymentAccountCode?: string;
   paymentAccountName?: string;
-
   status?: string;
-
   notes?: string;
-
   journalId?: string;
-
   createdBy?: string;
   createdById?: string;
   createdByName?: string;
   createdByUsername?: string;
-
   updatedAt?: string;
 };
 
@@ -107,13 +92,10 @@ const getNumber = (value: unknown): number => {
   return Number.isFinite(number) ? number : 0;
 };
 
-const getSaleTotal = (sale: Sale) => {
-  return getNumber(sale.total ?? sale.totalAmount ?? sale.grandTotal ?? 0);
-};
+const getSaleTotal = (sale: Sale) =>
+  getNumber(sale.total ?? sale.totalAmount ?? sale.grandTotal ?? sale.subtotal);
 
-const getPaidAmount = (sale: Sale) => {
-  return getNumber(sale.paidAmount);
-};
+const getPaidAmount = (sale: Sale) => getNumber(sale.paidAmount);
 
 const getRemainingAmount = (sale: Sale) => {
   if (sale.remainingAmount !== undefined && sale.remainingAmount !== null) {
@@ -123,27 +105,23 @@ const getRemainingAmount = (sale: Sale) => {
   return Math.max(0, getSaleTotal(sale) - getPaidAmount(sale));
 };
 
-const isCancelled = (sale: Sale) => {
-  return ["cancelled", "canceled", "ملغي", "ملغاة"].includes(
+const isCancelled = (sale: Sale) =>
+  ["cancelled", "canceled", "ملغي", "ملغاة"].includes(
     String(sale.status || "").toLowerCase(),
   );
-};
 
-const money = (value: number) => {
-  return new Intl.NumberFormat("ar-YE", {
+const money = (value: number) =>
+  new Intl.NumberFormat("ar-YE", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(value);
-};
 
 const formatDate = (date?: string) => {
   if (!date) return "-";
 
   const parsed = new Date(date);
 
-  if (Number.isNaN(parsed.getTime())) {
-    return date;
-  }
+  if (Number.isNaN(parsed.getTime())) return date;
 
   return new Intl.DateTimeFormat("ar-YE", {
     year: "numeric",
@@ -156,13 +134,10 @@ const getPaymentName = (method?: string) => {
   switch (method) {
     case "cash":
       return "نقدي";
-
     case "bank":
       return "بنكي";
-
     case "credit":
       return "آجل";
-
     default:
       return method || "غير محدد";
   }
@@ -180,10 +155,7 @@ const getStatusName = (sale: Sale) => {
   }
 
   if (sale.status === "paid") return "مدفوعة";
-
   if (sale.status === "pending") return "معلقة";
-
-  if (sale.status === "cancelled") return "ملغاة";
 
   if (sale.paymentMethod === "credit") return "آجلة";
 
@@ -239,9 +211,7 @@ function StatCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm text-gray-500">{title}</p>
-
           <h3 className="mt-3 text-2xl font-bold text-gray-800">{value}</h3>
-
           <p className="mt-2 text-xs text-gray-400">{description}</p>
         </div>
 
@@ -266,13 +236,10 @@ export default function SalesPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [error, setError] = useState("");
-
   const [companyId, setCompanyId] = useState("");
 
   const [search, setSearch] = useState("");
-
   const [statusFilter, setStatusFilter] = useState("all");
-
   const [paymentFilter, setPaymentFilter] = useState("all");
 
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -283,6 +250,14 @@ export default function SalesPage() {
 
   const loadSales = useCallback(
     async (currentCompanyId: string, isRefresh = false) => {
+      if (!currentCompanyId) {
+        setError("لم يتم تحديد الشركة.");
+        setSales([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       try {
         if (isRefresh) {
           setRefreshing(true);
@@ -292,21 +267,32 @@ export default function SalesPage() {
 
         setError("");
 
+        console.log("Loading sales for company:", currentCompanyId);
+
         const { data, error: queryError } = await supabase
           .from("sales")
           .select("*")
           .eq("companyId", currentCompanyId)
-          .order("date", { ascending: false });
+          .order("createdAt", { ascending: false });
+
+        console.log("Sales query result:", data);
+        console.log("Sales query error:", queryError);
 
         if (queryError) {
           throw queryError;
         }
 
         setSales((data || []) as Sale[]);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Load sales error:", err);
 
-        setError(err.message || "حدث خطأ أثناء تحميل فواتير المبيعات.");
+        const message =
+          err instanceof Error
+            ? err.message
+            : "حدث خطأ أثناء تحميل فواتير المبيعات.";
+
+        setError(message);
+        setSales([]);
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -320,35 +306,41 @@ export default function SalesPage() {
   ===================================================== */
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("authUser");
+    const initialize = async () => {
+      try {
+        const storedUser = localStorage.getItem("authUser");
 
-    if (!storedUser) {
-      router.replace("/login");
-      return;
-    }
+        if (!storedUser) {
+          router.replace("/login");
+          setLoading(false);
+          return;
+        }
 
-    try {
-      const user = JSON.parse(storedUser) as AuthUser;
+        const user = JSON.parse(storedUser) as AuthUser;
 
-      if (user.type === "platform") {
-        setError("لا يمكن لمستخدم المنصة الوصول إلى مبيعات الشركة.");
+        if (user.type === "platform") {
+          setError("لا يمكن لمستخدم المنصة الوصول إلى مبيعات الشركة.");
+          setLoading(false);
+          return;
+        }
+
+        if (!user.companyId) {
+          setError("لم يتم العثور على الشركة المرتبطة بالمستخدم.");
+          setLoading(false);
+          return;
+        }
+
+        setCompanyId(user.companyId);
+
+        await loadSales(user.companyId);
+      } catch (err) {
+        console.error("Authentication error:", err);
+        setError("تعذر قراءة بيانات المستخدم.");
         setLoading(false);
-        return;
       }
+    };
 
-      if (!user.companyId) {
-        setError("لم يتم العثور على الشركة المرتبطة بالمستخدم.");
-        setLoading(false);
-        return;
-      }
-
-      setCompanyId(user.companyId);
-
-      loadSales(user.companyId);
-    } catch {
-      setError("تعذر قراءة بيانات المستخدم.");
-      setLoading(false);
-    }
+    initialize();
   }, [router, loadSales]);
 
   /* =====================================================
@@ -357,7 +349,6 @@ export default function SalesPage() {
 
   const handleRefresh = () => {
     if (!companyId) return;
-
     loadSales(companyId, true);
   };
 
@@ -405,26 +396,25 @@ export default function SalesPage() {
      SUMMARY
   ===================================================== */
 
-  const activeSales = useMemo(() => {
-    return sales.filter(
-      (sale) => !isCancelled(sale) && sale.status !== "draft",
-    );
-  }, [sales]);
+  const activeSales = useMemo(
+    () => sales.filter((sale) => !isCancelled(sale) && sale.status !== "draft"),
+    [sales],
+  );
 
-  const totalSales = useMemo(() => {
-    return activeSales.reduce((total, sale) => total + getSaleTotal(sale), 0);
-  }, [activeSales]);
+  const totalSales = activeSales.reduce(
+    (total, sale) => total + getSaleTotal(sale),
+    0,
+  );
 
-  const totalCollected = useMemo(() => {
-    return activeSales.reduce((total, sale) => total + getPaidAmount(sale), 0);
-  }, [activeSales]);
+  const totalCollected = activeSales.reduce(
+    (total, sale) => total + getPaidAmount(sale),
+    0,
+  );
 
-  const totalRemaining = useMemo(() => {
-    return activeSales.reduce(
-      (total, sale) => total + getRemainingAmount(sale),
-      0,
-    );
-  }, [activeSales]);
+  const totalRemaining = activeSales.reduce(
+    (total, sale) => total + getRemainingAmount(sale),
+    0,
+  );
 
   const totalInvoices = activeSales.length;
 
@@ -435,7 +425,7 @@ export default function SalesPage() {
   const draftInvoices = sales.filter((sale) => sale.status === "draft").length;
 
   /* =====================================================
-     RENDER
+     LOADING
   ===================================================== */
 
   if (loading) {
@@ -443,23 +433,23 @@ export default function SalesPage() {
       <div dir="rtl" className="flex min-h-[400px] items-center justify-center">
         <div className="text-center">
           <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-
           <p className="text-sm text-gray-500">جاري تحميل بيانات المبيعات...</p>
         </div>
       </div>
     );
   }
 
+  /* =====================================================
+     RENDER
+  ===================================================== */
+
   return (
     <main dir="rtl" className="space-y-6 pb-10">
-      {/* =========================================
-          HEADER
-      ========================================= */}
+      {/* HEADER */}
 
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">المبيعات</h1>
-
           <p className="mt-1 text-sm text-gray-500">
             إدارة فواتير المبيعات ومتابعة التحصيلات والمبالغ المستحقة.
           </p>
@@ -468,7 +458,7 @@ export default function SalesPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleRefresh}
-            disabled={refreshing}
+            disabled={refreshing || !companyId}
             className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
           >
             <FiRefreshCw className={refreshing ? "animate-spin" : ""} />
@@ -485,21 +475,24 @@ export default function SalesPage() {
         </div>
       </div>
 
-      {/* =========================================
-          ERROR
-      ========================================= */}
+      {/* ERROR */}
 
       {error && (
         <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           <FiAlertCircle className="mt-0.5 shrink-0" />
-
           <span>{error}</span>
         </div>
       )}
 
-      {/* =========================================
-          STATISTICS
-      ========================================= */}
+      {/* COMPANY INFORMATION */}
+
+      {companyId && (
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-800">
+          يتم عرض فواتير الشركة الحالية فقط.
+        </div>
+      )}
+
+      {/* STATISTICS */}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -535,13 +528,9 @@ export default function SalesPage() {
         />
       </div>
 
-      {/* =========================================
-          SALES TABLE
-      ========================================= */}
+      {/* SALES TABLE */}
 
       <section className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-        {/* TABLE HEADER */}
-
         <div className="border-b border-gray-100 p-5">
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
             <div>
@@ -570,7 +559,7 @@ export default function SalesPage() {
                 />
               </div>
 
-              {/* STATUS FILTER */}
+              {/* STATUS */}
 
               <div className="relative">
                 <FiFilter
@@ -592,7 +581,7 @@ export default function SalesPage() {
                 </select>
               </div>
 
-              {/* PAYMENT FILTER */}
+              {/* PAYMENT */}
 
               <select
                 value={paymentFilter}
@@ -615,23 +604,14 @@ export default function SalesPage() {
             <thead className="bg-gray-50">
               <tr className="text-xs font-semibold text-gray-500">
                 <th className="px-5 py-4">رقم الفاتورة</th>
-
                 <th className="px-5 py-4">العميل</th>
-
                 <th className="px-5 py-4">المخزن</th>
-
                 <th className="px-5 py-4">التاريخ</th>
-
                 <th className="px-5 py-4">الإجمالي</th>
-
                 <th className="px-5 py-4">المدفوع</th>
-
                 <th className="px-5 py-4">المتبقي</th>
-
                 <th className="px-5 py-4">طريقة الدفع</th>
-
                 <th className="px-5 py-4">الحالة</th>
-
                 <th className="px-5 py-4 text-center">الإجراءات</th>
               </tr>
             </thead>
@@ -642,15 +622,11 @@ export default function SalesPage() {
                   key={sale.id}
                   className="text-sm transition hover:bg-gray-50"
                 >
-                  {/* INVOICE NUMBER */}
-
                   <td className="px-5 py-4">
                     <p className="font-semibold text-blue-700">
                       {sale.invoiceNumber || sale.id}
                     </p>
                   </td>
-
-                  {/* CUSTOMER */}
 
                   <td className="px-5 py-4">
                     <p className="font-medium text-gray-800">
@@ -658,37 +634,25 @@ export default function SalesPage() {
                     </p>
                   </td>
 
-                  {/* WAREHOUSE */}
-
                   <td className="px-5 py-4 text-gray-600">
                     {sale.warehouseName || "-"}
                   </td>
-
-                  {/* DATE */}
 
                   <td className="px-5 py-4 whitespace-nowrap text-gray-500">
                     {formatDate(sale.date || sale.createdAt)}
                   </td>
 
-                  {/* TOTAL */}
-
                   <td className="px-5 py-4 whitespace-nowrap font-semibold text-gray-800">
                     {money(getSaleTotal(sale))} ر.ي
                   </td>
-
-                  {/* PAID */}
 
                   <td className="px-5 py-4 whitespace-nowrap font-medium text-green-700">
                     {money(getPaidAmount(sale))} ر.ي
                   </td>
 
-                  {/* REMAINING */}
-
                   <td className="px-5 py-4 whitespace-nowrap font-medium text-orange-600">
                     {money(getRemainingAmount(sale))} ر.ي
                   </td>
-
-                  {/* PAYMENT */}
 
                   <td className="px-5 py-4">
                     <span className="rounded-lg bg-gray-100 px-2.5 py-1 text-xs text-gray-600">
@@ -696,13 +660,9 @@ export default function SalesPage() {
                     </span>
                   </td>
 
-                  {/* STATUS */}
-
                   <td className="px-5 py-4">
                     <StatusBadge sale={sale} />
                   </td>
-
-                  {/* ACTIONS */}
 
                   <td className="px-5 py-4">
                     <div className="flex items-center justify-center gap-2">
@@ -735,8 +695,6 @@ export default function SalesPage() {
                 </tr>
               ))}
 
-              {/* EMPTY */}
-
               {filteredSales.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-5 py-16 text-center">
@@ -745,11 +703,15 @@ export default function SalesPage() {
                     </div>
 
                     <h3 className="mt-4 font-semibold text-gray-700">
-                      لا توجد فواتير مبيعات
+                      {sales.length === 0
+                        ? "لا توجد فواتير مبيعات مسجلة"
+                        : "لا توجد نتائج مطابقة"}
                     </h3>
 
                     <p className="mt-2 text-sm text-gray-400">
-                      لم يتم العثور على فواتير تطابق البحث أو التصفية.
+                      {sales.length === 0
+                        ? "لم يتم العثور على فواتير لهذه الشركة."
+                        : "جرّب تغيير البحث أو خيارات التصفية."}
                     </p>
 
                     {sales.length === 0 && (
@@ -769,9 +731,7 @@ export default function SalesPage() {
         </div>
       </section>
 
-      {/* =========================================
-          QUICK SUMMARY
-      ========================================= */}
+      {/* QUICK SUMMARY */}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="rounded-xl border border-gray-100 bg-white p-5">
@@ -782,7 +742,6 @@ export default function SalesPage() {
 
             <div>
               <p className="text-xs text-gray-500">الفواتير المسددة بالكامل</p>
-
               <p className="mt-1 text-xl font-bold text-gray-800">
                 {money(paidInvoices)}
               </p>
@@ -800,7 +759,6 @@ export default function SalesPage() {
               <p className="text-xs text-gray-500">
                 الفواتير الآجلة أو الجزئية
               </p>
-
               <p className="mt-1 text-xl font-bold text-gray-800">
                 {money(
                   activeSales.filter((sale) => getRemainingAmount(sale) > 0)
@@ -819,7 +777,6 @@ export default function SalesPage() {
 
             <div>
               <p className="text-xs text-gray-500">إجمالي المسودات</p>
-
               <p className="mt-1 text-xl font-bold text-gray-800">
                 {money(draftInvoices)}
               </p>
@@ -828,9 +785,7 @@ export default function SalesPage() {
         </div>
       </div>
 
-      {/* =========================================
-          QUICK DETAILS MODAL
-      ========================================= */}
+      {/* QUICK DETAILS MODAL */}
 
       {selectedSale && (
         <div
@@ -865,7 +820,6 @@ export default function SalesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="rounded-lg bg-gray-50 p-3">
                   <p className="text-xs text-gray-500">العميل</p>
-
                   <p className="mt-2 font-semibold text-gray-800">
                     {selectedSale.customerName || "عميل نقدي"}
                   </p>
@@ -873,7 +827,6 @@ export default function SalesPage() {
 
                 <div className="rounded-lg bg-gray-50 p-3">
                   <p className="text-xs text-gray-500">التاريخ</p>
-
                   <p className="mt-2 font-semibold text-gray-800">
                     {formatDate(selectedSale.date || selectedSale.createdAt)}
                   </p>
@@ -881,7 +834,6 @@ export default function SalesPage() {
 
                 <div className="rounded-lg bg-gray-50 p-3">
                   <p className="text-xs text-gray-500">المخزن</p>
-
                   <p className="mt-2 font-semibold text-gray-800">
                     {selectedSale.warehouseName || "-"}
                   </p>
@@ -889,7 +841,6 @@ export default function SalesPage() {
 
                 <div className="rounded-lg bg-gray-50 p-3">
                   <p className="text-xs text-gray-500">طريقة الدفع</p>
-
                   <p className="mt-2 font-semibold text-gray-800">
                     {getPaymentName(selectedSale.paymentMethod)}
                   </p>
@@ -950,7 +901,6 @@ export default function SalesPage() {
               <div className="space-y-3 rounded-xl bg-gray-50 p-4">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">الإجمالي</span>
-
                   <span className="font-bold text-gray-800">
                     {money(getSaleTotal(selectedSale))} ر.ي
                   </span>
@@ -958,7 +908,6 @@ export default function SalesPage() {
 
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">المدفوع</span>
-
                   <span className="font-semibold text-green-700">
                     {money(getPaidAmount(selectedSale))} ر.ي
                   </span>
@@ -966,7 +915,6 @@ export default function SalesPage() {
 
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">المتبقي</span>
-
                   <span className="font-semibold text-orange-600">
                     {money(getRemainingAmount(selectedSale))} ر.ي
                   </span>
@@ -976,7 +924,6 @@ export default function SalesPage() {
               {selectedSale.notes && (
                 <div className="rounded-lg border border-gray-100 p-3">
                   <p className="text-xs text-gray-500">ملاحظات</p>
-
                   <p className="mt-2 text-sm text-gray-700">
                     {selectedSale.notes}
                   </p>

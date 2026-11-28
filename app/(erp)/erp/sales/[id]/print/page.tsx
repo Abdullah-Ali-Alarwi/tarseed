@@ -1,421 +1,436 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
-import { useERPStore } from "@/Store/erpStore";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
-export default function SalesPrintPage() {
+type Sale = {
+  id: string;
+  companyId: string;
+  invoiceNumber?: string;
+  customerName?: string;
+  customerId?: string;
+  warehouseName?: string;
+  date?: string;
+  items?: any[];
+  subtotal?: number;
+  total?: number;
+  totalAmount?: number;
+  grandTotal?: number;
+  paidAmount?: number;
+  remainingAmount?: number;
+  paymentMethod?: string;
+  paymentAccountName?: string;
+  status?: string;
+  notes?: string;
+  createdByName?: string;
+  createdByUsername?: string;
+  createdAt?: string;
+};
+
+type Company = {
+  name?: string;
+  companyName?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  taxNumber?: string;
+};
+
+const money = (value: any) =>
+  Number(value || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const dateFormat = (value?: string) => {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString("ar", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+};
+
+export default function PrintSalePage() {
   const params = useParams();
+  const router = useRouter();
 
-  const saleId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const id = params.id as string;
 
-  const sales = useERPStore((state) => state.sales);
-
-  const [mounted, setMounted] = useState(false);
+  const [sale, setSale] = useState<Sale | null>(null);
+  const [company, setCompany] = useState<Company | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
+    if (id) loadData();
+  }, [id]);
 
-  const sale = useMemo(() => {
-    if (!saleId) return undefined;
+  const loadData = async () => {
+    try {
+      setLoading(true);
 
-    return sales.find((item) => item.id === saleId);
-  }, [sales, saleId]);
+      const storedUser = localStorage.getItem("authUser");
 
-  const calculatedTotals = useMemo(() => {
-    if (!sale) {
-      return {
-        totalQuantity: 0,
-        subtotal: 0,
-        discount: 0,
-        total: 0,
-      };
+      if (!storedUser) {
+        throw new Error("يرجى تسجيل الدخول أولاً");
+      }
+
+      const user = JSON.parse(storedUser);
+      const companyId = user.companyId;
+
+      if (!companyId) {
+        throw new Error("لم يتم العثور على الشركة");
+      }
+
+      const [saleResult, companyResult] = await Promise.all([
+        supabase
+          .from("sales")
+          .select("*")
+          .eq("id", id)
+          .eq("companyId", companyId)
+          .single(),
+
+        supabase
+          .from("companies")
+          .select("*")
+          .eq("id", companyId)
+          .maybeSingle(),
+      ]);
+
+      if (saleResult.error) throw saleResult.error;
+
+      setSale(saleResult.data as Sale);
+      setCompany(companyResult.data as Company | null);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "تعذر تحميل الفاتورة");
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const items = sale.items || [];
+  const items = Array.isArray(sale?.items) ? sale.items : [];
 
-    let totalQuantity = 0;
-    let subtotal = 0;
-    let discount = 0;
+  const total = Number(
+    sale?.grandTotal ?? sale?.totalAmount ?? sale?.total ?? 0,
+  );
 
-    items.forEach((item) => {
-      const quantity = Number(item.quantity || 0);
-      const price = Number(item.price || 0);
-      const itemDiscount = Number(item.discount || 0);
+  const paid = Number(sale?.paidAmount || 0);
 
-      totalQuantity += quantity;
-      subtotal += quantity * price;
-      discount += itemDiscount;
-    });
+  const remaining =
+    sale?.remainingAmount != null
+      ? Number(sale.remainingAmount)
+      : Math.max(total - paid, 0);
 
-    const total = Math.max(0, subtotal - discount);
+  const getName = (item: any) =>
+    item.productName || item.name || item.product?.name || "صنف بدون اسم";
 
-    return {
-      totalQuantity,
-      subtotal,
-      discount,
-      total,
-    };
-  }, [sale]);
+  const getQuantity = (item: any) => Number(item.quantity ?? item.qty ?? 0);
 
-  if (!mounted) {
+  const getPrice = (item: any) =>
+    Number(item.unitPrice ?? item.sellingPrice ?? item.price ?? 0);
+
+  const getItemTotal = (item: any) =>
+    Number(item.total ?? item.totalPrice ?? getQuantity(item) * getPrice(item));
+
+  const companyName =
+    company?.companyName || company?.name || userCompanyName();
+
+  function userCompanyName() {
+    try {
+      const user = JSON.parse(localStorage.getItem("authUser") || "{}");
+
+      return user.companyname || user.companyName || "اسم المنشأة";
+    } catch {
+      return "اسم المنشأة";
+    }
+  }
+
+  if (loading) {
     return (
-      <div
-        dir="rtl"
-        className="flex min-h-screen items-center justify-center bg-gray-100 text-xs text-gray-500"
-      >
-        جاري تحميل الفاتورة...
+      <div className="flex min-h-screen items-center justify-center">
+        جاري تجهيز الفاتورة للطباعة...
       </div>
     );
   }
 
-  if (!sale) {
+  if (error || !sale) {
     return (
-      <div
-        dir="rtl"
-        className="flex min-h-screen items-center justify-center bg-gray-100 p-4"
-      >
-        <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 text-center shadow-sm">
-          <h1 className="mb-2 text-base font-bold text-red-600">
-            لم يتم العثور على الفاتورة المطلوبة
-          </h1>
+      <div dir="rtl" className="p-10 text-center">
+        <p className="mb-5 text-red-600">{error || "الفاتورة غير موجودة"}</p>
 
-          <p className="text-xs text-gray-500">
-            رقم الفاتورة أو المعرف غير موجود في سجل المبيعات.
-          </p>
-
-          <p className="mt-3 break-all text-[10px] text-gray-400">
-            ID: {saleId}
-          </p>
-
-          <button
-            type="button"
-            onClick={() => window.close()}
-            className="mt-4 rounded-md bg-gray-800 px-4 py-2 text-xs font-bold text-white hover:bg-gray-700"
-          >
-            إغلاق
-          </button>
-        </div>
+        <button
+          onClick={() => router.back()}
+          className="rounded-lg bg-[#0E1F33] px-5 py-2 text-white"
+        >
+          العودة
+        </button>
       </div>
     );
   }
-
-  const items = sale.items || [];
-
-  const formatMoney = (value: number) => {
-    return new Intl.NumberFormat("ar-YE-u-nu-latn").format(Number(value || 0));
-  };
-
-  const paymentMethodLabel =
-    sale.paymentMethod === "cash"
-      ? "نقدًا"
-      : sale.paymentMethod === "bank"
-        ? "حوالة بنكية"
-        : "آجل";
-
-  const statusLabel =
-    sale.status === "paid"
-      ? "مدفوعة"
-      : sale.status === "pending"
-        ? "معلقة"
-        : "ملغاة";
-
-  const handlePrint = () => {
-    window.print();
-  };
 
   return (
-    <>
-      {/* أزرار التحكم */}
-      <div className="print:hidden">
-        <div
-          dir="rtl"
-          className="flex items-center justify-center gap-2 bg-gray-100 p-3"
+    <div dir="rtl" className="min-h-screen bg-gray-100 py-8">
+      {/* Toolbar */}
+      <div className="mx-auto mb-5 flex max-w-[210mm] justify-between print:hidden">
+        <button
+          onClick={() => router.back()}
+          className="rounded-lg border bg-white px-5 py-2 text-sm"
         >
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="rounded-md bg-[#0E1F33] px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#162d47]"
-          >
-            طباعة الفاتورة
-          </button>
+          العودة
+        </button>
 
-          <button
-            type="button"
-            onClick={() => window.close()}
-            className="rounded-md border border-gray-300 bg-white px-5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-          >
-            إغلاق
-          </button>
-        </div>
+        <button
+          onClick={() => window.print()}
+          className="rounded-lg bg-[#0E1F33] px-6 py-2 text-sm font-semibold text-white"
+        >
+          طباعة الفاتورة
+        </button>
       </div>
 
-      {/* صفحة الفاتورة */}
+      {/* A4 Invoice */}
       <main
-        dir="rtl"
-        className="min-h-screen bg-gray-100 p-3 print:min-h-0 print:bg-white print:p-0"
+        id="print-invoice"
+        className="mx-auto min-h-[297mm] w-full max-w-[210mm] bg-white p-8 shadow-lg md:p-12"
       >
-        <div className="mx-auto w-full max-w-[794px] bg-white text-gray-900 print:max-w-none">
-          <div className="border-2 border-gray-800">
-            {/* رأس الفاتورة */}
-            <div className="flex items-center justify-between border-b-2 border-gray-800 px-5 py-4">
-              <div className="text-right">
-                <h1 className="text-xl font-bold">شركة الجابري</h1>
+        {/* Header */}
+        <header className="flex items-start justify-between border-b-2 border-[#0E1F33] pb-7">
+          <div>
+            <h1 className="text-2xl font-bold text-[#0E1F33]">{companyName}</h1>
 
-                <p className="mt-0.5 text-xs">
-                  للعسل والزيوت الطبيعة وخدمات العمرة
-                </p>
+            <div className="mt-3 space-y-1 text-sm text-gray-500">
+              {company?.address && <p>{company.address}</p>}
 
-                <p className="mt-0.5 text-xs">البيضاء - اليمن</p>
+              {company?.phone && <p>الهاتف: {company.phone}</p>}
 
-                <p className="mt-0.5 text-xs">هاتف: 734 434 443</p>
-              </div>
+              {company?.email && <p>{company.email}</p>}
 
-              <div className="text-center">
-                <div className="mb-1.5 inline-block rounded border-2 border-gray-800 px-5 py-1.5">
-                  <h2 className="text-lg font-bold">فاتورة مبيعات</h2>
-                </div>
-
-                <p className="text-xs">
-                  رقم الفاتورة:{" "}
-                  <span className="font-bold">{sale.invoiceNumber}</span>
-                </p>
-
-                <p className="mt-0.5 text-xs">
-                  التاريخ: <span className="font-bold">{sale.date}</span>
-                </p>
-              </div>
-            </div>
-
-            {/* بيانات العميل */}
-            <div className="grid grid-cols-3 border-b-2 border-gray-800">
-              <div className="border-l border-gray-800 p-2.5">
-                <p className="mb-0.5 text-[10px] text-gray-500">العميل</p>
-
-                <p className="text-xs font-bold">
-                  {sale.customerName || "عميل نقدي"}
-                </p>
-              </div>
-
-              <div className="border-l border-gray-800 p-2.5">
-                <p className="mb-0.5 text-[10px] text-gray-500">طريقة الدفع</p>
-
-                <p className="text-xs font-bold">{paymentMethodLabel}</p>
-              </div>
-
-              <div className="p-2.5">
-                <p className="mb-0.5 text-[10px] text-gray-500">الحساب</p>
-
-                <p className="text-xs font-bold">
-                  {sale.accountCode
-                    ? `${sale.accountCode} - ${sale.accountName ?? ""}`
-                    : sale.accountName || "غير محدد"}
-                </p>
-              </div>
-            </div>
-
-            {/* حالة الفاتورة */}
-            <div className="border-b border-gray-800 px-3 py-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-gray-500">حالة الفاتورة</span>
-
-                <span
-                  className={`text-[10px] font-bold ${
-                    sale.status === "paid"
-                      ? "text-green-700"
-                      : sale.status === "pending"
-                        ? "text-orange-600"
-                        : "text-red-600"
-                  }`}
-                >
-                  {statusLabel}
-                </span>
-              </div>
-            </div>
-
-            {/* جدول الأصناف */}
-            <table className="w-full border-collapse text-xs">
-              <thead>
-                <tr className="bg-gray-100">
-                  <th className="w-10 border-b border-l border-gray-800 px-1.5 py-2">
-                    م
-                  </th>
-
-                  <th className="border-b border-l border-gray-800 px-2.5 py-2 text-right">
-                    الصنف
-                  </th>
-
-                  <th className="w-20 border-b border-l border-gray-800 px-1.5 py-2">
-                    الكمية
-                  </th>
-
-                  <th className="w-24 border-b border-l border-gray-800 px-1.5 py-2">
-                    السعر
-                  </th>
-
-                  <th className="w-24 border-b border-l border-gray-800 px-1.5 py-2">
-                    الخصم
-                  </th>
-
-                  <th className="w-28 border-b border-gray-800 px-1.5 py-2">
-                    الإجمالي
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {items.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="py-8 text-center text-xs text-gray-500"
-                    >
-                      لا توجد أصناف في الفاتورة
-                    </td>
-                  </tr>
-                ) : (
-                  items.map((item, index) => {
-                    const quantity = Number(item.quantity || 0);
-                    const price = Number(item.price || 0);
-                    const discount = Number(item.discount || 0);
-
-                    const itemSubtotal = quantity * price;
-                    const itemTotal = Math.max(0, itemSubtotal - discount);
-
-                    return (
-                      <tr key={item.id}>
-                        <td className="border-b border-l border-gray-800 px-1.5 py-2 text-center">
-                          {index + 1}
-                        </td>
-
-                        <td className="border-b border-l border-gray-800 px-2.5 py-2">
-                          <div className="text-xs">{item.item}</div>
-
-                          {item.productCode && (
-                            <div className="mt-0.5 text-[9px] text-gray-400">
-                              كود الصنف: {item.productCode}
-                            </div>
-                          )}
-                        </td>
-
-                        <td className="border-b border-l border-gray-800 px-1.5 py-2 text-center">
-                          {formatMoney(quantity)}
-                        </td>
-
-                        <td className="border-b border-l border-gray-800 px-1.5 py-2 text-center">
-                          {formatMoney(price)}
-                        </td>
-
-                        <td className="border-b border-l border-gray-800 px-1.5 py-2 text-center">
-                          {formatMoney(discount)}
-                        </td>
-
-                        <td className="border-b border-gray-800 px-1.5 py-2 text-center font-bold">
-                          {formatMoney(itemTotal)}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-
-            {/* ملخص الفاتورة */}
-            <div className="flex justify-between border-b-2 border-gray-800">
-              {/* الملاحظات */}
-              <div className="w-1/2 p-3">
-                <p className="mb-1.5 text-xs font-bold">ملاحظات</p>
-
-                {sale.notes ? (
-                  <p className="text-xs text-gray-700">{sale.notes}</p>
-                ) : (
-                  <div className="h-12 rounded border border-dashed border-gray-400" />
-                )}
-              </div>
-
-              {/* الإجماليات */}
-              <div className="w-1/2 border-r-2 border-gray-800 text-xs">
-                <div className="flex justify-between border-b border-gray-300 px-3 py-1.5">
-                  <span>إجمالي الكمية</span>
-
-                  <span className="font-bold">
-                    {formatMoney(calculatedTotals.totalQuantity)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between border-b border-gray-300 px-3 py-1.5">
-                  <span>الإجمالي قبل الخصم</span>
-
-                  <span className="font-bold">
-                    {formatMoney(calculatedTotals.subtotal)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between border-b border-gray-300 px-3 py-1.5">
-                  <span>إجمالي الخصم</span>
-
-                  <span className="font-bold">
-                    {formatMoney(calculatedTotals.discount)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between bg-gray-100 px-3 py-2.5 text-sm">
-                  <span className="font-bold">صافي الفاتورة</span>
-
-                  <span className="font-bold">
-                    {formatMoney(calculatedTotals.total)} ريال
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* أسفل الفاتورة */}
-            <div className="px-5 py-4 text-center">
-              <p className="text-xs font-bold">شركة الجابري</p>
-
-              <p className="mt-0.5 text-[10px] text-gray-600">
-                الجابري للعسل والزيوت الطبيعة وخدمات العمرة
-              </p>
-
-              <p className="mt-1 text-[10px] text-gray-500">
-                شكرًا لتعاملكم معنا
-              </p>
+              {company?.taxNumber && <p>الرقم الضريبي: {company.taxNumber}</p>}
             </div>
           </div>
-        </div>
+
+          <div className="text-left">
+            <div className="text-xs font-bold tracking-widest text-gray-400">
+              WEZZAN ERP
+            </div>
+
+            <h2 className="mt-2 text-2xl font-black text-[#0E1F33]">
+              فاتورة مبيعات
+            </h2>
+
+            <p className="mt-2 text-sm font-bold" dir="ltr">
+              {sale.invoiceNumber || sale.id}
+            </p>
+          </div>
+        </header>
+
+        {/* Invoice Information */}
+        <section className="my-7 grid grid-cols-2 gap-5 rounded-xl bg-gray-50 p-5">
+          <div>
+            <p className="mb-2 text-xs text-gray-400">فاتورة إلى</p>
+
+            <p className="font-bold text-gray-800">
+              {sale.customerName || "عميل نقدي"}
+            </p>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs text-gray-400">تاريخ الفاتورة</p>
+
+            <p className="font-bold text-gray-800">{dateFormat(sale.date)}</p>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs text-gray-400">المستودع</p>
+
+            <p className="font-bold text-gray-800">
+              {sale.warehouseName || "—"}
+            </p>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs text-gray-400">طريقة الدفع</p>
+
+            <p className="font-bold text-gray-800">
+              {sale.paymentMethod || "—"}
+            </p>
+          </div>
+        </section>
+
+        {/* Items Table */}
+        <section className="mb-8">
+          <h3 className="mb-4 text-base font-bold text-[#0E1F33]">
+            تفاصيل الأصناف
+          </h3>
+
+          <table className="w-full border-collapse text-right text-sm">
+            <thead>
+              <tr className="bg-[#0E1F33] text-white">
+                <th className="border border-[#0E1F33] px-3 py-3">#</th>
+                <th className="border border-[#0E1F33] px-3 py-3">الصنف</th>
+                <th className="border border-[#0E1F33] px-3 py-3">الكمية</th>
+                <th className="border border-[#0E1F33] px-3 py-3">السعر</th>
+                <th className="border border-[#0E1F33] px-3 py-3">الإجمالي</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {items.map((item, index) => (
+                <tr
+                  key={item.id || index}
+                  className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                >
+                  <td className="border border-gray-200 px-3 py-3">
+                    {index + 1}
+                  </td>
+
+                  <td className="border border-gray-200 px-3 py-3 font-semibold">
+                    {getName(item)}
+
+                    {item.sku && (
+                      <div className="mt-1 text-xs text-gray-400">
+                        {item.sku}
+                      </div>
+                    )}
+                  </td>
+
+                  <td className="border border-gray-200 px-3 py-3">
+                    {money(getQuantity(item))}
+                    {item.unitName ? ` ${item.unitName}` : ""}
+                  </td>
+
+                  <td className="border border-gray-200 px-3 py-3">
+                    {money(getPrice(item))}
+                  </td>
+
+                  <td className="border border-gray-200 px-3 py-3 font-bold">
+                    {money(getItemTotal(item))}
+                  </td>
+                </tr>
+              ))}
+
+              {items.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="border border-gray-200 py-8 text-center text-gray-400"
+                  >
+                    لا توجد أصناف
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+
+        {/* Totals */}
+        <section className="flex justify-end">
+          <div className="w-full max-w-[320px] space-y-4">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">المجموع الفرعي</span>
+
+              <span className="font-semibold">
+                {money(sale.subtotal ?? sale.total ?? total)}
+              </span>
+            </div>
+
+            <div className="flex justify-between border-t border-gray-200 pt-4">
+              <span className="font-bold">الإجمالي النهائي</span>
+
+              <span className="text-xl font-black text-[#0E1F33]">
+                {money(total)}
+              </span>
+            </div>
+
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">المدفوع</span>
+
+              <span className="font-bold text-green-700">{money(paid)}</span>
+            </div>
+
+            <div className="flex justify-between border-t border-gray-200 pt-4">
+              <span className="font-bold">المتبقي</span>
+
+              <span className="font-bold text-red-600">{money(remaining)}</span>
+            </div>
+          </div>
+        </section>
+
+        {/* Notes */}
+        {sale.notes && (
+          <section className="mt-8 rounded-lg border border-gray-200 p-4">
+            <h3 className="mb-2 font-bold text-[#0E1F33]">ملاحظات</h3>
+
+            <p className="text-sm leading-7 text-gray-600">{sale.notes}</p>
+          </section>
+        )}
+
+        {/* Signatures */}
+        <section className="mt-16 grid grid-cols-2 gap-12 text-center">
+          <div>
+            <div className="mb-10 border-b border-gray-300" />
+            <p className="text-sm font-semibold text-gray-600">توقيع المستلم</p>
+          </div>
+
+          <div>
+            <div className="mb-10 border-b border-gray-300" />
+            <p className="text-sm font-semibold text-gray-600">توقيع المسؤول</p>
+          </div>
+        </section>
+
+        {/* Footer */}
+        <footer className="mt-16 border-t border-gray-200 pt-5 text-center">
+          <p className="text-xs text-gray-400">شكراً لتعاملكم معنا</p>
+
+          <p className="mt-2 text-[10px] text-gray-300">
+            تم إصدار هذه الفاتورة بواسطة نظام Wezzan ERP
+          </p>
+        </footer>
       </main>
 
-      {/* إعدادات الطباعة A4 */}
       <style jsx global>{`
         @page {
           size: A4;
-          margin: 8mm;
+          margin: 0;
         }
 
         @media print {
           html,
           body {
-            margin: 0;
-            padding: 0;
             background: white !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
 
-          body {
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          body * {
+            visibility: hidden;
           }
 
-          * {
-            box-sizing: border-box;
+          #print-invoice,
+          #print-invoice * {
+            visibility: visible;
+          }
+
+          #print-invoice {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 210mm;
+            min-height: 297mm;
+            margin: 0;
+            padding: 12mm;
             box-shadow: none !important;
           }
 
-          main {
-            margin: 0 !important;
-            padding: 0 !important;
-            min-height: 0 !important;
-            background: white !important;
+          .print\\:hidden {
+            display: none !important;
           }
 
           table {
@@ -426,9 +441,13 @@ export default function SalesPrintPage() {
             page-break-inside: avoid;
             page-break-after: auto;
           }
+
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
         }
       `}</style>
-    </>
+    </div>
   );
 }
-
